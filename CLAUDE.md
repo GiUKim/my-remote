@@ -38,6 +38,10 @@ self-test, opens a view-only client in their default browser).
   into the chat, and do not put it in a URL, file, or commit. The user copies it with the host window's
   `키 복사` button.
 - **Never bake a key into `my-remote-client.html`.** The committed client contains no key by design.
+- **Keep the loader and its bootstrap protocol stable.** `my-remote-client.html` is a loader that users
+  receive once and keep; old copies stay in use. Changing the `ver`/`app` exchange, the key derivation
+  or the signaling format in `signal.js` strands them. New behaviour belongs in
+  `client.template.html`, which the host serves and which therefore updates by itself.
 - **Do not weaken the handshake.** Every signaling message must stay encrypted and authenticated with
   keys derived from the shared secret (`host/signal.js`); the DTLS fingerprints inside the SDP are what
   make the media channel trustworthy.
@@ -85,11 +89,13 @@ Run from `host/` with Electron's env var cleared.
 | `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first |
 | `npm run localtest` | Local trial: host window plus view-only client in the default browser |
 | `npm start` | The real host (connects to the signaling server). User-initiated only |
-| `npm run build-client` | Regenerates `../my-remote-client.html` from the template and `signal.js` |
+| `npm run build-client` | Regenerates `../my-remote-client.html` (the loader) from `loader.template.html` and `signal.js` |
 | `npx @electron/packager . MyRemoteHost --platform=win32 --arch=x64 --out=../dist --overwrite --no-asar` | Optional standalone exe folder (about 300 MB, not committed) |
 
-After changing `host/client.template.html` or `host/signal.js`, run `npm run build-client` and commit the
-regenerated `my-remote-client.html`, then run `npm run selftest`.
+`host/client.template.html` is served by the running host, so changes to it reach clients once the host
+is restarted; nothing needs rebuilding. After changing `host/loader.template.html` or `host/signal.js`,
+run `npm run build-client` and commit the regenerated `my-remote-client.html` (and remember that users
+must then be given the new file). Run `npm run selftest` after either.
 
 ## Layout
 
@@ -97,21 +103,31 @@ regenerated `my-remote-client.html`, then run `npm run selftest`.
 |---|---|
 | `setup.ps1` | One-shot host setup and self-test |
 | `start-host.bat`, `local-test.bat` | Launchers for the real host and the local trial |
-| `my-remote-client.html` | Built single-file client (generated, committed for convenience) |
+| `my-remote-client.html` | Built loader: the one file a client PC keeps (generated, committed for convenience) |
 | `host/main.js` | Electron main: config and key storage, monitor enumeration, tray, IPC, isolated modes |
 | `host/preload.js` | The only bridge between the renderer and main (`window.hostApi`) |
 | `host/host.html`, `host/host.js` | Host UI and the WebRTC side: capture, encoding control, data-channel routing |
 | `host/input.js` | Win32 through koffi FFI: `SendInput`, cursor shape and picture, hiding/restoring the system cursors |
 | `host/cursor-guard.js` | Separate small process that restores the cursors if the host process dies |
 | `host/signal.js` | Shared by host and client: key derivation, encrypted signaling channel |
-| `host/client.template.html` | Client source; `signal.js` is inlined into it at build time |
-| `host/build-client.js` | Builds the client file |
+| `host/loader.template.html` | Loader source: asks for the key, fetches the client page from the host, runs it |
+| `host/client.template.html` | The client page itself. Built in memory at host start and sent to loaders; never shipped as a file |
+| `host/build-client.js` | Builds both pages (`build`, `buildLoader`); the CLI writes the loader file |
 | `host/selftest.js` | Local ntfy-compatible relay and the self-test scenario |
 
 ## Protocol
 
 Shared secret: 32 random bytes, base64url. HKDF-SHA256 derives two AES-256-GCM keys (one per
 direction) and two topic names.
+
+Bootstrap (loader, before anything else; same channel and encryption as signaling):
+
+- loader -> host topic: `{t:'ver', sid, ts, have}` where `have` is the hash of the page it has cached, or `''`
+- host -> client topic: `{t:'app', sid, ts, hash, html?}`; `html` is left out when `have === hash`
+
+The loader stores the page in localStorage, sets `window.__mrBoot = {key, remember, preset, updated}`
+and replaces its own document with the page (`document.open/write`); the page then connects as below.
+The host builds the page once at start, so page and host always match.
 
 Signaling (through the relay, each message deflated, encrypted, chunked to 3000 chars):
 
@@ -161,7 +177,7 @@ aspect ratio, so pointer mapping is a plain proportion of the element. Policy, i
 ## Verified and unverified
 
 Verified by `--selftest` on one PC with three 1080p monitors: connection, hardware H.264 encoding,
-cursor sync, cursor picture extraction, the paste-event path, host statistics, per-monitor pause and switch, size-aware downscaling, 1:1 mode, overview, shortcuts, the
+the loader (fetch from host, cached reuse), cursor sync, cursor picture extraction, the paste-event path, host statistics, per-monitor pause and switch, size-aware downscaling, 1:1 mode, overview, shortcuts, the
 layout plan, renegotiation on a (simulated) monitor change, auto reconnect, and the coordinate math for
 dragging across monitors of different sizes. Input injection was verified separately, and
 `--cursor-check` confirmed on the real screen that hiding the host cursor removes it from the video and

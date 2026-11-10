@@ -268,7 +268,16 @@ function hintStartBitrate(sdp, kbps) {
 async function onMessage(m) {
   try {
     if (!m || typeof m.sid !== 'string' || Math.abs(Date.now() - m.ts) > 5 * 60 * 1000) return;
-    if (m.t === 'hello') {
+    if (m.t === 'ver') {
+      // A loader asking for the current client page. Only someone holding the key can have sent
+      // this, and the reply is encrypted to the key. The page is skipped when the loader has it.
+      if (seen.has(m.sid)) return; // replay
+      seen.add(m.sid);
+      const app = await api.getClientApp();
+      const fresh = m.have !== app.hash;
+      await chan.send({ t: 'app', sid: m.sid, ts: Date.now(), hash: app.hash, html: fresh ? app.html : undefined });
+      log(fresh ? '클라이언트 화면을 최신 버전으로 전송했습니다' : '클라이언트 화면이 이미 최신입니다');
+    } else if (m.t === 'hello') {
       if (seen.has(m.sid)) return; // replay
       seen.add(m.sid);
       if (seen.size > 500) seen.clear();

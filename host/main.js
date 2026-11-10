@@ -95,7 +95,18 @@ function saveConfig(key) {
   fs.writeFileSync(cfgPath(), JSON.stringify(out, null, 2));
 }
 
-const buildClientHtml = (preset = '') => require('./build-client').build(cfg.server, preset);
+const builder = require('./build-client');
+const buildClientHtml = (preset = '') => builder.build(cfg.server, preset);       // the full client page
+const buildLoaderHtml = (preset = '') => builder.buildLoader(cfg.server, preset); // the small file a client PC keeps
+// The client page this host serves to loaders. Built once, so it always matches the code this host is running.
+let clientApp = null;
+function getClientApp() {
+  if (!clientApp) {
+    const html = buildClientHtml();
+    clientApp = { html, hash: crypto.createHash('sha256').update(html).digest('hex').slice(0, 20) };
+  }
+  return clientApp;
+}
 
 async function getSources() {
   const displays = screen.getAllDisplays().sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
@@ -169,6 +180,7 @@ else {
 
     ipcMain.handle('cfg', () => cfg);
     ipcMain.handle('sources', getSources);
+    ipcMain.handle('client-app', getClientApp);
     ipcMain.on('input', (_e, text) => { try { input.handle(String(text)); } catch (e) { console.error('input', e); } });
     ipcMain.on('log', (_e, text) => console.log('[host]', text));
     ipcMain.handle('cursor', () => { try { return currentCursor(); } catch { return { k: '0', c: 'default' }; } });
@@ -200,7 +212,7 @@ else {
       if (ISOLATED) return null;
       const r = await dialog.showSaveDialog(win, { defaultPath: 'my-remote-client.html', filters: [{ name: 'HTML', extensions: ['html'] }] });
       if (r.canceled || !r.filePath) return null;
-      fs.writeFileSync(r.filePath, buildClientHtml());
+      fs.writeFileSync(r.filePath, buildLoaderHtml());
       return r.filePath;
     });
 
@@ -215,10 +227,10 @@ else {
     screen.on('display-removed', displaysChanged);
     screen.on('display-metrics-changed', (_e, _d, changed) => { if (changed.some((c) => c !== 'workArea')) displaysChanged(); });
     if (!ISOLATED) createTray();
-    if (SELFTEST) selftest.run({ cfg, buildClientHtml, app });
+    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app });
     if (LOCALTEST) {
       const file = path.join(app.getPath('userData'), 'my-remote-localtest.html');
-      fs.writeFileSync(file, buildClientHtml('k=' + cfg.key + '&auto&ro'));
+      fs.writeFileSync(file, buildLoaderHtml('k=' + cfg.key + '&auto&ro'));
       setTimeout(() => shell.openPath(file), 2500); // after the host has subscribed
     }
   });

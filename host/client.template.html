@@ -98,7 +98,9 @@ const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch {} },
 };
-const hash = new URLSearchParams(location.hash.slice(1) || '__PRESET__');
+// When this page was fetched from the host by the loader file, the loader leaves the key here.
+const boot = window.__mrBoot || null;
+const hash = new URLSearchParams(boot ? boot.preset : location.hash.slice(1) || '__PRESET__');
 const READONLY = hash.has('ro');
 if (READONLY) $('ro').style.display = '';
 const BLOCKED_WHEN_RO = new Set(['mm', 'md', 'mu', 'mw', 'kd', 'ku', 'reset', 'clip']);
@@ -881,9 +883,16 @@ function buildReport() {
 }
 
 // ---- boot ----------------------------------------------------------------------------
-{ const k = store.get('mr_key'); if (k) { $('key').value = k; $('remember').checked = true; } }
-if (hash.get('k')) { $('key').value = hash.get('k'); history.replaceState(null, '', location.pathname); }
-if (hash.has('auto') && $('key').value) connect();
+if (boot) {
+  $('key').value = boot.key;
+  $('remember').checked = !!boot.remember;
+  connect();
+} else {
+  const k = store.get('mr_key');
+  if (k) { $('key').value = k; $('remember').checked = true; }
+  if (hash.get('k')) { $('key').value = hash.get('k'); history.replaceState(null, '', location.pathname); }
+  if (hash.has('auto') && $('key').value) connect();
+}
 </script>
 </body>
 </html>

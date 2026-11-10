@@ -5,89 +5,38 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>My Remote</title>
 <style>
-  html, body { height: 100%; margin: 0; background: #000; color: #e6e8eb; font: 14px/1.5 "Segoe UI", "Malgun Gothic", sans-serif; overflow: hidden; }
-  #bar { height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: #1d2229; border-bottom: 1px solid #2c333d; box-sizing: border-box; white-space: nowrap; overflow: hidden; }
-  :fullscreen #bar { display: none; }
-  #stage { position: absolute; inset: 34px 0 0 0; overflow: hidden; }
-  :fullscreen #stage { inset: 0; }
-  button, select { font: inherit; background: #343c48; color: #fff; border: 0; border-radius: 5px; padding: 3px 10px; cursor: pointer; }
-  button.on { background: #2b6cff; }
-  #stats { margin-left: auto; color: #8b94a1; font-size: 12px; }
-  #ov { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(10, 12, 15, .72); font-size: 17px; z-index: 3; }
-  #panel, #help, #diag { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #14171c; z-index: 5; }
-  #help, #diag { display: none; background: rgba(10, 12, 15, .8); z-index: 7; }
-  #diag textarea { width: 100%; height: 260px; box-sizing: border-box; background: #0e1014; color: #cfd6df; border: 1px solid #3a4350; border-radius: 6px; font: 12px/1.5 Consolas, monospace; padding: 8px; resize: vertical; }
+  html, body { height: 100%; margin: 0; background: #14171c; color: #e6e8eb; font: 14px/1.5 "Segoe UI", "Malgun Gothic", sans-serif; }
+  body { display: flex; align-items: center; justify-content: center; }
   .box { width: min(460px, 90vw); background: #1d2229; border: 1px solid #2c333d; border-radius: 10px; padding: 22px; }
-  #panel input[type=password] { width: 100%; box-sizing: border-box; font: 14px Consolas, monospace; padding: 8px; border-radius: 6px; border: 1px solid #3a4350; background: #0e1014; color: #fff; margin: 8px 0; }
-  .box button { background: #2b6cff; padding: 8px 18px; }
+  input[type=password] { width: 100%; box-sizing: border-box; font: 14px Consolas, monospace; padding: 8px; border-radius: 6px; border: 1px solid #3a4350; background: #0e1014; color: #fff; margin: 8px 0; }
+  button { font: inherit; background: #2b6cff; color: #fff; border: 0; border-radius: 5px; padding: 8px 18px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
   #msg { color: #e0b341; min-height: 1.5em; margin-top: 8px; }
   small { color: #8b94a1; }
-  kbd { background: #0e1014; border: 1px solid #3a4350; border-radius: 4px; padding: 1px 6px; font: 12px Consolas, monospace; }
-  #help td { padding: 3px 10px 3px 0; }
 </style>
 </head>
 <body>
-<div id="bar">
-  <span id="mons"></span>
-  <button id="spread" title="이 PC의 모니터마다 호스트 모니터를 하나씩, 좌우 순서를 맞춰 펼칩니다">모니터에 펼치기</button>
-  <button id="fs" title="전체화면에서는 Alt+Tab, Win 키 등도 원격으로 전달됩니다">전체화면</button>
-  <select id="fit" title="이 창의 표시 방식">
-    <option value="fit">화면에 맞춤</option>
-    <option value="1:1">원본 크기 (1:1)</option>
-  </select>
-  <select id="mode" title="네트워크가 부족할 때 무엇을 지킬지">
-    <option value="sharp">선명도 우선 (문서·코드)</option>
-    <option value="smooth">부드러움 우선 (영상·스크롤)</option>
-  </select>
-  <button id="snd" style="display:none">소리 켜짐</button>
-  <button id="keys">단축키</button>
-  <button id="diagBtn" title="느리거나 끊길 때 원인을 찾기 위한 측정값">진단</button>
-  <button id="bye">연결 끊기</button>
-  <b id="ro" style="display:none;color:#e0b341">보기 전용 (조작 불가)</b>
-  <span id="stats"></span>
-</div>
-<div id="stage"><div id="ov"></div></div>
-<audio id="audio" autoplay></audio>
-<div id="help"><div class="box">
-  <h3 style="margin:0 0 10px">단축키</h3>
-  <table>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd> <kbd>→</kbd></td><td>이 창에 보이는 모니터를 이전/다음으로</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd></td><td>해당 번호 모니터로</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>↑</kbd> 또는 <kbd>0</kbd></td><td>전체 보기 (모든 모니터를 실제 배치대로)</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>↓</kbd></td><td>화면에 맞춤 ↔ 원본 크기(1:1)</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Enter</kbd></td><td>전체화면 켜기/끄기</td></tr>
-  </table>
-  <p><small>이 조합들은 호스트로 전달되지 않습니다. 호스트의 프로그램에서 같은 조합을 써야 하면 아래를 끄세요.</small></p>
-  <label><input id="hk" type="checkbox"> 단축키 사용</label>
-  <div style="margin-top:12px"><button id="helpClose">닫기</button></div>
-</div></div>
-<div id="diag"><div class="box" style="width:min(640px,92vw)">
-  <h3 style="margin:0 0 8px">진단</h3>
-  <textarea id="diagText" readonly spellcheck="false"></textarea>
-  <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <button id="diagCopy">복사</button>
-    <button id="diagRefresh" style="background:#343c48">새로 고침</button>
-    <button id="diagClose" style="background:#343c48">닫기</button>
-    <span style="margin-left:auto"><small>영상 코덱</small>
-      <select id="codec">
-        <option value="">호스트 기본값</option>
-        <option value="H264">H.264 (그래픽카드 가속)</option>
-        <option value="VP9">VP9</option>
-        <option value="AV1">AV1</option>
-      </select></span>
-  </div>
-  <p style="margin:8px 0 0"><small>코덱을 바꾸면 즉시 다시 연결합니다. 끊김이 있을 때 다른 코덱과 비교해 보세요.</small></p>
-</div></div>
-<div id="panel"><div class="box">
+<div class="box">
   <h2 style="margin:0 0 6px">My Remote</h2>
   <small>호스트 프로그램에 표시된 접속 키를 입력하세요.</small>
   <input id="key" type="password" placeholder="접속 키" autocomplete="off" spellcheck="false">
   <label><input id="remember" type="checkbox"> <small>이 브라우저에 키 저장 (본인 전용 기기에서만)</small></label>
   <div style="margin-top:12px"><button id="go">접속</button></div>
   <div id="msg"></div>
-</div></div>
-
-<script>// Shared by host and client.
+</div>
+<script>
+// LOADER. This file is handed to a client PC once and is meant to stay unchanged.
+// It only (1) asks for the access key, (2) asks the host - over the same
+// encrypted, key-authenticated signaling channel used for connecting - for the
+// current client page, and (3) runs that page. The client therefore always
+// matches the version of the host it connects to.
+//
+// Bootstrap protocol (keep stable, old loaders are out there):
+//   loader -> host: { t: 'ver', sid, ts, have: <hash of cached page or ''> }
+//   host -> loader: { t: 'app', sid, ts, hash, html? }   html omitted when have === hash
+// Everything is wrapped in a function so nothing here collides with the page it loads.
+(() => {
+// Shared by host and client.
 // Signaling over an untrusted pub/sub relay (ntfy). Every message is
 // compressed, then AES-256-GCM encrypted with keys derived from the shared
 // secret, so the relay only ever sees random-looking blobs on random topics.
@@ -217,803 +166,78 @@ const RD = (() => {
 
   return { derive, channel, waitIce, rand };
 })();
-</script>
-<script>
+
 const SERVER = 'https://ntfy.sh';
-const CLIP_MAX = 60000, MAX_RETRY = 10;
 const $ = (id) => document.getElementById(id);
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch {} },
 };
-const hash = new URLSearchParams(location.hash.slice(1) || '');
-const READONLY = hash.has('ro');
-if (READONLY) $('ro').style.display = '';
-const BLOCKED_WHEN_RO = new Set(['mm', 'md', 'mu', 'mw', 'kd', 'ku', 'reset', 'clip']);
-const CURSORS = new Set(['default', 'text', 'wait', 'crosshair', 'nwse-resize', 'nesw-resize', 'ew-resize', 'ns-resize', 'move', 'not-allowed', 'pointer', 'progress', 'help']);
-const HINT = 'Ctrl+Alt+←/→ 모니터 전환 · ↑ 전체 보기 · ↓ 원본 크기 · Enter 전체화면 끝내기';
+const preset = location.hash.slice(1) || '';
+const params = new URLSearchParams(preset);
+const msg = (s) => { $('msg').textContent = s; };
+let busy = false;
 
-let keys = null, pc = null, dc = null, chan = null, sid = null;
-let want = false, ever = false, retry = 0, retryTimer = 0, helloTimer = 0;
-let monitors = [];          // host monitors: [{idx, mid, x, y, width, height, primary, stream}]
-const views = [];           // one per client window: what it shows and how
-let mainView = null, winSeq = 0;
-let lastView = '', viewTimer = 0, cursorCss = 'default';
-let lastClip = null, pendingClip = null;
-let mode = store.get('mr_mode') === 'smooth' ? 'smooth' : 'sharp';
-let hotkeysOn = store.get('mr_hotkeys') !== 'off';
-let codec = ['H264', 'VP9', 'AV1'].includes(store.get('mr_codec')) ? store.get('mr_codec') : '';
-let hostStat = null, offerInfo = {};
-const samples = []; // rolling measurements for the diagnostics report
-$('mode').value = mode;
-$('hk').checked = hotkeysOn;
-
-window.__rd = { state: 'idle', monitors: 0, frames: 0, fps: {}, res: {}, cursor: '', clipRx: false, audio: false, connects: 0, pastes: 0, host: null };
-
-function msg(s) { $('msg').textContent = s; window.__rd.state = s; }
-function overlay(s) { $('ov').textContent = s; $('ov').style.display = s ? 'flex' : 'none'; }
-function send(o) {
-  if (READONLY && BLOCKED_WHEN_RO.has(o.t)) return;
-  if (dc && dc.readyState === 'open') dc.send(JSON.stringify(o));
-}
-function liveViews() {
-  for (let i = views.length - 1; i >= 0; i--) if (views[i].win.closed) views.splice(i, 1);
-  return views;
-}
-function label(sel) {
-  if (sel === 'all') return `전체 보기 (모니터 ${monitors.length}개)`;
-  const m = monitors[sel];
-  return m ? `모니터 ${sel + 1} · ${m.width}×${m.height}` : '';
+function launch(html, key, updated) {
+  // Replace this document with the client page. The window object is kept, so the page can read __mrBoot.
+  window.__mrBoot = { key, remember: $('remember').checked, preset, updated };
+  document.open();
+  document.write(html);
+  document.close();
 }
 
-// ---- views: layout and what each window shows --------------------------------
-function makeView(win, root, isMain) {
-  const view = {
-    win, root, isMain, sel: 0, fit: 'fit', pan: { x: 0, y: 0 }, panes: [], screenIdx: null,
-    swallow: new Set(), pasteKey: null, pasteTimer: 0, pending: null, raf: 0, lastPtr: null, panDir: null, panRaf: 0, toastTimer: 0,
-  };
-  const t = (view.toastEl = win.document.createElement('div'));
-  t.style.cssText = 'position:absolute;left:50%;top:28px;transform:translateX(-50%);z-index:4;display:none;padding:8px 16px;border-radius:8px;background:rgba(20,23,28,.92);border:1px solid #3a4350;color:#e6e8eb;font:14px "Segoe UI","Malgun Gothic",sans-serif;white-space:nowrap;pointer-events:none';
-  root.appendChild(t);
-  attachKeys(view);
-  const relayout = () => { layout(view); scheduleView(); };
-  win.addEventListener('resize', relayout);
-  win.document.addEventListener('fullscreenchange', () => {
-    setTimeout(relayout, 60);
-    if (win.document.fullscreenElement && hotkeysOn) toast(view, HINT, 3500);
-  });
-  win.document.addEventListener('visibilitychange', scheduleView);
-  views.push(view);
-  return view;
-}
-function toast(view, text, ms) {
-  if (!text || view.win.closed) return;
-  view.toastEl.textContent = text;
-  view.toastEl.style.display = 'block';
-  clearTimeout(view.toastTimer);
-  view.toastTimer = setTimeout(() => { view.toastEl.style.display = 'none'; }, ms || 1400);
-}
-function render(view) {
-  for (const p of view.panes) p.video.remove();
-  view.panes = [];
-  const list = view.sel === 'all' ? monitors : [monitors[view.sel]].filter(Boolean);
-  for (const m of list) {
-    const v = view.win.document.createElement('video');
-    v.autoplay = true; v.muted = true; v.playsInline = true; v.tabIndex = 0;
-    v.style.cssText = 'position:absolute;display:block;outline:none;background:#000;object-fit:fill;cursor:' + cursorCss;
-    if (m.stream) v.srcObject = m.stream;
-    const pane = { idx: m.idx, video: v };
-    attachPointer(view, pane);
-    view.root.insertBefore(v, view.root.firstChild); // overlays and the toast stay on top
-    view.panes.push(pane);
-    v.play().catch(() => {});
-  }
-  layout(view);
-}
-// Positions the video(s). The element is sized to the monitor's exact aspect
-// ratio, so there is never a letterbox inside the element and pointer mapping
-// is a plain proportion of the element.
-function layout(view) {
-  const W = view.root.clientWidth, H = view.root.clientHeight;
-  if (!W || !H || !view.panes.length) return;
-  const dpr = view.win.devicePixelRatio || 1;
-  const place = (p, l, t, w, h, crisp) => {
-    const s = p.video.style;
-    s.left = l + 'px'; s.top = t + 'px'; s.width = w + 'px'; s.height = h + 'px';
-    s.imageRendering = crisp ? 'pixelated' : '';
-  };
-  if (view.sel === 'all') {
-    // All monitors in their real physical arrangement, scaled to fit.
-    const x0 = Math.min(...monitors.map((m) => m.x)), y0 = Math.min(...monitors.map((m) => m.y));
-    const bw = Math.max(...monitors.map((m) => m.x + m.width)) - x0, bh = Math.max(...monitors.map((m) => m.y + m.height)) - y0;
-    const s = Math.min(W / bw, H / bh), ox = (W - bw * s) / 2, oy = (H - bh * s) / 2;
-    for (const p of view.panes) { const m = monitors[p.idx]; place(p, ox + (m.x - x0) * s, oy + (m.y - y0) * s, m.width * s, m.height * s, false); }
-    return;
-  }
-  const p = view.panes[0], m = monitors[p.idx];
-  if (view.fit === '1:1') {
-    // One host pixel = one device pixel. Larger than the window: pan by pushing the pointer against an edge.
-    const w = m.width / dpr, h = m.height / dpr;
-    view.pan.x = w <= W ? (W - w) / 2 : clamp(view.pan.x, W - w, 0);
-    view.pan.y = h <= H ? (H - h) / 2 : clamp(view.pan.y, H - h, 0);
-    place(p, view.pan.x, view.pan.y, w, h, false);
-  } else {
-    const s = Math.min(W / m.width, H / m.height), dev = s * dpr;
-    // An exact 2x/3x enlargement (e.g. a 1080p host on a 4K screen) is shown with sharp pixels, like the real monitor.
-    const crisp = dev >= 1.99 && Math.abs(dev - Math.round(dev)) < 0.01;
-    place(p, (W - m.width * s) / 2, (H - m.height * s) / 2, m.width * s, m.height * s, crisp);
-  }
-}
-function refreshStreams() {
-  for (const view of liveViews()) for (const p of view.panes) {
-    const st = monitors[p.idx] && monitors[p.idx].stream;
-    if (st && p.video.srcObject !== st) { p.video.srcObject = st; p.video.play().catch(() => {}); }
-  }
-}
-function applyCursor() {
-  for (const view of liveViews()) for (const p of view.panes) p.video.style.cursor = cursorCss;
-}
-// Tell the host which monitors are on screen and how large each is shown, in
-// device pixels, so it encodes only those and never more pixels than are visible.
-function sendView(force) {
-  if (!monitors.length) return;
-  const need = new Map();
-  for (const view of liveViews()) {
-    if (view.win.document.visibilityState === 'hidden') continue;
-    const dpr = view.win.devicePixelRatio || 1;
-    for (const p of view.panes) {
-      let w = 0, h = 0; // 0 = full resolution
-      if (view.sel === 'all' || view.fit !== '1:1') {
-        const r = p.video.getBoundingClientRect();
-        w = Math.ceil(r.width * dpr); h = Math.ceil(r.height * dpr);
-        if (!w || !h) continue;
-      }
-      const cur = need.get(p.idx);
-      if (!cur) need.set(p.idx, { w, h });
-      else if (!w || !cur.w) need.set(p.idx, { w: 0, h: 0 });
-      else need.set(p.idx, { w: Math.max(cur.w, w), h: Math.max(cur.h, h) });
-    }
-  }
-  const v = [...need].sort((a, b) => a[0] - b[0]).map(([i, n]) => ({ i, w: n.w, h: n.h }));
-  const j = JSON.stringify(v);
-  if (!force && j === lastView) return;
-  lastView = j;
-  send({ t: 'view', v });
-}
-function scheduleView() { clearTimeout(viewTimer); viewTimer = setTimeout(() => sendView(false), 200); }
-setInterval(() => sendView(false), 1000); // also notices closed windows
-
-function setSel(view, sel) {
-  if (sel !== 'all' && !monitors[sel]) return;
-  if (sel !== 'all' && view.sel !== 'all') {
-    // Keep every monitor on at most one window: swap with the window that already shows it.
-    const other = liveViews().find((v) => v !== view && v.sel === sel);
-    if (other) { other.sel = view.sel; other.pan = { x: 0, y: 0 }; render(other); toast(other, label(other.sel)); }
-  }
-  view.sel = sel;
-  view.pan = { x: 0, y: 0 };
-  render(view);
-  toast(view, label(sel));
-  renderBar();
-  scheduleView();
-  saveLayout();
-  if (view.panes[0]) view.panes[0].video.focus();
-}
-function cycle(view, dir) {
-  const n = monitors.length;
-  if (!n) return;
-  setSel(view, view.sel === 'all' ? (dir > 0 ? 0 : n - 1) : (view.sel + dir + n) % n);
-}
-function setFit(view, fit) {
-  view.fit = fit;
-  view.pan = { x: 0, y: 0 };
-  layout(view);
-  toast(view, fit === '1:1' ? '원본 크기 (1:1) — 가장자리로 밀면 화면이 이동합니다' : '화면에 맞춤');
-  renderBar();
-  scheduleView();
-  saveLayout();
-}
-async function goFullscreen(win) {
-  try {
-    await win.document.documentElement.requestFullscreen();
-    if (win.navigator.keyboard && win.navigator.keyboard.lock) await win.navigator.keyboard.lock();
-    return true;
-  } catch (e) { return false; }
-}
-function toggleFullscreen(view) {
-  const d = view.win.document;
-  if (d.fullscreenElement) d.exitFullscreen().catch(() => {}); else goFullscreen(view.win);
-}
-
-// ---- clipboard (text, both directions) -----------------------------------------
-async function flushClip(win) {
-  if (pendingClip == null) return;
-  try { await win.navigator.clipboard.writeText(pendingClip); lastClip = pendingClip; pendingClip = null; } catch {}
-}
-// Client -> host goes through the browser's own "paste" event (see attachKeys):
-// that hands us the clipboard text without the clipboard-read permission, which a
-// local file can never keep and so would be asked for again and again.
-function gotClip(s) {
-  window.__rd.clipRx = true;
-  pendingClip = s;
-  const focused = liveViews().find((v) => v.win.document.hasFocus());
-  if (focused) flushClip(focused.win);
-}
-
-// ---- pointer ---------------------------------------------------------------------
-function rel(pane, cx, cy) {
-  const r = pane.video.getBoundingClientRect();
-  return r.width && r.height ? { d: pane.idx, x: (cx - r.left) / r.width, y: (cy - r.top) / r.height } : null;
-}
-// Where a pointer that is being dragged (and may have left its own video) is on the host.
-function mapPoint(ev, view, pane) {
-  const inside = (x, y, r) => x >= r.left && x < r.left + r.width && y >= r.top && y < r.top + r.height;
-  // 1. Over another monitor shown in this window (overview).
-  for (const p of view.panes) {
-    const r = p.video.getBoundingClientRect();
-    if (inside(ev.clientX, ev.clientY, r)) return { d: p.idx, x: (ev.clientX - r.left) / r.width, y: (ev.clientY - r.top) / r.height };
-  }
-  // 2. Over a monitor shown in another window, possibly on another screen.
-  for (const v of liveViews()) {
-    if (v === view) continue;
-    const w = v.win, bx = Math.max(0, (w.outerWidth - w.innerWidth) / 2), by = Math.max(0, w.outerHeight - w.innerHeight - bx);
-    for (const p of v.panes) {
-      const c = p.video.getBoundingClientRect();
-      const r = { left: w.screenX + bx + c.left, top: w.screenY + by + c.top, width: c.width, height: c.height };
-      if (r.width && inside(ev.screenX, ev.screenY, r)) return { d: p.idx, x: (ev.screenX - r.left) / r.width, y: (ev.screenY - r.top) / r.height };
-    }
-  }
-  // 3. Nowhere we show: continue past the edge, onto the host's neighbouring monitor.
-  const q = rel(pane, ev.clientX, ev.clientY);
-  return q && { d: q.d, x: clamp(q.x, -8, 9), y: clamp(q.y, -8, 9) };
-}
-function queueMove(view, p) {
-  view.pending = p;
-  if (view.raf) return;
-  view.raf = view.win.requestAnimationFrame(() => {
-    view.raf = 0;
-    if (view.pending) { send({ t: 'mm', d: view.pending.d, x: view.pending.x, y: view.pending.y }); view.pending = null; }
-  });
-}
-// 1:1 mode larger than the window: pushing the pointer against an edge pans the picture.
-function edgePan(view, ev) {
-  if (view.sel === 'all' || view.fit !== '1:1' || !view.panes[0]) { view.panDir = null; return; }
-  const R = view.root.getBoundingClientRect(), c = view.panes[0].video.getBoundingClientRect(), M = 28;
-  const dx = c.width > R.width + 1 ? (ev.clientX < R.left + M ? 1 : ev.clientX > R.right - M ? -1 : 0) : 0;
-  const dy = c.height > R.height + 1 ? (ev.clientY < R.top + M ? 1 : ev.clientY > R.bottom - M ? -1 : 0) : 0;
-  view.panDir = dx || dy ? { x: dx, y: dy } : null;
-  if (!view.panDir || view.panRaf) return;
-  const tick = () => {
-    view.panRaf = 0;
-    if (!view.panDir || view.win.closed) return;
-    const bx = view.pan.x, by = view.pan.y;
-    view.pan.x += view.panDir.x * 22; view.pan.y += view.panDir.y * 22;
-    layout(view);
-    if (view.pan.x === bx && view.pan.y === by) { view.panDir = null; return; } // reached the end
-    if (view.lastPtr) { const q = rel(view.lastPtr.pane, view.lastPtr.cx, view.lastPtr.cy); if (q) queueMove(view, { d: q.d, x: clamp(q.x, 0, 1), y: clamp(q.y, 0, 1) }); }
-    view.panRaf = view.win.requestAnimationFrame(tick);
-  };
-  view.panRaf = view.win.requestAnimationFrame(tick);
-}
-function attachPointer(view, pane) {
-  const v = pane.video;
-  const here = (ev) => { const q = rel(pane, ev.clientX, ev.clientY); return q && { d: q.d, x: clamp(q.x, 0, 1), y: clamp(q.y, 0, 1) }; };
-  v.addEventListener('pointermove', (ev) => {
-    const p = ev.buttons ? mapPoint(ev, view, pane) : here(ev);
-    if (!p) return;
-    view.lastPtr = { pane, cx: ev.clientX, cy: ev.clientY };
-    queueMove(view, p);
-    edgePan(view, ev);
-  });
-  v.addEventListener('pointerleave', () => { view.panDir = null; });
-  v.addEventListener('pointerdown', (ev) => {
-    const p = here(ev); if (!p) return;
-    ev.preventDefault(); v.focus();
-    try { v.setPointerCapture(ev.pointerId); } catch {}
-    view.pending = null;
-    send({ t: 'md', b: ev.button, d: p.d, x: p.x, y: p.y }); // 0 left, 1 middle, 2 right, 3 back, 4 forward
-  });
-  v.addEventListener('pointerup', (ev) => {
-    const p = mapPoint(ev, view, pane); if (!p) return;
-    ev.preventDefault();
-    view.pending = null;
-    send({ t: 'mu', b: ev.button, d: p.d, x: p.x, y: p.y });
-  });
-  v.addEventListener('wheel', (ev) => {
-    ev.preventDefault();
-    const k = ev.deltaMode === 1 ? 33 : ev.deltaMode === 2 ? 400 : 1;
-    send({ t: 'mw', dx: ev.deltaX * k, dy: ev.deltaY * k });
-  }, { passive: false });
-  for (const t of ['contextmenu', 'auxclick', 'dragstart']) v.addEventListener(t, (ev) => ev.preventDefault());
-}
-
-// ---- keyboard ----------------------------------------------------------------------
-// Local shortcuts (Ctrl+Alt+...). Returns true when the key was consumed here.
-function hotkey(view, ev) {
-  if (!hotkeysOn || !ev.ctrlKey || !ev.altKey || ev.shiftKey || ev.metaKey) return false;
-  const c = ev.code;
-  const digit = /^(Digit|Numpad)([0-9])$/.exec(c);
-  if (!digit && !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', 'NumpadEnter'].includes(c)) return false;
-  if (ev.repeat) return true;
-  if (c === 'ArrowLeft') cycle(view, -1);
-  else if (c === 'ArrowRight') cycle(view, 1);
-  else if (c === 'ArrowUp') setSel(view, 'all');
-  else if (c === 'ArrowDown') { if (view.sel !== 'all') setFit(view, view.fit === '1:1' ? 'fit' : '1:1'); }
-  else if (digit) { const n = Number(digit[2]); if (n === 0) setSel(view, 'all'); else if (monitors[n - 1]) setSel(view, n - 1); else toast(view, `모니터 ${n}은(는) 없습니다`); }
-  else toggleFullscreen(view);
-  return true;
-}
-function attachKeys(view) {
-  const win = view.win, doc = win.document;
-  const local = () => { const tag = doc.activeElement && doc.activeElement.tagName; return !dc || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA'; };
-  // A paste shortcut is held back until the browser's paste event has given us
-  // the clipboard text, so the host receives "clipboard, then Ctrl+V" in order.
-  const flushPaste = () => {
-    if (!view.pasteKey) return;
-    clearTimeout(view.pasteTimer);
-    const o = view.pasteKey;
-    view.pasteKey = null;
-    send(o);
-  };
-  const onKey = (ev) => {
-    if (local()) return;
-    const o = { t: ev.type === 'keydown' ? 'kd' : 'ku', c: ev.code, k: ev.key };
-    const paste = ev.type === 'keydown' && !ev.repeat && !ev.altKey &&
-      ((ev.code === 'KeyV' && ev.ctrlKey) || (ev.code === 'Insert' && ev.shiftKey && !ev.ctrlKey));
-    if (paste) {
-      ev.stopPropagation(); // not preventDefault: the browser must go on to fire "paste"
-      flushPaste();
-      view.pasteKey = o;
-      view.pasteTimer = setTimeout(flushPaste, 250);
-      return;
-    }
-    ev.preventDefault(); ev.stopPropagation();
-    if (ev.type === 'keydown') {
-      if (hotkey(view, ev)) { view.swallow.add(ev.code); return; }
-    } else if (view.swallow.delete(ev.code)) return;
-    flushPaste();
-    send(o);
-  };
-  win.addEventListener('keydown', onKey, true);
-  win.addEventListener('keyup', onKey, true);
-  doc.addEventListener('paste', (ev) => {
-    if (local()) return;
-    ev.preventDefault();
-    window.__rd.pastes++;
-    const text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
-    if (text && text.length <= CLIP_MAX && text !== lastClip) { lastClip = text; pendingClip = null; send({ t: 'clip', s: text }); }
-    flushPaste();
-  });
-  for (const t of ['copy', 'cut']) doc.addEventListener(t, (ev) => { if (!local()) ev.preventDefault(); });
-  win.addEventListener('blur', () => { view.swallow.clear(); flushPaste(); send({ t: 'reset' }); }); // never leave keys stuck on the host
-  win.addEventListener('focus', () => flushClip(win)); // host -> client text that arrived while we were away
-  win.addEventListener('mouseup', (ev) => { if (ev.button > 2) ev.preventDefault(); }); // no browser back/forward
-}
-
-// ---- toolbar and windows ---------------------------------------------------------
-function renderBar() {
-  const box = $('mons');
-  box.textContent = '';
-  if (!mainView) return;
-  monitors.forEach((m, i) => {
-    const b = document.createElement('button');
-    b.textContent = `모니터 ${i + 1}`;
-    b.className = mainView.sel === i ? 'on' : '';
-    b.title = `${m.width}×${m.height} — 이 창에 표시 (Ctrl+Alt+${i + 1})`;
-    b.onclick = () => setSel(mainView, i);
-    const p = document.createElement('button');
-    p.textContent = '↗';
-    p.title = '새 창으로 분리';
-    p.onclick = () => popOut(i);
-    box.append(b, p, ' ');
-  });
-  if (monitors.length > 1) {
-    const a = document.createElement('button');
-    a.textContent = '전체 보기';
-    a.className = mainView.sel === 'all' ? 'on' : '';
-    a.title = '모든 모니터를 실제 배치대로 한 창에 (Ctrl+Alt+↑)';
-    a.onclick = () => setSel(mainView, 'all');
-    box.append(a, ' ');
-  }
-  $('fit').value = mainView.fit;
-  $('fit').disabled = mainView.sel === 'all';
-}
-// Client screens, left to right, or null without the Window Management permission.
-async function clientScreens() {
-  try {
-    if (!('getScreenDetails' in window)) return null;
-    const sd = await window.getScreenDetails();
-    const list = [...sd.screens].sort((a, b) => a.left - b.left || a.top - b.top);
-    return { list, cur: Math.max(0, list.indexOf(sd.currentScreen)) };
-  } catch { return null; }
-}
-function openView(sel, scr, screenIdx) {
-  const feat = scr ? `popup,left=${scr.availLeft},top=${scr.availTop},width=${scr.availWidth},height=${scr.availHeight}` : 'popup,width=1280,height=720';
-  const w = window.open('', 'myremote_v' + (++winSeq), feat);
-  if (!w) return null;
-  const d = w.document;
-  d.title = 'My Remote';
-  d.body.textContent = '';
-  d.body.style.cssText = 'margin:0;background:#000;overflow:hidden;height:100vh;font:14px "Segoe UI","Malgun Gothic",sans-serif;color:#e6e8eb';
-  const root = d.createElement('div');
-  root.style.cssText = 'position:absolute;inset:0;overflow:hidden';
-  d.body.appendChild(root);
-  const view = makeView(w, root, false);
-  view.sel = sel;
-  view.screenIdx = screenIdx == null ? null : screenIdx;
-
-  // One click anywhere takes the window fullscreen (the browser requires a click per window).
-  const cover = d.createElement('div');
-  cover.style.cssText = 'position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;gap:16px;align-items:center;justify-content:center;background:rgba(10,12,15,.62);cursor:pointer';
-  const big = d.createElement('div');
-  big.textContent = '클릭하면 전체화면으로 전환됩니다';
-  big.style.cssText = 'font-size:22px';
-  const small = d.createElement('button');
-  small.textContent = '창 모드로 계속 쓰기';
-  small.style.cssText = 'font:13px sans-serif;padding:6px 14px;border:0;border-radius:5px;background:#343c48;color:#fff;cursor:pointer';
-  cover.append(big, small);
-  const corner = d.createElement('button');
-  corner.textContent = '전체화면';
-  corner.style.cssText = 'position:fixed;top:8px;right:8px;z-index:5;display:none;font:13px sans-serif;padding:5px 12px;border:0;border-radius:5px;background:#2b6cff;color:#fff;cursor:pointer;opacity:.85';
-  cover.onclick = (e) => {
-    cover.remove();
-    if (e.target === small) corner.style.display = ''; else goFullscreen(w);
-    if (view.panes[0]) view.panes[0].video.focus();
-  };
-  corner.onclick = () => { goFullscreen(w); if (view.panes[0]) view.panes[0].video.focus(); };
-  d.addEventListener('fullscreenchange', () => { if (!cover.isConnected) corner.style.display = d.fullscreenElement ? 'none' : ''; });
-  root.append(cover, corner);
-
-  w.addEventListener('pagehide', () => setTimeout(() => { liveViews(); scheduleView(); }, 100));
-  render(view);
-  scheduleView();
-  return view;
-}
-async function popOut(i) {
-  const shown = liveViews().find((v) => !v.isMain && v.sel === i);
-  if (shown) { shown.win.focus(); return; }
-  // Prefer a free screen on the same side as the monitor sits on the host.
-  let scr = null, j = null;
-  const cs = await clientScreens();
-  if (cs) {
-    const used = new Set([cs.cur, ...liveViews().map((v) => v.screenIdx).filter((x) => x != null)]);
-    const free = cs.list.map((_, k) => k).filter((k) => !used.has(k));
-    const right = mainView.sel === 'all' || i > mainView.sel;
-    const pick = right ? free.find((k) => k > cs.cur) : [...free].reverse().find((k) => k < cs.cur);
-    j = pick != null ? pick : free.length ? free[0] : null;
-    if (j != null) scr = cs.list[j];
-  }
-  if (!openView(i, scr, j)) alert('팝업이 차단되었습니다. 주소창에서 이 페이지의 팝업을 허용해 주세요.');
-  else if (mainView.sel === i) {
-    // The monitor moved to its own window; show another one here.
-    const other = monitors.findIndex((m) => !liveViews().some((v) => v.sel === m.idx));
-    if (other >= 0) { mainView.sel = other; render(mainView); renderBar(); scheduleView(); }
-  }
-}
-
-// ---- spread: one host monitor per client screen, same left-to-right order -------
-function loadLayout(sig) {
-  try { const all = JSON.parse(store.get('mr_layout') || '{}'); return all[sig] || null; } catch { return null; }
-}
-function saveLayout() {
-  const entries = liveViews().filter((v) => v.screenIdx != null);
-  if (entries.length < 2 || !mainView || mainView.layoutSig == null) return;
-  const map = {};
-  for (const v of entries) map[v.screenIdx] = { sel: v.sel, fit: v.fit };
-  try { const all = JSON.parse(store.get('mr_layout') || '{}'); all[mainView.layoutSig] = map; store.set('mr_layout', JSON.stringify(all)); } catch {}
-}
-// Which host monitor goes on which client screen (index into the left-to-right screen list).
-function planLayout(N, M, cur, primary) {
-  const map = {};
-  if (N <= M) {
-    // All host monitors fit: a run of N neighbouring screens that puts the host's primary monitor on this screen.
-    const off = clamp(cur - primary, 0, M - N);
-    for (let k = 0; k < N; k++) map[off + k] = { sel: k, fit: 'fit' };
-  } else {
-    // More host monitors than screens: a run of M neighbouring monitors containing the primary. The rest: Ctrl+Alt+arrows.
-    const start = clamp(primary - cur, 0, N - M);
-    for (let j = 0; j < M; j++) map[j] = { sel: start + j, fit: 'fit' };
-  }
-  return map;
-}
-async function spread() {
-  const cs = await clientScreens();
-  if (!cs || cs.list.length < 2) {
-    toast(mainView, cs ? '이 PC에서 모니터가 1개만 감지되었습니다' : '창 관리 권한을 허용해야 모니터에 펼칠 수 있습니다', 3000);
-    return;
-  }
-  const N = monitors.length, M = cs.list.length;
-  const sig = `${N}:${M}`;
-  const primary = Math.max(0, monitors.findIndex((m) => m.primary));
-  let map = loadLayout(sig);
-  const valid = map && map[cs.cur] && Object.values(map).every((e) => e && (e.sel === 'all' || monitors[e.sel]));
-  if (!valid) map = planLayout(N, M, cs.cur, primary);
-  mainView.layoutSig = sig;
-  mainView.screenIdx = cs.cur;
-  // Fullscreen first, then the other windows: with the permission granted the browser
-  // allows fullscreen plus a window on another screen from a single click.
-  const fsOk = goFullscreen(window);
-  if (map[cs.cur]) { mainView.sel = map[cs.cur].sel; mainView.fit = map[cs.cur].fit || 'fit'; render(mainView); }
-  let blocked = 0;
-  for (const [k, e] of Object.entries(map)) {
-    const j = Number(k);
-    if (j === cs.cur) continue;
-    const existing = liveViews().find((v) => v.screenIdx === j);
-    if (existing) { existing.sel = e.sel; existing.fit = e.fit || 'fit'; render(existing); continue; }
-    const view = openView(e.sel, cs.list[j], j);
-    if (view) view.fit = e.fit || 'fit'; else blocked++;
-  }
-  renderBar();
-  scheduleView();
-  saveLayout();
-  await fsOk;
-  if (blocked) toast(mainView, `창 ${blocked}개가 팝업 차단으로 열리지 못했습니다. 주소창에서 팝업을 "항상 허용"으로 바꾸거나 한 번 더 누르세요.`, 6000);
-  else if (N > M) toast(mainView, `호스트 모니터 ${N}개 중 ${M}개를 펼쳤습니다. 나머지는 Ctrl+Alt+←/→ 로 전환하세요.`, 5000);
-}
-
-window.addEventListener('pagehide', () => { for (const v of liveViews()) if (!v.isMain) v.win.close(); });
-
-// ---- connection --------------------------------------------------------------------
-function cleanupPc() {
-  clearTimeout(helloTimer); clearTimeout(retryTimer);
-  if (chan) { chan.close(); chan = null; }
-  const old = pc;
-  pc = null; dc = null;
-  if (old) { try { old.close(); } catch {} }
-}
-// Full stop: back to the key panel.
-function disconnect(text) {
-  want = false;
-  cleanupPc();
-  for (const v of liveViews()) if (!v.isMain) v.win.close();
-  monitors = [];
-  render(mainView);
-  renderBar();
-  $('audio').srcObject = null;
-  overlay('');
-  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-  $('panel').style.display = 'flex';
-  msg(text || '');
-}
-// Unexpected loss: retry automatically, keeping windows where they are.
-function lost(text) {
-  if (!want) return;
-  cleanupPc();
-  if (ever && retry < MAX_RETRY) {
-    retry++;
-    overlay(`연결이 끊겼습니다. 다시 연결하는 중… (${retry}/${MAX_RETRY})`);
-    window.__rd.state = 'reconnecting';
-    retryTimer = setTimeout(begin, Math.min(15000, 1500 * retry));
-  } else {
-    disconnect(text);
-  }
-}
-
-function onHostMessage(data) {
-  let m;
-  try { m = JSON.parse(data); } catch { return; }
-  if (m.t === 'cur') {
-    // A standard cursor by name, or the picture of an app-specific one.
-    if (CURSORS.has(m.c)) cursorCss = m.c;
-    else if (typeof m.img === 'string' && m.img.length < 90000 && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(m.img)) cursorCss = `url("${m.img}") ${clamp(m.hx | 0, 0, 127)} ${clamp(m.hy | 0, 0, 127)}, default`;
-    else return;
-    window.__rd.cursor = m.c || 'image';
-    applyCursor();
-  }
-  else if (m.t === 'hs') { hostStat = m; window.__rd.host = m; }
-  else if (m.t === 'clip' && typeof m.s === 'string' && m.s.length <= CLIP_MAX) gotClip(m.s);
-  else if (m.t === 'bye') disconnect('호스트에서 연결을 종료했습니다.');
-  else if (m.t === 'renew') {
-    // The host's monitors changed (plugged, unplugged, resolution): renegotiate, keep the windows.
-    overlay('호스트의 모니터 구성이 바뀌어 다시 연결합니다…');
-    window.__rd.state = 'reconnecting';
-    cleanupPc();
-    retryTimer = setTimeout(begin, 1200);
-  }
-}
-
-async function onOffer(m) {
-  const my = (pc = new RTCPeerConnection({ iceServers: m.ice }));
-  let x = 0;
-  monitors = m.monitors.map((mon, i) => {
-    const o = { ...mon, idx: i, stream: null };
-    if (typeof o.x !== 'number' || typeof o.y !== 'number') { o.x = x; o.y = 0; } // older host: assume side by side
-    x = o.x + o.width;
-    return o;
-  });
-  const primary = Math.max(0, monitors.findIndex((mon) => mon.primary));
-  for (const v of [...liveViews()]) {
-    if (!ever && v.isMain) v.sel = primary;
-    if (v.sel !== 'all' && !monitors[v.sel]) { if (v.isMain) v.sel = primary; else { v.win.close(); continue; } }
-    render(v);
-  }
-  renderBar();
-  $('snd').style.display = m.audio ? '' : 'none';
-  offerInfo = { codec: m.codec, cursorHidden: !!m.cursorHidden };
-
-  my.ontrack = (e) => {
-    if (e.track.kind === 'audio') { $('audio').srcObject = new MediaStream([e.track]); window.__rd.audio = true; return; }
-    try { e.receiver.jitterBufferTarget = 0; } catch {}
-    try { e.receiver.playoutDelayHint = 0; } catch {}
-    const mon = monitors.find((mm) => mm.mid === e.transceiver.mid);
-    if (!mon) return;
-    mon.stream = new MediaStream([e.track]);
-    refreshStreams();
-  };
-  my.ondatachannel = (e) => {
-    dc = e.channel;
-    const ready = () => { if (pc === my) sendView(true); };
-    dc.onopen = ready;
-    if (dc.readyState === 'open') ready();
-    dc.onmessage = (ev) => { if (pc === my) onHostMessage(ev.data); };
-    dc.onclose = () => { if (pc === my) lost('연결이 끊어졌습니다.'); };
-  };
-  my.onconnectionstatechange = () => {
-    if (pc !== my) return;
-    const st = my.connectionState;
-    if (st === 'connected') {
-      ever = true; retry = 0;
-      clearTimeout(helloTimer);
-      $('panel').style.display = 'none';
-      overlay('');
-      window.__rd.state = 'connected';
-      window.__rd.monitors = monitors.length;
-      window.__rd.connects++;
-      if (chan) { chan.close(); chan = null; } // signaling no longer needed
-      if (mainView.panes[0]) mainView.panes[0].video.focus();
-    } else if (st === 'failed') {
-      lost('연결 실패 — 양쪽 네트워크가 직접 연결(P2P)을 막고 있을 수 있습니다. 호스트 설정에 TURN 서버를 추가해야 합니다.');
-    } else if (st === 'disconnected') {
-      setTimeout(() => { if (pc === my && my.connectionState !== 'connected') lost('연결이 끊어졌습니다.'); }, 4000);
-    }
-  };
-  await my.setRemoteDescription({ type: 'offer', sdp: m.sdp });
-  await my.setLocalDescription(await my.createAnswer());
-  await RD.waitIce(my, 2500);
-  if (pc !== my || !chan) return;
-  await chan.send({ t: 'answer', sid, ts: Date.now(), sdp: my.localDescription.sdp });
-  if (!ever) msg('연결 수립 중…');
-}
-
-async function begin() {
-  cleanupPc();
-  const mySid = (sid = RD.rand(16));
-  lastView = '';
-  try {
-    if (!ever) msg('시그널링 서버 연결 중…');
-    const c = (chan = RD.channel({
-      server: SERVER, subTopic: keys.topicClient, pubTopic: keys.topicHost, rxKey: keys.h2c, txKey: keys.c2h,
-      onMessage: (m) => { if (m && m.t === 'offer' && m.sid === sid && !pc) onOffer(m).catch((e) => lost('오류: ' + e.message)); },
-    }));
-    await Promise.race([c.ready, sleep(10000).then(() => { throw new Error('시그널링 서버에 연결할 수 없습니다'); })]);
-    if (sid !== mySid || chan !== c) return;
-    await c.send({ t: 'hello', sid, ts: Date.now(), mode, codec });
-    if (!ever) msg('호스트 응답 대기 중…');
-    helloTimer = setTimeout(() => {
-      if (sid === mySid && (!pc || pc.connectionState !== 'connected')) lost('호스트가 응답하지 않습니다. 호스트 프로그램 실행 여부와 키를 확인하세요.');
-    }, 20000);
-  } catch (e) {
-    if (sid === mySid) lost('오류: ' + e.message);
-  }
-}
-
-async function connect() {
+async function go() {
+  if (busy) return;
   const key = $('key').value.trim();
   store.set('mr_key', $('remember').checked ? key : null);
+  let keys;
   try { keys = await RD.derive(key); } catch (e) { msg('오류: ' + e.message); return; }
-  want = true; ever = false; retry = 0;
-  $('audio').play().catch(() => {}); // unlock audio playback while we have a user gesture
-  begin();
+  busy = true; $('go').disabled = true;
+  const fail = (text) => { busy = false; $('go').disabled = false; msg(text); };
+  const cached = store.get('mr_app_html');
+  const have = cached ? store.get('mr_app_hash') || '' : '';
+  const sid = RD.rand(16);
+  let done = false, chan = null;
+  try {
+    msg('호스트에 연결하는 중…');
+    chan = RD.channel({
+      server: SERVER, subTopic: keys.topicClient, pubTopic: keys.topicHost, rxKey: keys.h2c, txKey: keys.c2h,
+      onMessage: (m) => {
+        if (done || !m || m.t !== 'app' || m.sid !== sid) return;
+        done = true;
+        chan.close();
+        if (typeof m.html === 'string' && m.html.length > 1000) {
+          store.set('mr_app_html', m.html);
+          store.set('mr_app_hash', String(m.hash || ''));
+          launch(m.html, key, true);
+        } else if (cached && m.hash === have) {
+          launch(cached, key, false);
+        } else {
+          fail('호스트에서 클라이언트 화면을 받지 못했습니다. 다시 시도해 주세요.');
+        }
+      },
+    });
+    await Promise.race([chan.ready, new Promise((_, rej) => setTimeout(() => rej(new Error('중개 서버에 연결할 수 없습니다')), 10000))]);
+    await chan.send({ t: 'ver', sid, ts: Date.now(), have });
+    setTimeout(() => {
+      if (done) return;
+      done = true;
+      chan.close();
+      fail('호스트가 응답하지 않습니다. 호스트 프로그램이 켜져 있는지와 접속 키를 확인하세요.');
+    }, 15000);
+  } catch (e) {
+    done = true;
+    if (chan) chan.close();
+    fail('오류: ' + e.message);
+  }
 }
 
-// ---- wiring ------------------------------------------------------------------------
-mainView = makeView(window, $('stage'), true);
-$('go').onclick = connect;
-$('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
-$('bye').onclick = () => disconnect('연결을 끊었습니다.');
-$('fs').onclick = () => { goFullscreen(window); if (mainView.panes[0]) mainView.panes[0].video.focus(); };
-$('spread').onclick = spread;
-$('fit').onchange = () => { setFit(mainView, $('fit').value); if (mainView.panes[0]) mainView.panes[0].video.focus(); };
-$('mode').onchange = () => {
-  mode = $('mode').value;
-  store.set('mr_mode', mode);
-  send({ t: 'mode', m: mode });
-  if (mainView.panes[0]) mainView.panes[0].video.focus();
-};
-$('snd').onclick = () => { const a = $('audio'); a.muted = !a.muted; $('snd').textContent = a.muted ? '소리 꺼짐' : '소리 켜짐'; if (!a.muted) a.play().catch(() => {}); };
-$('keys').onclick = () => { $('help').style.display = 'flex'; };
-$('helpClose').onclick = () => { $('help').style.display = 'none'; if (mainView.panes[0]) mainView.panes[0].video.focus(); };
-$('codec').value = codec;
-$('codec').onchange = () => {
-  codec = $('codec').value;
-  store.set('mr_codec', codec || null);
-  if (want && ever) { $('diag').style.display = 'none'; overlay('코덱을 바꿔 다시 연결합니다…'); samples.length = 0; begin(); }
-};
-$('diagBtn').onclick = () => { $('diagText').value = buildReport(); $('diag').style.display = 'flex'; };
-$('diagRefresh').onclick = () => { $('diagText').value = buildReport(); };
-$('diagClose').onclick = () => { $('diag').style.display = 'none'; if (mainView.panes[0]) mainView.panes[0].video.focus(); };
-$('diagCopy').onclick = async () => {
-  try { await navigator.clipboard.writeText($('diagText').value); $('diagCopy').textContent = '복사됨'; }
-  catch { $('diagText').select(); document.execCommand('copy'); $('diagCopy').textContent = '복사됨'; }
-  setTimeout(() => { $('diagCopy').textContent = '복사'; }, 1500);
-};
-$('hk').onchange = () => { hotkeysOn = $('hk').checked; store.set('mr_hotkeys', hotkeysOn ? 'on' : 'off'); };
-
-// ---- stats and diagnostics ------------------------------------------------------------
-let last = null;
-setInterval(async () => {
-  const my = pc;
-  if (!my || my.connectionState !== 'connected') { $('stats').textContent = ''; last = null; return; }
-  const rep = await my.getStats();
-  let bytes = 0, frames = 0, rtt = null, relay = false, jb = 0, jbn = 0;
-  let lost = 0, recv = 0, freezes = 0, freezeDur = 0, dropped = 0, nack = 0, pli = 0, decoder = '';
-  const byMid = {};
-  rep.forEach((r) => {
-    if (r.type === 'inbound-rtp' && r.kind === 'video') {
-      bytes += r.bytesReceived; frames += r.framesDecoded || 0;
-      byMid[r.mid] = { fps: Math.round(r.framesPerSecond || 0), res: (r.frameWidth || 0) + 'x' + (r.frameHeight || 0) };
-      jb += r.jitterBufferDelay || 0; jbn += r.jitterBufferEmittedCount || 0;
-      lost += r.packetsLost || 0; recv += r.packetsReceived || 0; freezes += r.freezeCount || 0; freezeDur += r.totalFreezesDuration || 0;
-      dropped += r.framesDropped || 0; nack += r.nackCount || 0; pli += r.pliCount || 0; decoder = r.decoderImplementation || decoder;
-    }
-    if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') {
-      rtt = r.currentRoundTripTime;
-      const rc = rep.get(r.remoteCandidateId), lc = rep.get(r.localCandidateId);
-      relay = (rc && rc.candidateType === 'relay') || (lc && lc.candidateType === 'relay');
-    }
-  });
-  const fps = {}, res = {};
-  for (const m of monitors) { const e = byMid[m.mid]; fps[m.idx] = e ? e.fps : 0; res[m.idx] = e ? e.res : ''; }
-  Object.assign(window.__rd, { frames, fps, res });
-  const now = performance.now();
-  if (last) {
-    const mbps = ((bytes - last.bytes) * 8) / ((now - last.t) / 1000) / 1e6;
-    const buf = jbn > last.jbn ? ((jb - last.jb) / (jbn - last.jbn)) * 1000 : 0;
-    let viewed = [];
-    try { viewed = JSON.parse(lastView || '[]').map((e) => e.i); } catch {}
-    $('stats').textContent = `${viewed.map((i) => `${i + 1}:${fps[i]}`).join(' ')} fps · ${mbps.toFixed(1)} Mbps · 왕복 ${rtt != null ? Math.round(rtt * 1000) : '?'} ms · 버퍼 ${Math.round(buf)} ms · ${relay ? 'TURN 중계' : 'P2P 직접'}`;
-    samples.push({ t: Date.now(), viewed, fps, res, mbps, rtt: rtt != null ? rtt * 1000 : null, buf, relay, lost, recv, freezes, freezeDur, dropped, nack, pli, decoder, host: hostStat });
-    if (samples.length > 45) samples.shift(); // about 90 seconds
-  }
-  last = { bytes, t: now, jb, jbn };
-}, 2000);
-
-// Plain-text summary of the last ~90 seconds, for finding out why it feels slow.
-function buildReport() {
-  const n = samples.length;
-  if (n < 3) return '아직 측정값이 부족합니다. 접속하고 10초쯤 사용한 뒤 "새로 고침"을 눌러 주세요.';
-  const a = samples[0], b = samples[n - 1];
-  const num = (list) => list.filter((x) => typeof x === 'number' && isFinite(x));
-  const avg = (list) => { const v = num(list); return v.length ? v.reduce((x, y) => x + y, 0) / v.length : 0; };
-  const mmm = (list) => { const v = num(list); return v.length ? `${Math.min(...v)}/${Math.round(avg(v))}/${Math.max(...v)}` : '-'; };
-  const pk = (b.lost - a.lost) + (b.recv - a.recv);
-  const L = [];
-  L.push(`My Remote 진단 — ${new Date().toLocaleString()}`);
-  L.push(`구간: 최근 ${Math.round((b.t - a.t) / 1000)}초`);
-  L.push(`브라우저: ${(navigator.userAgent.match(/(Edg|Chrome)\/[\d.]+/g) || ['?']).pop()} · 이 화면 ${screen.width}x${screen.height} 배율 ${window.devicePixelRatio}`);
-  L.push('창: ' + liveViews().map((v) => `[${v.sel === 'all' ? '전체 보기' : '모니터 ' + (v.sel + 1)} ${v.fit} ${v.root.clientWidth}x${v.root.clientHeight}${v.win.document.fullscreenElement ? ' 전체화면' : ''}]`).join(' '));
-  L.push('호스트 모니터: ' + monitors.map((m) => `${m.width}x${m.height}`).join(', '));
-  L.push(`연결: ${b.relay ? 'TURN 중계' : 'P2P 직접'} · 왕복 지연 평균 ${Math.round(avg(samples.map((x) => x.rtt)))} ms, 최대 ${Math.round(Math.max(0, ...num(samples.map((x) => x.rtt))))} ms`);
-  const h = b.host;
-  L.push(`코덱: ${h ? h.codec : offerInfo.codec || '?'} · 인코더 ${h ? h.enc : '?'} · 디코더 ${b.decoder || '?'}`);
-  L.push(`대역폭: 수신 평균 ${avg(samples.map((x) => x.mbps)).toFixed(1)} Mbps (최대 ${Math.max(...num(samples.map((x) => x.mbps))).toFixed(1)})${h ? ` · 호스트 목표 ${h.targetMbps} / 가용 ${h.availMbps} Mbps` : ''}`);
-  for (const i of b.viewed) {
-    const hm = samples.map((x) => x.host && x.host.mons && x.host.mons[i]).filter(Boolean);
-    const limits = [...new Set(hm.map((x) => x.limit))].join(',') || '?';
-    L.push(`모니터 ${i + 1}: 수신 fps 최소/평균/최대 ${mmm(samples.map((x) => x.fps[i]))} · 수신 해상도 ${b.res[i]} · 호스트 캡처 fps ${mmm(hm.map((x) => x.cap))} → 인코딩 fps ${mmm(hm.map((x) => x.enc))} · 제한 요인 ${limits}`);
-  }
-  L.push(`끊김: 화면 멈춤 ${b.freezes - a.freezes}회 (${(b.freezeDur - a.freezeDur).toFixed(1)}초) · 버린 프레임 ${b.dropped - a.dropped} · 패킷 손실 ${pk > 0 ? (((b.lost - a.lost) / pk) * 100).toFixed(2) : '0'}% · 재전송 요청 ${b.nack - a.nack} · 키프레임 요청 ${b.pli - a.pli}`);
-  L.push(`수신 버퍼 지연: 평균 ${Math.round(avg(samples.map((x) => x.buf)))} ms, 최대 ${Math.round(Math.max(0, ...num(samples.map((x) => x.buf))))} ms`);
-  L.push(`화질 모드: ${mode} · 호스트 커서 숨김: ${offerInfo.cursorHidden ? '예' : '아니오'}`);
-  return L.join('\n');
-}
-
-// ---- boot ----------------------------------------------------------------------------
+$('go').onclick = go;
+$('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
 { const k = store.get('mr_key'); if (k) { $('key').value = k; $('remember').checked = true; } }
-if (hash.get('k')) { $('key').value = hash.get('k'); history.replaceState(null, '', location.pathname); }
-if (hash.has('auto') && $('key').value) connect();
+if (params.get('k')) { $('key').value = params.get('k'); try { history.replaceState(null, '', location.pathname); } catch {} }
+if (params.has('auto') && $('key').value) go();
+})();
 </script>
 </body>
 </html>

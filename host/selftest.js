@@ -42,7 +42,7 @@ exports.startRelay = () => new Promise((resolve) => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-exports.run = async ({ cfg, buildClientHtml, app }) => {
+exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app }) => {
   const results = [];
   const check = (name, ok, detail) => { results.push(!!ok); console.log(`[selftest] ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  - ' + detail : ''}`); };
   const info = (text) => console.log(`[selftest] INFO  ${text}`);
@@ -198,6 +198,23 @@ exports.run = async ({ cfg, buildClientHtml, app }) => {
     hostWin.reload();
     [ok, s] = await until((x) => x.connects > before && x.state === 'connected' && x.frames > 20, 60);
     check('auto reconnect after host restart', ok, ok ? '' : JSON.stringify(s));
+    // The loader file: fetches the client page from the host, runs it, and skips the download next time.
+    {
+      const lf = path.join(dir, 'loader.html');
+      fs.writeFileSync(lf, buildLoaderHtml());
+      w.destroy();
+      const lw = new BrowserWindow({ show: false, width: 1280, height: 720, webPreferences: { backgroundThrottling: false } });
+      const ljs = (code) => lw.webContents.executeJavaScript(code);
+      const lstate = () => ljs(`({ boot: window.__mrBoot ? { updated: window.__mrBoot.updated } : null, state: window.__rd ? window.__rd.state : '', frames: window.__rd ? window.__rd.frames : 0, cached: !!localStorage.getItem('mr_app_html'), hasKeyInStore: !!localStorage.getItem('mr_key') })`);
+      const luntil = async (pred, secs) => { let x; for (let i = 0; i < secs; i++) { await sleep(1000); try { x = await lstate(); if (pred(x)) return [true, x]; } catch {} } return [false, x]; };
+      await lw.loadFile(lf, { hash: `k=${cfg.key}&auto&ro` });
+      let [ok1, a] = await luntil((x) => x.boot && x.state === 'connected' && x.frames > 20, 45);
+      check('loader fetches the client page from the host and connects', ok1 && a.boot.updated === true && a.cached, JSON.stringify(a));
+      await lw.loadFile(lf, { query: { again: '1' }, hash: `k=${cfg.key}&auto&ro` }); // a different URL forces a real reload
+      let [ok2, b] = await luntil((x) => x.boot && x.state === 'connected' && x.frames > 20, 45);
+      check('loader reuses the cached page when the host version is unchanged', ok2 && b.boot.updated === false, JSON.stringify(b));
+      lw.destroy();
+    }
   } catch (e) {
     console.log('[selftest] aborted:', e.message);
     results.push(false);

@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('hostApi', {
   getConfig: () => ipcRenderer.invoke('cfg'),
   getSources: () => ipcRenderer.invoke('sources'),
+  getClientApp: () => ipcRenderer.invoke('client-app'),
   input: (text) => ipcRenderer.send('input', text),
   log: (text) => ipcRenderer.send('log', text),
   cursor: () => ipcRenderer.invoke('cursor'),
