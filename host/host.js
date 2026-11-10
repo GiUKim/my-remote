@@ -301,6 +301,7 @@ async function onMessage(m) {
     onState: (st) => { if (!session) status(st === 'open' ? '대기 중 — 접속을 기다리는 중' : '시그널링 서버 재연결 중…', st === 'open' ? 'ok' : 'wait'); },
   });
   log('시그널링 서버: ' + cfg.server);
+  log('호스트 시작: ' + new Date().toLocaleString());
 
   let shown = false;
   $('show').onclick = () => { shown = !shown; $('key').textContent = shown ? cfg.key : '••••••••••••••••••••••••'; $('show').textContent = shown ? '숨기기' : '표시'; };

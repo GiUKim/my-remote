@@ -139,6 +139,19 @@ function icon(live) {
 }
 function showWindow() { if (win) { win.show(); win.focus(); } }
 
+// A running host keeps the code it started with. Launching it again while it is
+// running only reaches the old process, so compare the code on disk with what
+// was loaded and restart when it changed (e.g. after an update).
+function codeStamp() {
+  let latest = 0;
+  try {
+    for (const f of fs.readdirSync(__dirname)) if (/\.(js|html|json)$/.test(f)) latest = Math.max(latest, fs.statSync(path.join(__dirname, f)).mtimeMs);
+  } catch {}
+  return latest;
+}
+const startedStamp = codeStamp();
+function restart() { quitting = true; app.relaunch(); app.quit(); }
+
 function createWindow() {
   win = new BrowserWindow({
     width: 560, height: 680, title: 'My Remote Host', autoHideMenuBar: true, show: !SELFTEST, icon: icon(false),
@@ -154,6 +167,7 @@ function createTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '열기', click: showWindow },
     { label: '원격 연결 끊기', click: () => win && win.webContents.send('kick') },
+    { label: '다시 시작 (업데이트 적용)', click: restart },
     { type: 'separator' },
     { label: '종료', click: () => { quitting = true; app.quit(); } },
   ]));
@@ -162,7 +176,7 @@ function createTray() {
 
 if (!ISOLATED && !app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('second-instance', showWindow);
+  app.on('second-instance', () => { if (codeStamp() !== startedStamp) restart(); else showWindow(); });
   app.on('before-quit', () => { quitting = true; input.reset(); setCursorsHidden(false); });
   process.on('exit', () => { if (cursorsHidden) input.restoreCursors(); });
   app.whenReady().then(async () => {
