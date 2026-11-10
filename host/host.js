@@ -1,0 +1,233 @@
+const api = window.hostApi;
+const $ = (id) => document.getElementById(id);
+const CLIP_MAX = 60000;
+let cfg, keys, chan;
+let session = null;
+const seen = new Set();
+
+function log(s) {
+  const line = `${new Date().toLocaleTimeString()}  ${s}`;
+  $('log').textContent = (line + '\n' + $('log').textContent).slice(0, 6000);
+  api.log(s);
+}
+function status(text, cls) { $('status').textContent = text; $('dot').className = 'dot ' + cls; }
+
+function teardown(reason) {
+  if (!session) return;
+  const s = session;
+  session = null;
+  for (const t of s.timers) clearInterval(t);
+  clearTimeout(s.dropTimer);
+  api.input('{"t":"reset"}');
+  api.session(false);
+  for (const st of s.streams) st.getTracks().forEach((t) => t.stop());
+  // Tell the client this was deliberate so it does not auto-reconnect, then close.
+  try { if (s.dc && s.dc.readyState === 'open') s.dc.send(JSON.stringify({ t: 'bye' })); } catch {}
+  setTimeout(() => { try { s.pc.close(); } catch {} }, 200);
+  $('stats').textContent = '';
+  status('대기 중 — 접속을 기다리는 중', 'ok');
+  log('세션 종료: ' + reason);
+}
+
+function preferCodec(pc) {
+  const want = 'video/' + String(cfg.codec || 'H264').toLowerCase();
+  for (const tr of pc.getTransceivers()) {
+    if (!tr.sender.track || tr.sender.track.kind !== 'video') continue;
+    try {
+      const caps = RTCRtpReceiver.getCapabilities('video').codecs;
+      const first = caps.filter((c) => c.mimeType.toLowerCase() === want);
+      if (first.length) tr.setCodecPreferences([...first, ...caps.filter((c) => c.mimeType.toLowerCase() !== want)]);
+    } catch (e) { log('코덱 우선순위 설정 실패(기본값 사용): ' + e.message); }
+  }
+}
+
+// Applies bitrate / fps / quality mode, and pauses encoding of monitors the
+// client is not looking at. Calls are serialized: setParameters must not overlap.
+function applyEncoding(s) {
+  s.encQueue = s.encQueue.then(async () => {
+    if (session !== s) return;
+    const smooth = s.mode === 'smooth';
+    for (let i = 0; i < s.videoSenders.length; i++) {
+      const sender = s.videoSenders[i];
+      try {
+        sender.track.contentHint = smooth ? 'motion' : 'detail';
+        const p = sender.getParameters();
+        if (!p.encodings || !p.encodings.length) continue;
+        p.encodings[0].active = s.viewed.has(i);
+        p.encodings[0].maxBitrate = cfg.maxBitrateMbps * 1e6;
+        p.encodings[0].maxFramerate = cfg.maxFps;
+        p.degradationPreference = smooth ? 'maintain-framerate' : 'maintain-resolution';
+        await sender.setParameters(p);
+      } catch (e) { log('인코더 설정 실패: ' + e.message); }
+    }
+  });
+  return s.encQueue;
+}
+
+function capture(src, withAudio) {
+  const video = { mandatory: {
+    chromeMediaSource: 'desktop', chromeMediaSourceId: src.id,
+    minWidth: src.width, maxWidth: src.width, minHeight: src.height, maxHeight: src.height,
+    maxFrameRate: cfg.maxFps,
+  } };
+  return navigator.mediaDevices.getUserMedia({ audio: withAudio ? { mandatory: { chromeMediaSource: 'desktop' } } : false, video });
+}
+
+function onClientMessage(s, dc, data) {
+  if (session !== s || typeof data !== 'string') return;
+  let m;
+  try { m = JSON.parse(data); } catch { return; }
+  if (!m) return;
+  if (m.t === 'view' && Array.isArray(m.v)) {
+    const v = new Set(m.v.filter((i) => Number.isInteger(i) && i >= 0 && i < s.videoSenders.length));
+    if (!v.size) return;
+    s.viewed = v;
+    applyEncoding(s);
+  } else if (m.t === 'mode') {
+    s.mode = m.m === 'smooth' ? 'smooth' : 'sharp';
+    applyEncoding(s);
+    log('화질 모드: ' + (s.mode === 'smooth' ? '부드러움 우선' : '선명도 우선'));
+  } else if (m.t === 'clip') {
+    if (cfg.clipboard && typeof m.s === 'string' && m.s.length <= CLIP_MAX) { s.clip = m.s; api.writeClip(m.s); }
+  } else if (data.length < 500) {
+    api.input(data);
+  }
+}
+
+function startChannelTasks(s, dc) {
+  const tx = (o) => { if (dc.readyState === 'open') dc.send(JSON.stringify(o)); };
+  // Cursor shape -> client draws the cursor locally.
+  let cur = null;
+  s.timers.push(setInterval(async () => {
+    const c = await api.cursor();
+    if (c !== cur) { cur = c; tx({ t: 'cur', c }); }
+  }, 40));
+  // Clipboard (text) host -> client.
+  if (cfg.clipboard) {
+    s.timers.push(setInterval(async () => {
+      const t = await api.readClip();
+      if (t && t !== s.clip && t.length <= CLIP_MAX) { s.clip = t; tx({ t: 'clip', s: t }); }
+    }, 700));
+  }
+}
+
+async function startSession(hello) {
+  teardown('새 접속 요청');
+  log('접속 요청 수신 — 화면 캡처 시작');
+  status('연결 협상 중…', 'wait');
+  const sources = await api.getSources();
+  if (!sources.length) { log('캡처할 모니터를 찾지 못했습니다'); return; }
+  const pc = new RTCPeerConnection({ iceServers: cfg.iceServers });
+  const s = (session = {
+    sid: hello.sid, pc, streams: [], timers: [], dropTimer: 0, videoSenders: [], clip: null,
+    viewed: new Set(sources.map((_, i) => i)), mode: hello.mode === 'smooth' ? 'smooth' : 'sharp', encQueue: Promise.resolve(),
+  });
+
+  const dc = (s.dc = pc.createDataChannel('input', { ordered: true }));
+  dc.onmessage = (e) => onClientMessage(s, dc, e.data);
+  dc.onopen = () => { if (session === s) startChannelTasks(s, dc); };
+
+  let audio = false;
+  for (let i = 0; i < sources.length; i++) {
+    let stream;
+    if (i === 0 && cfg.audio) {
+      try { stream = await capture(sources[i], true); audio = true; }
+      catch (e) { log('시스템 소리 캡처 불가 — 소리 없이 진행: ' + e.message); }
+    }
+    if (!stream) stream = await capture(sources[i], false);
+    if (session !== s) { stream.getTracks().forEach((t) => t.stop()); return; }
+    s.streams.push(stream);
+    s.videoSenders.push(pc.addTrack(stream.getVideoTracks()[0], stream));
+    const a = stream.getAudioTracks()[0];
+    if (a) pc.addTrack(a, stream);
+  }
+  preferCodec(pc);
+
+  pc.onconnectionstatechange = () => {
+    if (session !== s) return;
+    const st = pc.connectionState;
+    log('연결 상태: ' + st);
+    if (st === 'connected') {
+      clearTimeout(s.dropTimer);
+      status('원격 접속 중 (화면 전송 중)', 'live');
+      api.session(true);
+      applyEncoding(s);
+    } else if (st === 'failed' || st === 'closed') teardown('연결 ' + st);
+    else if (st === 'disconnected') { clearTimeout(s.dropTimer); s.dropTimer = setTimeout(() => teardown('연결 끊김'), 15000); }
+  };
+
+  await pc.setLocalDescription(await pc.createOffer());
+  await applyEncoding(s);
+  await RD.waitIce(pc, 2500);
+  if (session !== s) return;
+  const mids = s.videoSenders.map((sender) => pc.getTransceivers().find((t) => t.sender === sender).mid);
+  await chan.send({
+    t: 'offer', sid: s.sid, ts: Date.now(), sdp: pc.localDescription.sdp, ice: cfg.iceServers, audio,
+    monitors: sources.map((src, i) => ({ idx: i, mid: mids[i], width: src.width, height: src.height, primary: src.primary })),
+  });
+  log(`offer 전송 (모니터 ${sources.length}개${audio ? ', 소리 포함' : ''})`);
+  // Give up if the client never completes the handshake.
+  s.dropTimer = setTimeout(() => { if (session === s && pc.connectionState !== 'connected') teardown('협상 시간 초과'); }, 30000);
+
+  let last = null;
+  s.timers.push(setInterval(async () => {
+    if (session !== s || pc.connectionState !== 'connected') return;
+    const rep = await pc.getStats();
+    let bytes = 0, fps = [], impl = '', codecId = '', rtt = null, kind = '', limit = '';
+    rep.forEach((r) => {
+      if (r.type === 'outbound-rtp' && r.kind === 'video') {
+        bytes += r.bytesSent; fps.push([Number(r.mid) || 0, r.active === false ? '–' : Math.round(r.framesPerSecond || 0)]);
+        impl = r.encoderImplementation || impl; codecId = r.codecId || codecId;
+        if (r.qualityLimitationReason && r.qualityLimitationReason !== 'none') limit = r.qualityLimitationReason;
+      }
+      if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') { rtt = r.currentRoundTripTime; const lc = rep.get(r.localCandidateId); kind = lc ? lc.candidateType : ''; }
+    });
+    const codec = codecId && rep.get(codecId) ? rep.get(codecId).mimeType.replace('video/', '') : '';
+    const now = performance.now();
+    if (last) {
+      const mbps = ((bytes - last.bytes) * 8) / ((now - last.t) / 1000) / 1e6;
+      const why = limit === 'cpu' ? ' · 제한: 이 PC 성능' : limit === 'bandwidth' ? ' · 제한: 네트워크' : '';
+      const text = `${codec} (${impl}) · ${fps.sort((a, b) => a[0] - b[0]).map((x) => x[1]).join('/')} fps · ${mbps.toFixed(1)} Mbps · RTT ${rtt != null ? Math.round(rtt * 1000) + ' ms' : '?'} · ${kind === 'relay' ? 'TURN 중계' : 'P2P 직접'}${why}`;
+      $('stats').textContent = text;
+      if (!s.loggedStats) { s.loggedStats = true; log('전송 상태: ' + text); }
+    }
+    last = { bytes, t: now };
+  }, 2000));
+}
+
+async function onMessage(m) {
+  try {
+    if (!m || typeof m.sid !== 'string' || Math.abs(Date.now() - m.ts) > 5 * 60 * 1000) return;
+    if (m.t === 'hello') {
+      if (seen.has(m.sid)) return; // replay
+      seen.add(m.sid);
+      if (seen.size > 500) seen.clear();
+      await startSession(m);
+    } else if (m.t === 'answer' && session && m.sid === session.sid && session.pc.signalingState === 'have-local-offer') {
+      await session.pc.setRemoteDescription({ type: 'answer', sdp: m.sdp });
+      log('answer 수신 — 연결 수립 중');
+    }
+  } catch (e) {
+    log('오류: ' + e.message);
+    teardown('오류');
+  }
+}
+
+(async () => {
+  cfg = await api.getConfig();
+  keys = await RD.derive(cfg.key);
+  chan = RD.channel({
+    server: cfg.server, subTopic: keys.topicHost, pubTopic: keys.topicClient, rxKey: keys.c2h, txKey: keys.h2c,
+    onMessage,
+    onState: (st) => { if (!session) status(st === 'open' ? '대기 중 — 접속을 기다리는 중' : '시그널링 서버 재연결 중…', st === 'open' ? 'ok' : 'wait'); },
+  });
+  log('시그널링 서버: ' + cfg.server);
+
+  let shown = false;
+  $('show').onclick = () => { shown = !shown; $('key').textContent = shown ? cfg.key : '••••••••••••••••••••••••'; $('show').textContent = shown ? '숨기기' : '표시'; };
+  $('copy').onclick = async () => { await api.copyKey(); log('접속 키를 클립보드에 복사했습니다'); };
+  $('regen').onclick = () => api.regenKey();
+  $('kick').onclick = () => teardown('사용자가 끊음');
+  api.onKick(() => teardown('사용자가 끊음'));
+  $('export').onclick = async () => { const p = await api.exportClient(); if (p) log('클라이언트 파일 저장: ' + p); };
+})();

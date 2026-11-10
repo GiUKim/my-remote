@@ -1,0 +1,19 @@
+{
+  "name": "my-remote-host",
+  "version": "0.2.0",
+  "description": "Personal P2P remote desktop host (WebRTC, multi-monitor)",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "selftest": "electron . --selftest",
+    "localtest": "electron . --localtest",
+    "build-client": "node build-client.js"
+  },
+  "dependencies": {
+    "koffi": "^2.9.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

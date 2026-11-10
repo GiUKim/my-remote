@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>My Remote Host</title>
+<style>
+  body { font: 14px/1.5 "Segoe UI", "Malgun Gothic", sans-serif; margin: 0; padding: 18px; background: #14171c; color: #e6e8eb; }
+  h1 { font-size: 17px; margin: 0 0 12px; }
+  .card { background: #1d2229; border: 1px solid #2c333d; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #777; flex: none; }
+  .dot.ok { background: #3ecf6e; } .dot.wait { background: #e0b341; } .dot.live { background: #ff5d5d; }
+  button { font: inherit; background: #2b6cff; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  button.sub { background: #343c48; }
+  code { background: #0e1014; padding: 3px 6px; border-radius: 4px; word-break: break-all; }
+  #log { font: 12px/1.45 Consolas, monospace; white-space: pre-wrap; max-height: 230px; overflow: auto; color: #aab2bd; }
+  small { color: #8b94a1; }
+</style>
+</head>
+<body>
+  <h1>My Remote Host</h1>
+  <div class="card">
+    <div class="row"><span id="dot" class="dot"></span><b id="status">시작 중…</b></div>
+    <small id="stats"></small>
+  </div>
+  <div class="card">
+    <div><b>접속 키</b> <small>— 비밀번호처럼 다루세요. 이 키를 가진 사람은 이 PC를 조작할 수 있습니다.</small></div>
+    <div style="margin:8px 0"><code id="key">••••••••••••••••••••••••</code></div>
+    <div class="row">
+      <button id="copy">키 복사</button>
+      <button id="show" class="sub">표시</button>
+      <button id="export" class="sub">클라이언트 파일 내보내기</button>
+      <button id="regen" class="sub">새 키 발급</button>
+      <button id="kick" class="sub">연결 끊기</button>
+    </div>
+  </div>
+  <div class="card"><div id="log"></div></div>
+  <script src="signal.js"></script>
+  <script src="host.js"></script>
+</body>
+</html>

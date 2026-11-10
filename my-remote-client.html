@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Remote</title>
+<style>
+  html, body { height: 100%; margin: 0; background: #000; color: #e6e8eb; font: 14px/1.5 "Segoe UI", "Malgun Gothic", sans-serif; overflow: hidden; }
+  #bar { height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: #1d2229; border-bottom: 1px solid #2c333d; box-sizing: border-box; white-space: nowrap; overflow: hidden; }
+  :fullscreen #bar { display: none; }
+  #stage { position: absolute; inset: 34px 0 0 0; }
+  :fullscreen #stage { inset: 0; }
+  video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; outline: none; }
+  button, select { font: inherit; background: #343c48; color: #fff; border: 0; border-radius: 5px; padding: 3px 10px; cursor: pointer; }
+  button.on { background: #2b6cff; }
+  #stats { margin-left: auto; color: #8b94a1; font-size: 12px; }
+  #ov { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(10, 12, 15, .72); font-size: 17px; z-index: 3; }
+  #panel { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #14171c; z-index: 5; }
+  #panel .box { width: min(440px, 90vw); background: #1d2229; border: 1px solid #2c333d; border-radius: 10px; padding: 22px; }
+  #panel input[type=password] { width: 100%; box-sizing: border-box; font: 14px Consolas, monospace; padding: 8px; border-radius: 6px; border: 1px solid #3a4350; background: #0e1014; color: #fff; margin: 8px 0; }
+  #panel button { background: #2b6cff; padding: 8px 18px; }
+  #msg { color: #e0b341; min-height: 1.5em; margin-top: 8px; }
+  small { color: #8b94a1; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <span id="mons"></span>
+  <button id="fs" title="전체화면에서는 Alt+Tab, Win 키 등도 원격으로 전달됩니다. 나가려면 Esc를 길게 누르세요.">전체화면</button>
+  <select id="mode" title="네트워크가 부족할 때 무엇을 지킬지">
+    <option value="sharp">선명도 우선 (문서·코드)</option>
+    <option value="smooth">부드러움 우선 (영상·스크롤)</option>
+  </select>
+  <button id="snd" style="display:none">소리 켜짐</button>
+  <button id="bye">연결 끊기</button>
+  <b id="ro" style="display:none;color:#e0b341">보기 전용 (조작 불가)</b>
+  <span id="stats"></span>
+</div>
+<div id="stage"><div id="ov"></div></div>
+<audio id="audio" autoplay></audio>
+<div id="panel"><div class="box">
+  <h2 style="margin:0 0 6px">My Remote</h2>
+  <small>호스트 프로그램에 표시된 접속 키를 입력하세요.</small>
+  <input id="key" type="password" placeholder="접속 키" autocomplete="off" spellcheck="false">
+  <label><input id="remember" type="checkbox"> <small>이 브라우저에 키 저장 (본인 전용 기기에서만)</small></label>
+  <div style="margin-top:12px"><button id="go">접속</button></div>
+  <div id="msg"></div>
+</div></div>
+
+<script>// Shared by host and client.
+// Signaling over an untrusted pub/sub relay (ntfy). Every message is
+// compressed, then AES-256-GCM encrypted with keys derived from the shared
+// secret, so the relay only ever sees random-looking blobs on random topics.
+// The WebRTC DTLS fingerprints travel inside these encrypted messages, which
+// is what makes the media/input channel end-to-end authenticated.
+const RD = (() => {
+  const te = new TextEncoder(), td = new TextDecoder();
+  const CHUNK = 3000; // ntfy message limit is 4096 bytes
+
+  function b64u(buf) {
+    const b = new Uint8Array(buf);
+    let s = '';
+    for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function unb64u(s) {
+    s = s.replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
+    const bin = atob(s);
+    const b = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+    return b;
+  }
+  function rand(n) {
+    return b64u(crypto.getRandomValues(new Uint8Array(n)));
+  }
+  async function pipe(bytes, transform) {
+    const res = new Response(new Blob([bytes]).stream().pipeThrough(transform));
+    return new Uint8Array(await res.arrayBuffer());
+  }
+
+  async function derive(secret) {
+    const raw = unb64u(secret.trim());
+    if (raw.length !== 32) throw new Error('접속 키 형식이 올바르지 않습니다');
+    const base = await crypto.subtle.importKey('raw', raw, 'HKDF', false, ['deriveBits', 'deriveKey']);
+    const p = (info) => ({ name: 'HKDF', hash: 'SHA-256', salt: te.encode('my-remote-v1'), info: te.encode(info) });
+    const aes = (info) => crypto.subtle.deriveKey(p(info), base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    const topic = async (info) => {
+      const bits = new Uint8Array(await crypto.subtle.deriveBits(p(info), base, 128));
+      return 'mr' + Array.from(bits, (x) => x.toString(16).padStart(2, '0')).join('');
+    };
+    return {
+      c2h: await aes('client-to-host'),
+      h2c: await aes('host-to-client'),
+      topicHost: await topic('topic-host'),
+      topicClient: await topic('topic-client'),
+    };
+  }
+
+  async function seal(key, obj) {
+    const plain = await pipe(te.encode(JSON.stringify(obj)), new CompressionStream('deflate-raw'));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain));
+    const out = new Uint8Array(12 + ct.length);
+    out.set(iv);
+    out.set(ct, 12);
+    return b64u(out);
+  }
+  async function open(key, text) {
+    const raw = unb64u(text);
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: raw.slice(0, 12) }, key, raw.slice(12));
+    return JSON.parse(td.decode(await pipe(new Uint8Array(plain), new DecompressionStream('deflate-raw'))));
+  }
+
+  // opts: { server, subTopic, pubTopic, rxKey, txKey, onMessage, onState }
+  function channel(opts) {
+    const parts = new Map();
+    let es = null, closed = false;
+    let readyResolve;
+    const ready = new Promise((r) => (readyResolve = r));
+
+    function connect() {
+      es = new EventSource(`${opts.server}/${opts.subTopic}/sse`);
+      es.onopen = () => { readyResolve(); opts.onState && opts.onState('open'); };
+      es.onerror = () => { opts.onState && opts.onState('retry'); }; // EventSource reconnects by itself
+      es.onmessage = async (ev) => {
+        try {
+          const m = JSON.parse(ev.data);
+          const f = String(m.message || '').split('.');
+          if (f.length !== 5 || f[0] !== 'mr1') return;
+          const id = f[1], i = +f[2], n = +f[3];
+          if (!(n >= 1 && n <= 40 && i >= 0 && i < n)) return;
+          if (!parts.has(id)) {
+            if (parts.size > 30) parts.clear();
+            parts.set(id, new Array(n).fill(null));
+          }
+          const arr = parts.get(id);
+          if (arr.length !== n) return;
+          arr[i] = f[4];
+          if (arr.some((x) => x === null)) return;
+          parts.delete(id);
+          const obj = await open(opts.rxKey, arr.join(''));
+          opts.onMessage(obj);
+        } catch (e) {
+          // Not decryptable with our key: noise or forgery. Ignore.
+        }
+      };
+    }
+    connect();
+
+    async function send(obj) {
+      const text = await seal(opts.txKey, obj);
+      const id = rand(6);
+      const n = Math.ceil(text.length / CHUNK);
+      for (let i = 0; i < n; i++) {
+        const body = `mr1.${id}.${i}.${n}.${text.slice(i * CHUNK, (i + 1) * CHUNK)}`;
+        const r = await fetch(`${opts.server}/${opts.pubTopic}`, { method: 'POST', body });
+        if (!r.ok) throw new Error('시그널링 서버 전송 실패: HTTP ' + r.status);
+      }
+    }
+    function close() {
+      closed = true;
+      if (es) es.close();
+    }
+    return { send, close, ready, get closed() { return closed; } };
+  }
+
+  function waitIce(pc, ms) {
+    return new Promise((resolve) => {
+      if (pc.iceGatheringState === 'complete') return resolve();
+      const t = setTimeout(resolve, ms);
+      pc.addEventListener('icegatheringstatechange', () => {
+        if (pc.iceGatheringState === 'complete') { clearTimeout(t); resolve(); }
+      });
+    });
+  }
+
+  return { derive, channel, waitIce, rand };
+})();
+</script>
+<script>
+const SERVER = 'https://ntfy.sh';
+const CLIP_MAX = 60000, MAX_RETRY = 10;
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const hash = new URLSearchParams(location.hash.slice(1) || '');
+const READONLY = hash.has('ro');
+if (READONLY) document.getElementById('ro').style.display = '';
+const BLOCKED_WHEN_RO = new Set(['mm', 'md', 'mu', 'mw', 'kd', 'ku', 'reset', 'clip']);
+const CURSORS = new Set(['default', 'text', 'wait', 'crosshair', 'nwse-resize', 'nesw-resize', 'ew-resize', 'ns-resize', 'move', 'not-allowed', 'pointer', 'progress', 'help']);
+
+let keys = null, pc = null, dc = null, chan = null, sid = null;
+let want = false, ever = false, retry = 0, retryTimer = 0, helloTimer = 0;
+let monitors = [];          // [{idx, mid, width, height, primary, stream, win, video}]
+let mainIdx = 0, lastView = '', cursorCss = 'default';
+let lastClip = null, pendingClip = null;
+let mode = 'sharp';
+try { mode = localStorage.getItem('mr_mode') === 'smooth' ? 'smooth' : 'sharp'; } catch {}
+$('mode').value = mode;
+
+const mainVideo = document.createElement('video');
+window.__rd = { state: 'idle', monitors: 0, frames: 0, fps: {}, cursor: '', clipRx: false, audio: false, connects: 0 };
+
+function msg(s) { $('msg').textContent = s; window.__rd.state = s; }
+function overlay(s) { $('ov').textContent = s; $('ov').style.display = s ? 'flex' : 'none'; }
+function send(o) {
+  if (READONLY && BLOCKED_WHEN_RO.has(o.t)) return;
+  if (dc && dc.readyState === 'open') dc.send(JSON.stringify(o));
+}
+function setupVideo(v) { v.autoplay = true; v.muted = true; v.playsInline = true; v.tabIndex = 0; }
+setupVideo(mainVideo);
+$('stage').appendChild(mainVideo);
+
+function openPopouts() { return monitors.filter((m) => m.win && !m.win.closed); }
+function applyCursor() {
+  mainVideo.style.cursor = cursorCss;
+  for (const m of openPopouts()) if (m.video) m.video.style.cursor = cursorCss;
+}
+// Tell the host which monitors are on screen so it only encodes those.
+function sendView(force) {
+  if (!monitors.length) return;
+  const v = [...new Set([mainIdx, ...openPopouts().map((m) => m.idx)])].sort();
+  const j = JSON.stringify(v);
+  if (!force && j === lastView) return;
+  lastView = j;
+  send({ t: 'view', v });
+}
+setInterval(() => sendView(false), 1000); // also notices closed pop-out windows
+
+// ---- clipboard (text, both directions) --------------------------------------
+async function flushClip(win) {
+  if (pendingClip == null) return;
+  try { await win.navigator.clipboard.writeText(pendingClip); lastClip = pendingClip; pendingClip = null; } catch {}
+}
+async function pushClip(win) {
+  if (!dc) return;
+  try {
+    const s = await win.navigator.clipboard.readText();
+    if (s && s !== lastClip && s.length <= CLIP_MAX) { lastClip = s; pendingClip = null; send({ t: 'clip', s }); return; }
+  } catch {}
+  await flushClip(win);
+}
+function gotClip(s) {
+  window.__rd.clipRx = true;
+  pendingClip = s;
+  const focused = [window, ...openPopouts().map((m) => m.win)].find((w) => w.document.hasFocus());
+  if (focused) flushClip(focused);
+}
+
+// ---- input capture for one window / one monitor --------------------------------
+function attach(win, video, getIdx) {
+  function pos(ev) {
+    const r = video.getBoundingClientRect(), vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return null;
+    const s = Math.min(r.width / vw, r.height / vh), w = vw * s, h = vh * s;
+    const x = (ev.clientX - (r.left + (r.width - w) / 2)) / w, y = (ev.clientY - (r.top + (r.height - h) / 2)) / h;
+    return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
+  }
+  let pending = null;
+  video.addEventListener('pointermove', (ev) => {
+    const p = pos(ev);
+    if (!p) return;
+    if (!pending) win.requestAnimationFrame(() => { send({ t: 'mm', d: getIdx(), x: pending.x, y: pending.y }); pending = null; });
+    pending = p;
+  });
+  video.addEventListener('pointerdown', (ev) => {
+    const p = pos(ev); if (!p) return;
+    ev.preventDefault(); video.focus(); video.setPointerCapture(ev.pointerId);
+    send({ t: 'md', b: ev.button, d: getIdx(), x: p.x, y: p.y }); // 0 left, 1 middle, 2 right, 3 back, 4 forward
+  });
+  video.addEventListener('pointerup', (ev) => {
+    const p = pos(ev); if (!p) return;
+    ev.preventDefault();
+    send({ t: 'mu', b: ev.button, d: getIdx(), x: p.x, y: p.y });
+  });
+  video.addEventListener('wheel', (ev) => {
+    ev.preventDefault();
+    const k = ev.deltaMode === 1 ? 33 : ev.deltaMode === 2 ? 400 : 1;
+    send({ t: 'mw', dx: ev.deltaX * k, dy: ev.deltaY * k });
+  }, { passive: false });
+  for (const t of ['contextmenu', 'auxclick', 'dragstart']) video.addEventListener(t, (ev) => ev.preventDefault());
+  win.addEventListener('mouseup', (ev) => { if (ev.button > 2) ev.preventDefault(); }); // no browser back/forward
+
+  // Key events go through a queue so that "sync clipboard, then Ctrl+V" can
+  // wait briefly without later key events overtaking it.
+  let q = Promise.resolve();
+  const onKey = (ev) => {
+    const tag = win.document.activeElement && win.document.activeElement.tagName;
+    if (!dc || tag === 'INPUT' || tag === 'SELECT') return;
+    ev.preventDefault(); ev.stopPropagation();
+    const o = { t: ev.type === 'keydown' ? 'kd' : 'ku', c: ev.code, k: ev.key };
+    const paste = ev.type === 'keydown' && ev.code === 'KeyV' && ev.ctrlKey && !ev.repeat;
+    q = q.then(async () => {
+      if (paste) await Promise.race([pushClip(win), sleep(250)]);
+      send(o);
+    }).catch(() => {});
+  };
+  win.addEventListener('keydown', onKey, true);
+  win.addEventListener('keyup', onKey, true);
+  win.addEventListener('blur', () => send({ t: 'reset' })); // never leave keys stuck on the host
+  win.addEventListener('focus', () => pushClip(win));
+}
+async function goFullscreen(win) {
+  try {
+    await win.document.documentElement.requestFullscreen();
+    if (win.navigator.keyboard && win.navigator.keyboard.lock) await win.navigator.keyboard.lock();
+  } catch (e) { console.warn(e); }
+}
+attach(window, mainVideo, () => mainIdx);
+$('fs').onclick = () => { goFullscreen(window); mainVideo.focus(); };
+$('mode').onchange = () => {
+  mode = $('mode').value;
+  try { localStorage.setItem('mr_mode', mode); } catch {}
+  send({ t: 'mode', m: mode });
+  mainVideo.focus();
+};
+$('snd').onclick = () => { const a = $('audio'); a.muted = !a.muted; $('snd').textContent = a.muted ? '소리 꺼짐' : '소리 켜짐'; if (!a.muted) a.play().catch(() => {}); };
+
+// ---- monitor windows ---------------------------------------------------------
+function renderBar() {
+  const box = $('mons');
+  box.textContent = '';
+  monitors.forEach((m, i) => {
+    const b = document.createElement('button');
+    b.textContent = `모니터 ${i + 1}`;
+    b.className = i === mainIdx ? 'on' : '';
+    b.title = `${m.width}×${m.height} — 이 창에 표시`;
+    b.onclick = () => { mainIdx = i; mainVideo.srcObject = m.stream; renderBar(); sendView(false); mainVideo.focus(); };
+    const p = document.createElement('button');
+    p.textContent = '↗';
+    p.title = '새 창으로 분리 (다른 모니터로 옮긴 뒤 전체화면)';
+    p.onclick = () => popOut(i);
+    box.append(b, p, ' ');
+  });
+}
+async function popOut(i) {
+  const m = monitors[i];
+  if (m.win && !m.win.closed) { m.win.focus(); return; }
+  // If the browser grants Window Management permission, open directly on another physical screen.
+  let feat = 'popup,width=1280,height=720';
+  try {
+    if ('getScreenDetails' in window) {
+      const sd = await window.getScreenDetails();
+      const used = openPopouts().length;
+      const others = sd.screens.filter((s) => s !== sd.currentScreen);
+      const s = others[used % Math.max(1, others.length)];
+      if (s) feat = `popup,left=${s.availLeft},top=${s.availTop},width=${s.availWidth},height=${s.availHeight}`;
+    }
+  } catch {}
+  const w = window.open('', 'myremote_mon' + i, feat);
+  if (!w) { alert('팝업이 차단되었습니다. 이 페이지의 팝업을 허용해 주세요.'); return; }
+  m.win = w;
+  w.document.title = `My Remote — 모니터 ${i + 1}`;
+  w.document.body.textContent = '';
+  w.document.body.style.cssText = 'margin:0;background:#000;overflow:hidden;height:100vh';
+  const v = w.document.createElement('video');
+  setupVideo(v);
+  v.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;outline:none';
+  v.srcObject = m.stream;
+  m.video = v;
+  const b = w.document.createElement('button');
+  b.textContent = '전체화면';
+  b.style.cssText = 'position:fixed;top:8px;right:8px;z-index:9;font:13px sans-serif;padding:5px 12px;border:0;border-radius:5px;background:#2b6cff;color:#fff;cursor:pointer;opacity:.85';
+  b.onclick = () => { goFullscreen(w); v.focus(); };
+  w.document.addEventListener('fullscreenchange', () => { b.style.display = w.document.fullscreenElement ? 'none' : ''; });
+  w.document.body.append(v, b);
+  attach(w, v, () => i);
+  w.addEventListener('pagehide', () => setTimeout(() => sendView(false), 100));
+  v.play().catch(() => {});
+  applyCursor();
+  sendView(false);
+}
+window.addEventListener('pagehide', () => { for (const m of openPopouts()) m.win.close(); });
+
+// ---- connection ------------------------------------------------------------------
+function cleanupPc() {
+  clearTimeout(helloTimer); clearTimeout(retryTimer);
+  if (chan) { chan.close(); chan = null; }
+  const old = pc;
+  pc = null; dc = null;
+  if (old) { try { old.close(); } catch {} }
+}
+// Full stop: back to the key panel.
+function disconnect(text) {
+  want = false;
+  cleanupPc();
+  for (const m of openPopouts()) m.win.close();
+  monitors = [];
+  mainVideo.srcObject = null;
+  $('audio').srcObject = null;
+  overlay('');
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  $('panel').style.display = 'flex';
+  msg(text || '');
+}
+// Unexpected loss: retry automatically, keeping windows where they are.
+function lost(text) {
+  if (!want) return;
+  cleanupPc();
+  if (ever && retry < MAX_RETRY) {
+    retry++;
+    overlay(`연결이 끊겼습니다. 다시 연결하는 중… (${retry}/${MAX_RETRY})`);
+    window.__rd.state = 'reconnecting';
+    retryTimer = setTimeout(begin, Math.min(15000, 1500 * retry));
+  } else {
+    disconnect(text);
+  }
+}
+$('bye').onclick = () => disconnect('연결을 끊었습니다.');
+
+function onHostMessage(data) {
+  let m;
+  try { m = JSON.parse(data); } catch { return; }
+  if (m.t === 'cur' && CURSORS.has(m.c)) { cursorCss = m.c; window.__rd.cursor = m.c; applyCursor(); }
+  else if (m.t === 'clip' && typeof m.s === 'string' && m.s.length <= CLIP_MAX) gotClip(m.s);
+  else if (m.t === 'bye') disconnect('호스트에서 연결을 종료했습니다.');
+}
+
+async function onOffer(m) {
+  const my = (pc = new RTCPeerConnection({ iceServers: m.ice }));
+  const old = monitors;
+  monitors = m.monitors.map((x) => { const o = old[x.idx]; return { ...x, stream: null, win: o ? o.win : null, video: o ? o.video : null }; });
+  old.slice(monitors.length).forEach((o) => { if (o.win && !o.win.closed) o.win.close(); });
+  if (!ever || mainIdx >= monitors.length) mainIdx = Math.max(0, monitors.findIndex((x) => x.primary));
+  $('snd').style.display = m.audio ? '' : 'none';
+
+  my.ontrack = (e) => {
+    if (e.track.kind === 'audio') { $('audio').srcObject = new MediaStream([e.track]); window.__rd.audio = true; return; }
+    try { e.receiver.jitterBufferTarget = 0; } catch {}
+    try { e.receiver.playoutDelayHint = 0; } catch {}
+    const mon = monitors.find((x) => x.mid === e.transceiver.mid);
+    if (!mon) return;
+    mon.stream = new MediaStream([e.track]);
+    if (mon.idx === mainIdx) mainVideo.srcObject = mon.stream;
+    if (mon.video && mon.win && !mon.win.closed) mon.video.srcObject = mon.stream;
+    renderBar();
+  };
+  my.ondatachannel = (e) => {
+    dc = e.channel;
+    const ready = () => { if (pc === my) sendView(true); };
+    dc.onopen = ready;
+    if (dc.readyState === 'open') ready();
+    dc.onmessage = (ev) => { if (pc === my) onHostMessage(ev.data); };
+    dc.onclose = () => { if (pc === my) lost('연결이 끊어졌습니다.'); };
+  };
+  my.onconnectionstatechange = () => {
+    if (pc !== my) return;
+    const st = my.connectionState;
+    if (st === 'connected') {
+      ever = true; retry = 0;
+      clearTimeout(helloTimer);
+      $('panel').style.display = 'none';
+      overlay('');
+      window.__rd.state = 'connected';
+      window.__rd.monitors = monitors.length;
+      window.__rd.connects++;
+      if (chan) { chan.close(); chan = null; } // signaling no longer needed
+      mainVideo.focus();
+    } else if (st === 'failed') {
+      lost('연결 실패 — 양쪽 네트워크가 직접 연결(P2P)을 막고 있을 수 있습니다. 호스트 설정에 TURN 서버를 추가해야 합니다.');
+    } else if (st === 'disconnected') {
+      setTimeout(() => { if (pc === my && my.connectionState !== 'connected') lost('연결이 끊어졌습니다.'); }, 4000);
+    }
+  };
+  await my.setRemoteDescription({ type: 'offer', sdp: m.sdp });
+  await my.setLocalDescription(await my.createAnswer());
+  await RD.waitIce(my, 2500);
+  if (pc !== my || !chan) return;
+  await chan.send({ t: 'answer', sid, ts: Date.now(), sdp: my.localDescription.sdp });
+  if (!ever) msg('연결 수립 중…');
+}
+
+async function begin() {
+  cleanupPc();
+  const mySid = (sid = RD.rand(16));
+  lastView = '';
+  try {
+    if (!ever) msg('시그널링 서버 연결 중…');
+    const c = (chan = RD.channel({
+      server: SERVER, subTopic: keys.topicClient, pubTopic: keys.topicHost, rxKey: keys.h2c, txKey: keys.c2h,
+      onMessage: (m) => { if (m && m.t === 'offer' && m.sid === sid && !pc) onOffer(m).catch((e) => lost('오류: ' + e.message)); },
+    }));
+    await Promise.race([c.ready, sleep(10000).then(() => { throw new Error('시그널링 서버에 연결할 수 없습니다'); })]);
+    if (sid !== mySid || chan !== c) return;
+    await c.send({ t: 'hello', sid, ts: Date.now(), mode });
+    if (!ever) msg('호스트 응답 대기 중…');
+    helloTimer = setTimeout(() => {
+      if (sid === mySid && (!pc || pc.connectionState !== 'connected')) lost('호스트가 응답하지 않습니다. 호스트 프로그램 실행 여부와 키를 확인하세요.');
+    }, 20000);
+  } catch (e) {
+    if (sid === mySid) lost('오류: ' + e.message);
+  }
+}
+
+async function connect() {
+  const key = $('key').value.trim();
+  try {
+    if ($('remember').checked) localStorage.setItem('mr_key', key); else localStorage.removeItem('mr_key');
+  } catch {}
+  try { keys = await RD.derive(key); } catch (e) { msg('오류: ' + e.message); return; }
+  want = true; ever = false; retry = 0;
+  $('audio').play().catch(() => {}); // unlock audio playback while we have a user gesture
+  begin();
+}
+$('go').onclick = connect;
+$('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
+
+// ---- stats ------------------------------------------------------------------------
+let last = null;
+setInterval(async () => {
+  const my = pc;
+  if (!my || my.connectionState !== 'connected') { $('stats').textContent = ''; last = null; return; }
+  const rep = await my.getStats();
+  let bytes = 0, frames = 0, rtt = null, relay = false, jb = 0, jbn = 0;
+  const fpsByMid = {};
+  rep.forEach((r) => {
+    if (r.type === 'inbound-rtp' && r.kind === 'video') {
+      bytes += r.bytesReceived; frames += r.framesDecoded || 0; fpsByMid[r.mid] = Math.round(r.framesPerSecond || 0);
+      jb += r.jitterBufferDelay || 0; jbn += r.jitterBufferEmittedCount || 0;
+    }
+    if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') {
+      rtt = r.currentRoundTripTime;
+      const rc = rep.get(r.remoteCandidateId), lc = rep.get(r.localCandidateId);
+      relay = (rc && rc.candidateType === 'relay') || (lc && lc.candidateType === 'relay');
+    }
+  });
+  const fps = {};
+  for (const m of monitors) fps[m.idx] = fpsByMid[m.mid] || 0;
+  window.__rd.frames = frames;
+  window.__rd.fps = fps;
+  const now = performance.now();
+  if (last) {
+    const mbps = ((bytes - last.bytes) * 8) / ((now - last.t) / 1000) / 1e6;
+    const buf = jbn > last.jbn ? ((jb - last.jb) / (jbn - last.jbn)) * 1000 : 0;
+    const shown = JSON.parse(lastView || '[]').map((i) => fps[i]).join('/');
+    $('stats').textContent = `${shown} fps · ${mbps.toFixed(1)} Mbps · 왕복 ${rtt != null ? Math.round(rtt * 1000) : '?'} ms · 버퍼 ${Math.round(buf)} ms · ${relay ? 'TURN 중계' : 'P2P 직접'}`;
+  }
+  last = { bytes, t: now, jb, jbn };
+}, 2000);
+
+// ---- boot --------------------------------------------------------------------------
+try { const k = localStorage.getItem('mr_key'); if (k) { $('key').value = k; $('remember').checked = true; } } catch {}
+if (hash.get('k')) { $('key').value = hash.get('k'); history.replaceState(null, '', location.pathname); }
+if (hash.has('auto') && $('key').value) connect();
+</script>
+</body>
+</html>

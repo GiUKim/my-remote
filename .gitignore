@@ -1,0 +1,12 @@
+# Dependencies and downloaded tools (recreated by setup.ps1)
+node_modules/
+tools/
+
+# Build output
+dist/
+
+# Never commit runtime config or anything that could hold an access key
+config.json
+*.key
+*.log
+my-remote-localtest.html
