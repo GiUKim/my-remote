@@ -20,6 +20,7 @@ function teardown(reason, silent) {
   clearTimeout(s.dropTimer);
   api.input('{"t":"reset"}');
   api.session(false);
+  api.hideCursor(false);
   for (const st of s.streams) st.getTracks().forEach((t) => t.stop());
   // Tell the client this was deliberate so it does not auto-reconnect, then close.
   try { if (!silent && s.dc && s.dc.readyState === 'open') s.dc.send(JSON.stringify({ t: 'bye' })); } catch {}
@@ -29,8 +30,9 @@ function teardown(reason, silent) {
   log('세션 종료: ' + reason);
 }
 
-function preferCodec(pc) {
-  const want = 'video/' + String(cfg.codec || 'H264').toLowerCase();
+const CODECS = ['H264', 'VP9', 'AV1', 'VP8'];
+function preferCodec(pc, codec) {
+  const want = 'video/' + codec.toLowerCase();
   for (const tr of pc.getTransceivers()) {
     if (!tr.sender.track || tr.sender.track.kind !== 'video') continue;
     try {
@@ -101,7 +103,10 @@ function onClientMessage(s, dc, data) {
   if (m.t === 'view' && Array.isArray(m.v)) {
     const dim = (n) => Math.max(0, Math.min(16384, Math.round(Number(n) || 0)));
     const need = new Map();
-    for (const e of m.v) if (e && Number.isInteger(e.i) && e.i >= 0 && e.i < s.sources.length) need.set(e.i, { w: dim(e.w), h: dim(e.h) });
+    for (const raw of m.v) {
+      const e = Number.isInteger(raw) ? { i: raw } : raw; // older clients send bare monitor indexes (= full size)
+      if (e && Number.isInteger(e.i) && e.i >= 0 && e.i < s.sources.length) need.set(e.i, { w: dim(e.w), h: dim(e.h) });
+    }
     s.need = need; // empty = every client window is hidden: pause all video
     applyEncoding(s);
   } else if (m.t === 'mode') {
@@ -117,18 +122,23 @@ function onClientMessage(s, dc, data) {
 
 function startChannelTasks(s, dc) {
   const tx = (o) => { if (dc.readyState === 'open') dc.send(JSON.stringify(o)); };
-  // Cursor shape -> client draws the cursor locally.
+  // Cursor shape (or picture) -> the client draws the cursor itself.
   let cur = null;
   s.timers.push(setInterval(async () => {
     const c = await api.cursor();
-    if (c !== cur) { cur = c; tx({ t: 'cur', c }); }
-  }, 40));
+    if (c.k === cur) return;
+    cur = c.k;
+    tx(c.img ? { t: 'cur', img: c.img, hx: c.hx, hy: c.hy } : { t: 'cur', c: c.c });
+  }, 33));
   // Clipboard (text) host -> client.
   if (cfg.clipboard) {
+    let seq = -1;
     s.timers.push(setInterval(async () => {
-      const t = await api.readClip();
+      const r = await api.readClip(seq);
+      seq = r.seq;
+      const t = r.text;
       if (t && t !== s.clip && t.length <= CLIP_MAX) { s.clip = t; tx({ t: 'clip', s: t }); }
-    }, 700));
+    }, 500));
   }
 }
 
@@ -148,6 +158,11 @@ async function startSession(hello) {
   dc.onmessage = (e) => onClientMessage(s, dc, e.data);
   dc.onopen = () => { if (session === s) startChannelTasks(s, dc); };
 
+  // Hide this PC's cursor before capture starts, so the frames carry no cursor (see input.js).
+  s.cursorHidden = await api.hideCursor(true);
+  if (session !== s) return;
+  s.codec = CODECS.includes(hello.codec) ? hello.codec : CODECS.includes(cfg.codec) ? cfg.codec : 'H264';
+
   let audio = false;
   for (let i = 0; i < sources.length; i++) {
     let stream;
@@ -162,7 +177,7 @@ async function startSession(hello) {
     const a = stream.getAudioTracks()[0];
     if (a) pc.addTrack(a, stream);
   }
-  preferCodec(pc);
+  preferCodec(pc, s.codec);
 
   pc.onconnectionstatechange = () => {
     if (session !== s) return;
@@ -181,9 +196,9 @@ async function startSession(hello) {
   await applyEncoding(s);
   await RD.waitIce(pc, 2500);
   if (session !== s) return;
-  const mids = s.videoSenders.map((sender) => pc.getTransceivers().find((t) => t.sender === sender).mid);
+  const mids = (s.mids = s.videoSenders.map((sender) => pc.getTransceivers().find((t) => t.sender === sender).mid));
   await chan.send({
-    t: 'offer', sid: s.sid, ts: Date.now(), sdp: pc.localDescription.sdp, ice: cfg.iceServers, audio,
+    t: 'offer', sid: s.sid, ts: Date.now(), sdp: pc.localDescription.sdp, ice: cfg.iceServers, audio, codec: s.codec, cursorHidden: s.cursorHidden,
     monitors: sources.map((src, i) => ({ idx: i, mid: mids[i], x: src.x, y: src.y, width: src.width, height: src.height, primary: src.primary })),
   });
   log(`offer 전송 (모니터 ${sources.length}개${audio ? ', 소리 포함' : ''})`);
@@ -194,17 +209,25 @@ async function startSession(hello) {
   s.timers.push(setInterval(async () => {
     if (session !== s || pc.connectionState !== 'connected') return;
     const rep = await pc.getStats();
-    let bytes = 0, fps = [], impl = '', codecId = '', rtt = null, kind = '', limit = '';
+    let bytes = 0, fps = [], impl = '', codecId = '', rtt = null, kind = '', limit = '', avail = 0, target = 0;
+    const mons = {};
     rep.forEach((r) => {
       if (r.type === 'outbound-rtp' && r.kind === 'video') {
+        const idx = s.mids.indexOf(r.mid), src = r.mediaSourceId && rep.get(r.mediaSourceId);
+        if (idx >= 0 && r.active !== false) {
+          mons[idx] = { cap: src ? Math.round(src.framesPerSecond || 0) : null, enc: Math.round(r.framesPerSecond || 0), res: (r.frameWidth || 0) + 'x' + (r.frameHeight || 0), limit: r.qualityLimitationReason || 'none', impl: r.encoderImplementation || '' };
+          target += r.targetBitrate || 0;
+        }
         bytes += r.bytesSent; fps.push([Number(r.mid) || 0, r.active === false ? '–' : Math.round(r.framesPerSecond || 0)]);
         impl = r.encoderImplementation || impl; codecId = r.codecId || codecId;
         if (r.qualityLimitationReason && r.qualityLimitationReason !== 'none') limit = r.qualityLimitationReason;
       }
-      if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') { rtt = r.currentRoundTripTime; const lc = rep.get(r.localCandidateId); kind = lc ? lc.candidateType : ''; }
+      if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') { rtt = r.currentRoundTripTime; avail = r.availableOutgoingBitrate || 0; const lc = rep.get(r.localCandidateId); kind = lc ? lc.candidateType : ''; }
     });
     const codec = codecId && rep.get(codecId) ? rep.get(codecId).mimeType.replace('video/', '') : '';
     const now = performance.now();
+    // Host-side numbers for the client's diagnostics report.
+    try { if (s.dc.readyState === 'open') s.dc.send(JSON.stringify({ t: 'hs', codec, enc: impl, availMbps: +(avail / 1e6).toFixed(1), targetMbps: +(target / 1e6).toFixed(1), mons })); } catch {}
     if (last) {
       const mbps = ((bytes - last.bytes) * 8) / ((now - last.t) / 1000) / 1e6;
       const why = limit === 'cpu' ? ' · 제한: 이 PC 성능' : limit === 'bandwidth' ? ' · 제한: 네트워크' : '';
@@ -216,6 +239,32 @@ async function startSession(hello) {
   }, 2000));
 }
 
+// Without a hint the bandwidth estimate starts near 300 kbps and takes several
+// seconds to climb, so every connection begins blurry and choppy. The start value
+// is read from the codec parameters of the remote description.
+function hintStartBitrate(sdp, kbps) {
+  const lines = sdp.split('\r\n');
+  let video = false;
+  const pts = new Set(), withFmtp = new Set();
+  for (const l of lines) {
+    if (l.startsWith('m=')) video = l.startsWith('m=video');
+    else if (video) {
+      const r = /^a=rtpmap:(\d+) (H264|VP8|VP9|AV1)\//i.exec(l); if (r) pts.add(r[1]);
+      const f = /^a=fmtp:(\d+) /.exec(l); if (f) withFmtp.add(f[1]);
+    }
+  }
+  const out = [];
+  video = false;
+  for (const l of lines) {
+    if (l.startsWith('m=')) video = l.startsWith('m=video');
+    const f = video && /^a=fmtp:(\d+) /.exec(l);
+    const r = video && /^a=rtpmap:(\d+) /.exec(l);
+    if (f && pts.has(f[1])) out.push(l + ';x-google-start-bitrate=' + kbps);
+    else { out.push(l); if (r && pts.has(r[1]) && !withFmtp.has(r[1])) out.push('a=fmtp:' + r[1] + ' x-google-start-bitrate=' + kbps); }
+  }
+  return out.join('\r\n');
+}
+
 async function onMessage(m) {
   try {
     if (!m || typeof m.sid !== 'string' || Math.abs(Date.now() - m.ts) > 5 * 60 * 1000) return;
@@ -225,7 +274,7 @@ async function onMessage(m) {
       if (seen.size > 500) seen.clear();
       await startSession(m);
     } else if (m.t === 'answer' && session && m.sid === session.sid && session.pc.signalingState === 'have-local-offer') {
-      await session.pc.setRemoteDescription({ type: 'answer', sdp: m.sdp });
+      await session.pc.setRemoteDescription({ type: 'answer', sdp: hintStartBitrate(m.sdp, 3000) });
       log('answer 수신 — 연결 수립 중');
     }
   } catch (e) {

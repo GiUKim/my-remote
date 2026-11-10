@@ -3,12 +3,17 @@
 // the client is view-only (no input is injected) and a throwaway key/profile is
 // used. Nothing is sent to the internet. Output is English on purpose: Korean is
 // garbled when PowerShell 5.1 pipes it.
-const { BrowserWindow } = require('electron');
+const { BrowserWindow, nativeImage, screen } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
 const input = require('./input');
+
+// --cursor-check: additionally verify, on the real screen, that hiding the host
+// cursor removes it from the video. The cursor on this PC disappears for a few
+// seconds while it runs, so it is not part of the default self-test.
+const CURSOR_CHECK = process.argv.includes('--cursor-check');
 
 // Minimal ntfy-compatible pub/sub: POST /topic, GET /topic/sse
 exports.startRelay = () => new Promise((resolve) => {
@@ -52,6 +57,17 @@ exports.run = async ({ cfg, buildClientHtml, app }) => {
       `x=1.25 on monitor 1 -> desktop x ${past && Math.round(past.px)}`);
   }
 
+  // Picture of an app-specific cursor (read-only; uses the standard arrow as a stand-in).
+  {
+    const koffi = require('koffi');
+    const arrow = koffi.load('user32.dll').func('LoadCursorW', 'uintptr_t', ['uintptr_t', 'uintptr_t'])(0, 32512);
+    const b = input.cursorBitmap(arrow);
+    const url = b ? nativeImage.createFromBitmap(b.bgra, { width: b.width, height: b.height }).toDataURL() : '';
+    check('cursor picture extraction', b && url.startsWith('data:image/png;base64,') && url.length > 150, b ? `${b.width}x${b.height}, hotspot ${b.hx},${b.hy}` : 'null');
+    const dump = process.argv.find((a) => a.startsWith('--dump-cursor='));
+    if (dump && b) fs.writeFileSync(dump.split('=')[1], nativeImage.createFromBitmap(b.bgra, { width: b.width, height: b.height }).resize({ width: b.width * 6, quality: 'nearest' }).toPNG());
+  }
+
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-client-'));
   const file = path.join(dir, 'client.html');
   fs.writeFileSync(file, buildClientHtml());
@@ -88,6 +104,8 @@ exports.run = async ({ cfg, buildClientHtml, app }) => {
       const need = JSON.parse(x.view).find((e) => e.i === main), got = width(x.res[main]);
       return need && got > 0 && got >= need.w - 2 && (need.w >= x.mons[main].w || got < x.mons[main].w);
     }, 15);
+    const encOf = (x) => (x.host && x.host.mons ? Object.entries(x.host.mons).map(([i, m]) => `monitor ${Number(i) + 1} ${m.res} ${m.impl}`).join('; ') : '?');
+    await sleep(4500); s = await state(); info('video encoder: ' + encOf(s) + ' (OpenH264 here means no hardware encoder is being used)');
     check('sends only as many pixels as are shown', ok, `monitor ${main + 1} is ${s.mons[main].w}x${s.mons[main].h}, shown at ${JSON.parse(s.view).map((e) => e.w + 'x' + e.h)[0]}, received ${s.res[main]}`);
 
     await js(`setFit(mainView, '1:1')`);
@@ -118,6 +136,15 @@ exports.run = async ({ cfg, buildClientHtml, app }) => {
       info('single monitor host: monitor switching and overview checks skipped');
     }
 
+    // Pasting must reach the page through the browser's paste event (no clipboard-read permission).
+    w.webContents.focus();
+    w.webContents.paste();
+    [ok, s] = await until((x) => x.pastes > 0, 5);
+    check('paste event is handled without clipboard permission', ok);
+
+    [ok, s] = await until((x) => x.host && x.host.codec && Object.keys(x.host.mons || {}).length > 0, 8);
+    check('host statistics reach the client', ok, ok ? `${s.host.codec} via ${s.host.enc}, available ${s.host.availMbps} Mbps` : '');
+
     info(`audio track: ${s.audio ? 'received' : 'none (normal on a PC without an audio output device)'}`);
     info(`clipboard host->client: ${s.clipRx ? 'received' : 'none (normal when the clipboard holds no text)'}`);
 
@@ -126,6 +153,45 @@ exports.run = async ({ cfg, buildClientHtml, app }) => {
     hostWin.webContents.send('displays-changed');
     [ok, s] = await until((x) => x.connects > before && x.state === 'connected' && x.frames > 20, 40);
     check('renegotiates when the host monitors change', ok, ok ? `still showing monitor ${typeof s.sel === 'number' ? s.sel + 1 : s.sel}` : JSON.stringify(s));
+
+    if (CURSOR_CHECK) {
+      // Compare the pixels under the cursor with the cursor shown and hidden.
+      const pt = screen.getCursorScreenPoint();
+      const displays = screen.getAllDisplays().sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
+      const d = screen.getDisplayNearestPoint(pt), idx = displays.findIndex((x) => x.id === d.id);
+      const lx = Math.round((pt.x - d.bounds.x) * d.scaleFactor), ly = Math.round((pt.y - d.bounds.y) * d.scaleFactor);
+      // A small always-on-top window under the cursor gives the comparison a static background
+      // (and a standard arrow cursor) whatever happens to be on screen.
+      const pad = new BrowserWindow({ x: pt.x - 60, y: pt.y - 60, width: 120, height: 120, frame: false, alwaysOnTop: true, focusable: false, skipTaskbar: true, resizable: false, backgroundColor: '#6a7f96', show: false });
+      pad.setAlwaysOnTop(true, 'screen-saver');
+      pad.showInactive();
+      const grab = async () => {
+        await sleep(2500);
+        return js(`(() => { const v = mainView.panes[0].video, c = document.createElement('canvas'); c.width = c.height = 64;
+          const g = c.getContext('2d'); g.drawImage(v, ${lx} - 8, ${ly} - 8, 64, 64, 0, 0, 64, 64); return Array.from(g.getImageData(0, 0, 64, 64).data); })()`);
+      };
+      const diff = (a, b) => { let n = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]) > 60) n++; return n; };
+      const renegotiate = async () => {
+        const c = (await state()).connects;
+        hostWin.webContents.send('displays-changed');
+        return (await until((x) => x.connects > c && x.state === 'connected' && Number(String(x.res[idx]).split('x')[0]) === x.mons[idx].w, 40))[0];
+      };
+      await js(`setSel(mainView, ${idx}); setFit(mainView, '1:1')`);
+      await until((x) => Number(String(x.res[idx]).split('x')[0]) === x.mons[idx].w, 15);
+      const shown1 = await grab(), shown2 = await grab();
+      cfg.hideHostCursor = true;
+      const okA = await renegotiate();
+      const hidden = await grab();
+      cfg.hideHostCursor = false;
+      const okB = await renegotiate();
+      const shown3 = await grab();
+      const noise = diff(shown1, shown2), gone = diff(shown1, hidden), back = diff(shown1, shown3);
+      check('hiding the host cursor removes it from the video', okA && okB && gone > 30 && gone > noise * 3 && back < gone / 2,
+        `pixels changed under the cursor: noise ${noise}, hidden ${gone}, restored ${back}`);
+      pad.destroy();
+      await js(`setFit(mainView, 'fit')`);
+      s = await state();
+    }
 
     // Host program restarted: same.
     before = s.connects;

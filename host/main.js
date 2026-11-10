@@ -21,10 +21,47 @@ const DEFAULTS = {
   maxFps: 60,
   audio: true,          // send system sound
   clipboard: true,      // two-way text clipboard
+  hideHostCursor: true, // while connected, hide the cursor on this PC so the video has no trailing cursor
 };
 const CLIP_MAX = 60000;
 
 let win = null, tray = null, quitting = false;
+let cursorsHidden = false;
+const cursorMark = () => path.join(app.getPath('userData'), 'cursor-hidden');
+const cursorCache = new Map(); // handle -> { img, hx, hy } | null
+
+function setCursorsHidden(on) {
+  if (on === cursorsHidden) return;
+  if (on) {
+    // If this process dies without restoring, the guard process puts the cursors back.
+    try {
+      const { spawn } = require('child_process');
+      spawn(process.execPath, [path.join(__dirname, 'cursor-guard.js'), String(process.pid)],
+        { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    } catch (e) { console.error('cursor guard', e); }
+    try { fs.writeFileSync(cursorMark(), String(process.pid)); } catch {}
+    input.hideCursors();
+  } else {
+    input.restoreCursors();
+    try { fs.unlinkSync(cursorMark()); } catch {}
+  }
+  cursorsHidden = on;
+}
+function currentCursor() {
+  const st = input.cursorState();
+  if (st.name) return { k: st.key, c: st.name };
+  if (!cursorCache.has(st.key)) {
+    let entry = null;
+    try {
+      const b = input.cursorBitmap(st.handle);
+      if (b) entry = { img: nativeImage.createFromBitmap(b.bgra, { width: b.width, height: b.height }).toDataURL(), hx: b.hx, hy: b.hy };
+    } catch (e) { console.error('cursor bitmap', e); }
+    if (cursorCache.size > 300) cursorCache.clear();
+    cursorCache.set(st.key, entry);
+  }
+  const e = cursorCache.get(st.key);
+  return e ? { k: st.key, img: e.img, hx: e.hx, hy: e.hy } : { k: st.key, c: 'default' };
+}
 let cfg = null;
 let savedCfg = {}; // only what the user set; defaults are not frozen into the file
 
@@ -115,9 +152,13 @@ function createTray() {
 if (!ISOLATED && !app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', showWindow);
-  app.on('before-quit', () => { quitting = true; input.reset(); });
+  app.on('before-quit', () => { quitting = true; input.reset(); setCursorsHidden(false); });
+  process.on('exit', () => { if (cursorsHidden) input.restoreCursors(); });
   app.whenReady().then(async () => {
     loadConfig();
+    if (ISOLATED) cfg.hideHostCursor = false; // local trials share this PC's cursor with the person using it
+    // A previous run that crashed while connected may have left the cursors hidden.
+    if (fs.existsSync(cursorMark())) { input.restoreCursors(); try { fs.unlinkSync(cursorMark()); } catch {} }
     let selftest = null;
     if (ISOLATED) {
       selftest = require('./selftest');
@@ -130,8 +171,14 @@ else {
     ipcMain.handle('sources', getSources);
     ipcMain.on('input', (_e, text) => { try { input.handle(String(text)); } catch (e) { console.error('input', e); } });
     ipcMain.on('log', (_e, text) => console.log('[host]', text));
-    ipcMain.handle('cursor', () => { try { return input.cursorName(); } catch { return 'default'; } });
-    ipcMain.handle('clip-read', () => (cfg.clipboard ? clipboard.readText() : ''));
+    ipcMain.handle('cursor', () => { try { return currentCursor(); } catch { return { k: '0', c: 'default' }; } });
+    ipcMain.handle('cursor-hide', (_e, on) => { try { setCursorsHidden(!!on && !!cfg.hideHostCursor); } catch (e) { console.error('cursor hide', e); } return cursorsHidden; });
+    // Only touch the clipboard when its content actually changed.
+    ipcMain.handle('clip-read', (_e, lastSeq) => {
+      if (!cfg.clipboard) return { seq: 0 };
+      const seq = input.clipSeq();
+      return seq === lastSeq ? { seq } : { seq, text: clipboard.readText() };
+    });
     ipcMain.on('clip-write', (_e, text) => { if (cfg.clipboard && typeof text === 'string' && text.length <= CLIP_MAX) clipboard.writeText(text); });
     ipcMain.on('session', (_e, live) => {
       if (tray) { tray.setImage(icon(!!live)); tray.setToolTip('My Remote Host — ' + (live ? '원격 접속 중' : '대기 중')); }

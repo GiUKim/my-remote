@@ -14,8 +14,9 @@
   button.on { background: #2b6cff; }
   #stats { margin-left: auto; color: #8b94a1; font-size: 12px; }
   #ov { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(10, 12, 15, .72); font-size: 17px; z-index: 3; }
-  #panel, #help { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #14171c; z-index: 5; }
-  #help { display: none; background: rgba(10, 12, 15, .8); z-index: 7; }
+  #panel, #help, #diag { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #14171c; z-index: 5; }
+  #help, #diag { display: none; background: rgba(10, 12, 15, .8); z-index: 7; }
+  #diag textarea { width: 100%; height: 260px; box-sizing: border-box; background: #0e1014; color: #cfd6df; border: 1px solid #3a4350; border-radius: 6px; font: 12px/1.5 Consolas, monospace; padding: 8px; resize: vertical; }
   .box { width: min(460px, 90vw); background: #1d2229; border: 1px solid #2c333d; border-radius: 10px; padding: 22px; }
   #panel input[type=password] { width: 100%; box-sizing: border-box; font: 14px Consolas, monospace; padding: 8px; border-radius: 6px; border: 1px solid #3a4350; background: #0e1014; color: #fff; margin: 8px 0; }
   .box button { background: #2b6cff; padding: 8px 18px; }
@@ -40,6 +41,7 @@
   </select>
   <button id="snd" style="display:none">소리 켜짐</button>
   <button id="keys">단축키</button>
+  <button id="diagBtn" title="느리거나 끊길 때 원인을 찾기 위한 측정값">진단</button>
   <button id="bye">연결 끊기</button>
   <b id="ro" style="display:none;color:#e0b341">보기 전용 (조작 불가)</b>
   <span id="stats"></span>
@@ -58,6 +60,23 @@
   <p><small>이 조합들은 호스트로 전달되지 않습니다. 호스트의 프로그램에서 같은 조합을 써야 하면 아래를 끄세요.</small></p>
   <label><input id="hk" type="checkbox"> 단축키 사용</label>
   <div style="margin-top:12px"><button id="helpClose">닫기</button></div>
+</div></div>
+<div id="diag"><div class="box" style="width:min(640px,92vw)">
+  <h3 style="margin:0 0 8px">진단</h3>
+  <textarea id="diagText" readonly spellcheck="false"></textarea>
+  <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <button id="diagCopy">복사</button>
+    <button id="diagRefresh" style="background:#343c48">새로 고침</button>
+    <button id="diagClose" style="background:#343c48">닫기</button>
+    <span style="margin-left:auto"><small>영상 코덱</small>
+      <select id="codec">
+        <option value="">호스트 기본값</option>
+        <option value="H264">H.264 (그래픽카드 가속)</option>
+        <option value="VP9">VP9</option>
+        <option value="AV1">AV1</option>
+      </select></span>
+  </div>
+  <p style="margin:8px 0 0"><small>코덱을 바꾸면 즉시 다시 연결합니다. 끊김이 있을 때 다른 코덱과 비교해 보세요.</small></p>
 </div></div>
 <div id="panel"><div class="box">
   <h2 style="margin:0 0 6px">My Remote</h2>
@@ -225,10 +244,13 @@ let lastView = '', viewTimer = 0, cursorCss = 'default';
 let lastClip = null, pendingClip = null;
 let mode = store.get('mr_mode') === 'smooth' ? 'smooth' : 'sharp';
 let hotkeysOn = store.get('mr_hotkeys') !== 'off';
+let codec = ['H264', 'VP9', 'AV1'].includes(store.get('mr_codec')) ? store.get('mr_codec') : '';
+let hostStat = null, offerInfo = {};
+const samples = []; // rolling measurements for the diagnostics report
 $('mode').value = mode;
 $('hk').checked = hotkeysOn;
 
-window.__rd = { state: 'idle', monitors: 0, frames: 0, fps: {}, res: {}, cursor: '', clipRx: false, audio: false, connects: 0 };
+window.__rd = { state: 'idle', monitors: 0, frames: 0, fps: {}, res: {}, cursor: '', clipRx: false, audio: false, connects: 0, pastes: 0, host: null };
 
 function msg(s) { $('msg').textContent = s; window.__rd.state = s; }
 function overlay(s) { $('ov').textContent = s; $('ov').style.display = s ? 'flex' : 'none'; }
@@ -250,7 +272,7 @@ function label(sel) {
 function makeView(win, root, isMain) {
   const view = {
     win, root, isMain, sel: 0, fit: 'fit', pan: { x: 0, y: 0 }, panes: [], screenIdx: null,
-    swallow: new Set(), keyQueue: Promise.resolve(), pending: null, raf: 0, lastPtr: null, panDir: null, panRaf: 0, toastTimer: 0,
+    swallow: new Set(), pasteKey: null, pasteTimer: 0, pending: null, raf: 0, lastPtr: null, panDir: null, panRaf: 0, toastTimer: 0,
   };
   const t = (view.toastEl = win.document.createElement('div'));
   t.style.cssText = 'position:absolute;left:50%;top:28px;transform:translateX(-50%);z-index:4;display:none;padding:8px 16px;border-radius:8px;background:rgba(20,23,28,.92);border:1px solid #3a4350;color:#e6e8eb;font:14px "Segoe UI","Malgun Gothic",sans-serif;white-space:nowrap;pointer-events:none';
@@ -410,14 +432,9 @@ async function flushClip(win) {
   if (pendingClip == null) return;
   try { await win.navigator.clipboard.writeText(pendingClip); lastClip = pendingClip; pendingClip = null; } catch {}
 }
-async function pushClip(win) {
-  if (!dc) return;
-  try {
-    const s = await win.navigator.clipboard.readText();
-    if (s && s !== lastClip && s.length <= CLIP_MAX) { lastClip = s; pendingClip = null; send({ t: 'clip', s }); return; }
-  } catch {}
-  await flushClip(win);
-}
+// Client -> host goes through the browser's own "paste" event (see attachKeys):
+// that hands us the clipboard text without the clipboard-read permission, which a
+// local file can never keep and so would be asked for again and again.
 function gotClip(s) {
   window.__rd.clipRx = true;
   pendingClip = s;
@@ -529,27 +546,49 @@ function hotkey(view, ev) {
   return true;
 }
 function attachKeys(view) {
-  const win = view.win;
-  // Key events go through a queue so that "sync clipboard, then Ctrl+V" can
-  // wait briefly without later key events overtaking it.
+  const win = view.win, doc = win.document;
+  const local = () => { const tag = doc.activeElement && doc.activeElement.tagName; return !dc || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA'; };
+  // A paste shortcut is held back until the browser's paste event has given us
+  // the clipboard text, so the host receives "clipboard, then Ctrl+V" in order.
+  const flushPaste = () => {
+    if (!view.pasteKey) return;
+    clearTimeout(view.pasteTimer);
+    const o = view.pasteKey;
+    view.pasteKey = null;
+    send(o);
+  };
   const onKey = (ev) => {
-    const tag = win.document.activeElement && win.document.activeElement.tagName;
-    if (!dc || tag === 'INPUT' || tag === 'SELECT') return;
+    if (local()) return;
+    const o = { t: ev.type === 'keydown' ? 'kd' : 'ku', c: ev.code, k: ev.key };
+    const paste = ev.type === 'keydown' && !ev.repeat && !ev.altKey &&
+      ((ev.code === 'KeyV' && ev.ctrlKey) || (ev.code === 'Insert' && ev.shiftKey && !ev.ctrlKey));
+    if (paste) {
+      ev.stopPropagation(); // not preventDefault: the browser must go on to fire "paste"
+      flushPaste();
+      view.pasteKey = o;
+      view.pasteTimer = setTimeout(flushPaste, 250);
+      return;
+    }
     ev.preventDefault(); ev.stopPropagation();
     if (ev.type === 'keydown') {
       if (hotkey(view, ev)) { view.swallow.add(ev.code); return; }
     } else if (view.swallow.delete(ev.code)) return;
-    const o = { t: ev.type === 'keydown' ? 'kd' : 'ku', c: ev.code, k: ev.key };
-    const paste = ev.type === 'keydown' && ev.code === 'KeyV' && ev.ctrlKey && !ev.repeat;
-    view.keyQueue = view.keyQueue.then(async () => {
-      if (paste) await Promise.race([pushClip(win), sleep(250)]);
-      send(o);
-    }).catch(() => {});
+    flushPaste();
+    send(o);
   };
   win.addEventListener('keydown', onKey, true);
   win.addEventListener('keyup', onKey, true);
-  win.addEventListener('blur', () => { view.swallow.clear(); send({ t: 'reset' }); }); // never leave keys stuck on the host
-  win.addEventListener('focus', () => pushClip(win));
+  doc.addEventListener('paste', (ev) => {
+    if (local()) return;
+    ev.preventDefault();
+    window.__rd.pastes++;
+    const text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
+    if (text && text.length <= CLIP_MAX && text !== lastClip) { lastClip = text; pendingClip = null; send({ t: 'clip', s: text }); }
+    flushPaste();
+  });
+  for (const t of ['copy', 'cut']) doc.addEventListener(t, (ev) => { if (!local()) ev.preventDefault(); });
+  win.addEventListener('blur', () => { view.swallow.clear(); flushPaste(); send({ t: 'reset' }); }); // never leave keys stuck on the host
+  win.addEventListener('focus', () => flushClip(win)); // host -> client text that arrived while we were away
   win.addEventListener('mouseup', (ev) => { if (ev.button > 2) ev.preventDefault(); }); // no browser back/forward
 }
 
@@ -755,7 +794,15 @@ function lost(text) {
 function onHostMessage(data) {
   let m;
   try { m = JSON.parse(data); } catch { return; }
-  if (m.t === 'cur' && CURSORS.has(m.c)) { cursorCss = m.c; window.__rd.cursor = m.c; applyCursor(); }
+  if (m.t === 'cur') {
+    // A standard cursor by name, or the picture of an app-specific one.
+    if (CURSORS.has(m.c)) cursorCss = m.c;
+    else if (typeof m.img === 'string' && m.img.length < 90000 && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(m.img)) cursorCss = `url("${m.img}") ${clamp(m.hx | 0, 0, 127)} ${clamp(m.hy | 0, 0, 127)}, default`;
+    else return;
+    window.__rd.cursor = m.c || 'image';
+    applyCursor();
+  }
+  else if (m.t === 'hs') { hostStat = m; window.__rd.host = m; }
   else if (m.t === 'clip' && typeof m.s === 'string' && m.s.length <= CLIP_MAX) gotClip(m.s);
   else if (m.t === 'bye') disconnect('호스트에서 연결을 종료했습니다.');
   else if (m.t === 'renew') {
@@ -784,6 +831,7 @@ async function onOffer(m) {
   }
   renderBar();
   $('snd').style.display = m.audio ? '' : 'none';
+  offerInfo = { codec: m.codec, cursorHidden: !!m.cursorHidden };
 
   my.ontrack = (e) => {
     if (e.track.kind === 'audio') { $('audio').srcObject = new MediaStream([e.track]); window.__rd.audio = true; return; }
@@ -841,7 +889,7 @@ async function begin() {
     }));
     await Promise.race([c.ready, sleep(10000).then(() => { throw new Error('시그널링 서버에 연결할 수 없습니다'); })]);
     if (sid !== mySid || chan !== c) return;
-    await c.send({ t: 'hello', sid, ts: Date.now(), mode });
+    await c.send({ t: 'hello', sid, ts: Date.now(), mode, codec });
     if (!ever) msg('호스트 응답 대기 중…');
     helloTimer = setTimeout(() => {
       if (sid === mySid && (!pc || pc.connectionState !== 'connected')) lost('호스트가 응답하지 않습니다. 호스트 프로그램 실행 여부와 키를 확인하세요.');
@@ -877,21 +925,38 @@ $('mode').onchange = () => {
 $('snd').onclick = () => { const a = $('audio'); a.muted = !a.muted; $('snd').textContent = a.muted ? '소리 꺼짐' : '소리 켜짐'; if (!a.muted) a.play().catch(() => {}); };
 $('keys').onclick = () => { $('help').style.display = 'flex'; };
 $('helpClose').onclick = () => { $('help').style.display = 'none'; if (mainView.panes[0]) mainView.panes[0].video.focus(); };
+$('codec').value = codec;
+$('codec').onchange = () => {
+  codec = $('codec').value;
+  store.set('mr_codec', codec || null);
+  if (want && ever) { $('diag').style.display = 'none'; overlay('코덱을 바꿔 다시 연결합니다…'); samples.length = 0; begin(); }
+};
+$('diagBtn').onclick = () => { $('diagText').value = buildReport(); $('diag').style.display = 'flex'; };
+$('diagRefresh').onclick = () => { $('diagText').value = buildReport(); };
+$('diagClose').onclick = () => { $('diag').style.display = 'none'; if (mainView.panes[0]) mainView.panes[0].video.focus(); };
+$('diagCopy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('diagText').value); $('diagCopy').textContent = '복사됨'; }
+  catch { $('diagText').select(); document.execCommand('copy'); $('diagCopy').textContent = '복사됨'; }
+  setTimeout(() => { $('diagCopy').textContent = '복사'; }, 1500);
+};
 $('hk').onchange = () => { hotkeysOn = $('hk').checked; store.set('mr_hotkeys', hotkeysOn ? 'on' : 'off'); };
 
-// ---- stats ---------------------------------------------------------------------------
+// ---- stats and diagnostics ------------------------------------------------------------
 let last = null;
 setInterval(async () => {
   const my = pc;
   if (!my || my.connectionState !== 'connected') { $('stats').textContent = ''; last = null; return; }
   const rep = await my.getStats();
   let bytes = 0, frames = 0, rtt = null, relay = false, jb = 0, jbn = 0;
+  let lost = 0, recv = 0, freezes = 0, freezeDur = 0, dropped = 0, nack = 0, pli = 0, decoder = '';
   const byMid = {};
   rep.forEach((r) => {
     if (r.type === 'inbound-rtp' && r.kind === 'video') {
       bytes += r.bytesReceived; frames += r.framesDecoded || 0;
       byMid[r.mid] = { fps: Math.round(r.framesPerSecond || 0), res: (r.frameWidth || 0) + 'x' + (r.frameHeight || 0) };
       jb += r.jitterBufferDelay || 0; jbn += r.jitterBufferEmittedCount || 0;
+      lost += r.packetsLost || 0; recv += r.packetsReceived || 0; freezes += r.freezeCount || 0; freezeDur += r.totalFreezesDuration || 0;
+      dropped += r.framesDropped || 0; nack += r.nackCount || 0; pli += r.pliCount || 0; decoder = r.decoderImplementation || decoder;
     }
     if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') {
       rtt = r.currentRoundTripTime;
@@ -906,12 +971,44 @@ setInterval(async () => {
   if (last) {
     const mbps = ((bytes - last.bytes) * 8) / ((now - last.t) / 1000) / 1e6;
     const buf = jbn > last.jbn ? ((jb - last.jb) / (jbn - last.jbn)) * 1000 : 0;
-    let shown = '';
-    try { shown = JSON.parse(lastView || '[]').map((e) => `${e.i + 1}:${fps[e.i]}`).join(' '); } catch {}
-    $('stats').textContent = `${shown} fps · ${mbps.toFixed(1)} Mbps · 왕복 ${rtt != null ? Math.round(rtt * 1000) : '?'} ms · 버퍼 ${Math.round(buf)} ms · ${relay ? 'TURN 중계' : 'P2P 직접'}`;
+    let viewed = [];
+    try { viewed = JSON.parse(lastView || '[]').map((e) => e.i); } catch {}
+    $('stats').textContent = `${viewed.map((i) => `${i + 1}:${fps[i]}`).join(' ')} fps · ${mbps.toFixed(1)} Mbps · 왕복 ${rtt != null ? Math.round(rtt * 1000) : '?'} ms · 버퍼 ${Math.round(buf)} ms · ${relay ? 'TURN 중계' : 'P2P 직접'}`;
+    samples.push({ t: Date.now(), viewed, fps, res, mbps, rtt: rtt != null ? rtt * 1000 : null, buf, relay, lost, recv, freezes, freezeDur, dropped, nack, pli, decoder, host: hostStat });
+    if (samples.length > 45) samples.shift(); // about 90 seconds
   }
   last = { bytes, t: now, jb, jbn };
 }, 2000);
+
+// Plain-text summary of the last ~90 seconds, for finding out why it feels slow.
+function buildReport() {
+  const n = samples.length;
+  if (n < 3) return '아직 측정값이 부족합니다. 접속하고 10초쯤 사용한 뒤 "새로 고침"을 눌러 주세요.';
+  const a = samples[0], b = samples[n - 1];
+  const num = (list) => list.filter((x) => typeof x === 'number' && isFinite(x));
+  const avg = (list) => { const v = num(list); return v.length ? v.reduce((x, y) => x + y, 0) / v.length : 0; };
+  const mmm = (list) => { const v = num(list); return v.length ? `${Math.min(...v)}/${Math.round(avg(v))}/${Math.max(...v)}` : '-'; };
+  const pk = (b.lost - a.lost) + (b.recv - a.recv);
+  const L = [];
+  L.push(`My Remote 진단 — ${new Date().toLocaleString()}`);
+  L.push(`구간: 최근 ${Math.round((b.t - a.t) / 1000)}초`);
+  L.push(`브라우저: ${(navigator.userAgent.match(/(Edg|Chrome)\/[\d.]+/g) || ['?']).pop()} · 이 화면 ${screen.width}x${screen.height} 배율 ${window.devicePixelRatio}`);
+  L.push('창: ' + liveViews().map((v) => `[${v.sel === 'all' ? '전체 보기' : '모니터 ' + (v.sel + 1)} ${v.fit} ${v.root.clientWidth}x${v.root.clientHeight}${v.win.document.fullscreenElement ? ' 전체화면' : ''}]`).join(' '));
+  L.push('호스트 모니터: ' + monitors.map((m) => `${m.width}x${m.height}`).join(', '));
+  L.push(`연결: ${b.relay ? 'TURN 중계' : 'P2P 직접'} · 왕복 지연 평균 ${Math.round(avg(samples.map((x) => x.rtt)))} ms, 최대 ${Math.round(Math.max(0, ...num(samples.map((x) => x.rtt))))} ms`);
+  const h = b.host;
+  L.push(`코덱: ${h ? h.codec : offerInfo.codec || '?'} · 인코더 ${h ? h.enc : '?'} · 디코더 ${b.decoder || '?'}`);
+  L.push(`대역폭: 수신 평균 ${avg(samples.map((x) => x.mbps)).toFixed(1)} Mbps (최대 ${Math.max(...num(samples.map((x) => x.mbps))).toFixed(1)})${h ? ` · 호스트 목표 ${h.targetMbps} / 가용 ${h.availMbps} Mbps` : ''}`);
+  for (const i of b.viewed) {
+    const hm = samples.map((x) => x.host && x.host.mons && x.host.mons[i]).filter(Boolean);
+    const limits = [...new Set(hm.map((x) => x.limit))].join(',') || '?';
+    L.push(`모니터 ${i + 1}: 수신 fps 최소/평균/최대 ${mmm(samples.map((x) => x.fps[i]))} · 수신 해상도 ${b.res[i]} · 호스트 캡처 fps ${mmm(hm.map((x) => x.cap))} → 인코딩 fps ${mmm(hm.map((x) => x.enc))} · 제한 요인 ${limits}`);
+  }
+  L.push(`끊김: 화면 멈춤 ${b.freezes - a.freezes}회 (${(b.freezeDur - a.freezeDur).toFixed(1)}초) · 버린 프레임 ${b.dropped - a.dropped} · 패킷 손실 ${pk > 0 ? (((b.lost - a.lost) / pk) * 100).toFixed(2) : '0'}% · 재전송 요청 ${b.nack - a.nack} · 키프레임 요청 ${b.pli - a.pli}`);
+  L.push(`수신 버퍼 지연: 평균 ${Math.round(avg(samples.map((x) => x.buf)))} ms, 최대 ${Math.round(Math.max(0, ...num(samples.map((x) => x.buf))))} ms`);
+  L.push(`화질 모드: ${mode} · 호스트 커서 숨김: ${offerInfo.cursorHidden ? '예' : '아니오'}`);
+  return L.join('\n');
+}
 
 // ---- boot ----------------------------------------------------------------------------
 { const k = store.get('mr_key'); if (k) { $('key').value = k; $('remember').checked = true; } }

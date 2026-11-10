@@ -59,8 +59,17 @@ self-test, opens a view-only client in their default browser).
   later needs admin rights.
 - **Lock screen / UAC** are on a separate secure desktop: they cannot be captured or controlled by a
   normal-user process. This is the main functional limitation, not a bug to "fix" with a quick patch.
-- **Cursor cannot be removed from the captured video** in Chromium (`cursor: 'never'` is ignored). The
-  client therefore mirrors the host cursor *shape* locally and the in-video cursor trails behind it.
+- **Cursor and the captured video.** Chromium always paints the cursor into captured frames
+  (`cursor: 'never'` is ignored, and hiding it with the Magnification API does not affect capture). The
+  host therefore swaps the system cursors for a transparent one (`SetSystemCursor`) *before* capture
+  starts and restores them with `SPI_SETCURSORS` when the session ends. Order matters: the capturer
+  caches cursor pictures by handle, so a swap made after capture has started has no effect. Handles do
+  not change, so reading the current cursor still works. `cursor-guard.js` restores the cursors if the
+  host dies; a marker file in userData triggers a restore on the next start. App-specific cursors are
+  not system cursors, so they stay in the video; their picture is sent so the client shows the same shape.
+- **Clipboard read permission cannot be kept by a `file://` page**, so the client never calls
+  `navigator.clipboard.readText()`. Client-to-host text comes from the browser's `paste` event: the
+  paste shortcut is not `preventDefault`ed and its key-down is held until the event has delivered the text.
 - **Console output encoding**: Korean text printed by the host is garbled in a PowerShell 5.1 pipe, so
   self-test output is English. Keep it that way. Keep `setup.ps1` ASCII-only for the same reason.
 - **Same-PC control is unusable** (the injected cursor jumps under the viewer window). That is why
@@ -73,6 +82,7 @@ Run from `host/` with Electron's env var cleared.
 | Command | What it does |
 |---|---|
 | `npm run selftest` | Local end-to-end test, prints `[selftest] PASS/FAIL` lines, exits 0 or 1 |
+| `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first |
 | `npm run localtest` | Local trial: host window plus view-only client in the default browser |
 | `npm start` | The real host (connects to the signaling server). User-initiated only |
 | `npm run build-client` | Regenerates `../my-remote-client.html` from the template and `signal.js` |
@@ -91,7 +101,8 @@ regenerated `my-remote-client.html`, then run `npm run selftest`.
 | `host/main.js` | Electron main: config and key storage, monitor enumeration, tray, IPC, isolated modes |
 | `host/preload.js` | The only bridge between the renderer and main (`window.hostApi`) |
 | `host/host.html`, `host/host.js` | Host UI and the WebRTC side: capture, encoding control, data-channel routing |
-| `host/input.js` | Win32 `SendInput` and cursor-shape lookup through koffi FFI |
+| `host/input.js` | Win32 through koffi FFI: `SendInput`, cursor shape and picture, hiding/restoring the system cursors |
+| `host/cursor-guard.js` | Separate small process that restores the cursors if the host process dies |
 | `host/signal.js` | Shared by host and client: key derivation, encrypted signaling channel |
 | `host/client.template.html` | Client source; `signal.js` is inlined into it at build time |
 | `host/build-client.js` | Builds the client file |
@@ -104,12 +115,13 @@ direction) and two topic names.
 
 Signaling (through the relay, each message deflated, encrypted, chunked to 3000 chars):
 
-1. client -> host topic: `{t:'hello', sid, ts, mode}`
-2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, monitors:[{idx, mid, x, y, width, height, primary}]}`
+1. client -> host topic: `{t:'hello', sid, ts, mode, codec}` (`codec` optional: `H264`, `VP9`, `AV1`)
+2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, codec, cursorHidden, monitors:[{idx, mid, x, y, width, height, primary}]}`
    (`x`,`y`,`width`,`height` are the monitor's rectangle on the host's virtual desktop, physical pixels)
 3. client -> host topic: `{t:'answer', sid, ts, sdp}`
 
-ICE is non-trickle (candidates are gathered before sending). The host rejects messages older than five
+The host appends `x-google-start-bitrate` to the answer's video codec parameters so the bandwidth
+estimate does not start near 300 kbps. ICE is non-trickle (candidates are gathered before sending). The host rejects messages older than five
 minutes and replayed `sid` values. A new `hello` replaces the current session.
 
 Data channel `input` (JSON text):
@@ -122,7 +134,8 @@ Data channel `input` (JSON text):
 | client -> host | `view` | `v` = `[{i, w, h}]`: monitors on screen and the size each is shown at, in device pixels (`0` = full size). The host pauses the rest, scales down to the shown size (never up) and splits bitrate by pixels sent |
 | client -> host | `mode` | `sharp` or `smooth` |
 | both | `clip` | Clipboard text, at most 60000 chars |
-| host -> client | `cur` | CSS cursor name for the current host cursor |
+| host -> client | `cur` | Current host cursor: `c` = CSS cursor name, or `img` (PNG data URL) with hotspot `hx`,`hy` for an app-specific cursor |
+| host -> client | `hs` | Host-side statistics every 2 s (codec, encoder, bitrate, per-monitor capture/encode fps and limiting factor) for the client's diagnostics report |
 | host -> client | `bye` | Deliberate close; the client must not auto-reconnect |
 | host -> client | `renew` | Host monitors changed; the client reconnects at once and keeps its windows |
 
@@ -148,9 +161,12 @@ aspect ratio, so pointer mapping is a plain proportion of the element. Policy, i
 ## Verified and unverified
 
 Verified by `--selftest` on one PC with three 1080p monitors: connection, hardware H.264 encoding,
-cursor sync, per-monitor pause and switch, size-aware downscaling, 1:1 mode, overview, shortcuts, the
+cursor sync, cursor picture extraction, the paste-event path, host statistics, per-monitor pause and switch, size-aware downscaling, 1:1 mode, overview, shortcuts, the
 layout plan, renegotiation on a (simulated) monitor change, auto reconnect, and the coordinate math for
-dragging across monitors of different sizes. Input injection was verified separately.
+dragging across monitors of different sizes. Input injection was verified separately, and
+`--cursor-check` confirmed on the real screen that hiding the host cursor removes it from the video and
+that it is restored afterwards. The hardware encoder is used at window-sized and full resolutions; the
+small overview tiles (480x270) fall back to OpenH264 and the hardware encoder returns afterwards.
 
 Not verified: anything that needs a real multi-monitor client (spreading windows across screens,
 dragging between windows, popup and fullscreen behaviour), hosts with mixed resolutions, DPI scales,

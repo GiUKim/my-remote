@@ -142,10 +142,104 @@ for (const [id, css] of Object.entries(IDC)) {
   const h = LoadCursorW(0, Number(id));
   if (h) cursorByHandle.set(String(h), css);
 }
-function cursorName() {
-  const ci = { cbSize: koffi.sizeof(CURSORINFO), flags: 0, hCursor: 0, pt: { x: 0, y: 0 } };
-  if (!GetCursorInfo(ci)) return 'default';
-  return cursorByHandle.get(String(ci.hCursor)) || 'default'; // app-specific cursors fall back to the arrow
+// App-specific cursors (Office, design tools...) have no CSS name, so their picture
+// is sent instead. The cursor is drawn on black and on white; the difference gives
+// the alpha, which handles colour, masked and alpha-blended cursors the same way.
+const gdi32 = koffi.load('gdi32.dll');
+const ICONINFO = koffi.struct('ICONINFO', { fIcon: 'int', xHotspot: 'uint32', yHotspot: 'uint32', hbmMask: 'uintptr_t', hbmColor: 'uintptr_t' });
+const BITMAP = koffi.struct('BITMAP', { bmType: 'long', bmWidth: 'long', bmHeight: 'long', bmWidthBytes: 'long', bmPlanes: 'uint16', bmBitsPixel: 'uint16', bmBits: 'uintptr_t' });
+const RECT = koffi.struct('RECT', { left: 'long', top: 'long', right: 'long', bottom: 'long' });
+const BITMAPINFOHEADER = koffi.struct('BITMAPINFOHEADER', {
+  biSize: 'uint32', biWidth: 'long', biHeight: 'long', biPlanes: 'uint16', biBitCount: 'uint16', biCompression: 'uint32',
+  biSizeImage: 'uint32', biXPelsPerMeter: 'long', biYPelsPerMeter: 'long', biClrUsed: 'uint32', biClrImportant: 'uint32',
+});
+const GetIconInfo = user32.func('GetIconInfo', 'bool', ['uintptr_t', koffi.out(koffi.pointer(ICONINFO))]);
+const GetObjectW = gdi32.func('GetObjectW', 'int', ['uintptr_t', 'int', koffi.out(koffi.pointer(BITMAP))]);
+const DeleteObject = gdi32.func('DeleteObject', 'bool', ['uintptr_t']);
+const GetDC = user32.func('GetDC', 'uintptr_t', ['uintptr_t']);
+const ReleaseDC = user32.func('ReleaseDC', 'int', ['uintptr_t', 'uintptr_t']);
+const CreateCompatibleDC = gdi32.func('CreateCompatibleDC', 'uintptr_t', ['uintptr_t']);
+const DeleteDC = gdi32.func('DeleteDC', 'bool', ['uintptr_t']);
+const CreateCompatibleBitmap = gdi32.func('CreateCompatibleBitmap', 'uintptr_t', ['uintptr_t', 'int', 'int']);
+const SelectObject = gdi32.func('SelectObject', 'uintptr_t', ['uintptr_t', 'uintptr_t']);
+const GetStockObject = gdi32.func('GetStockObject', 'uintptr_t', ['int']);
+const FillRect = user32.func('FillRect', 'int', ['uintptr_t', koffi.pointer(RECT), 'uintptr_t']);
+const DrawIconEx = user32.func('DrawIconEx', 'bool', ['uintptr_t', 'int', 'int', 'uintptr_t', 'int', 'int', 'uint32', 'uintptr_t', 'uint32']);
+const GetDIBits = gdi32.func('GetDIBits', 'int', ['uintptr_t', 'uintptr_t', 'uint32', 'uint32', 'uint8*', koffi.inout(koffi.pointer(BITMAPINFOHEADER)), 'uint32']);
+
+function drawCursor(h, w, hgt, white) {
+  const screenDc = GetDC(0), dc = CreateCompatibleDC(screenDc), bmp = CreateCompatibleBitmap(screenDc, w, hgt);
+  const old = SelectObject(dc, bmp);
+  FillRect(dc, { left: 0, top: 0, right: w, bottom: hgt }, GetStockObject(white ? 0 : 4));
+  DrawIconEx(dc, 0, 0, h, 0, 0, 0, 0, 3);
+  SelectObject(dc, old);
+  const buf = Buffer.alloc(w * hgt * 4);
+  const bmi = { biSize: 40, biWidth: w, biHeight: -hgt, biPlanes: 1, biBitCount: 32, biCompression: 0, biSizeImage: 0, biXPelsPerMeter: 0, biYPelsPerMeter: 0, biClrUsed: 0, biClrImportant: 0 };
+  const rows = GetDIBits(screenDc, bmp, 0, hgt, buf, bmi, 0);
+  DeleteObject(bmp); DeleteDC(dc); ReleaseDC(0, screenDc);
+  return rows ? buf : null;
+}
+// -> { width, height, hx, hy, bgra } (premultiplied BGRA) or null
+function cursorBitmap(h) {
+  const ii = {};
+  if (!GetIconInfo(h, ii)) return null;
+  const bm = {};
+  const got = GetObjectW(ii.hbmMask, koffi.sizeof(BITMAP), bm);
+  const colour = !!ii.hbmColor;
+  if (ii.hbmMask) DeleteObject(ii.hbmMask);
+  if (ii.hbmColor) DeleteObject(ii.hbmColor);
+  if (!got) return null;
+  const w = bm.bmWidth, hgt = colour ? bm.bmHeight : bm.bmHeight / 2;
+  if (!(w > 0 && hgt > 0 && w <= 128 && hgt <= 128)) return null;
+  const k = drawCursor(h, w, hgt, false), wh = drawCursor(h, w, hgt, true);
+  if (!k || !wh) return null;
+  const out = Buffer.alloc(w * hgt * 4);
+  let visible = 0;
+  for (let i = 0; i < out.length; i += 4) {
+    const d = Math.max(wh[i] - k[i], wh[i + 1] - k[i + 1], wh[i + 2] - k[i + 2]);
+    if (k[i] > wh[i] + 32 || k[i + 1] > wh[i + 1] + 32 || k[i + 2] > wh[i + 2] + 32) {
+      // "Inverting" pixel (white on black, black on white): draw it dark and opaque.
+      out[i] = out[i + 1] = out[i + 2] = 0x18; out[i + 3] = 255;
+    } else {
+      const a = Math.max(0, Math.min(255, 255 - d));
+      out[i] = Math.min(k[i], a); out[i + 1] = Math.min(k[i + 1], a); out[i + 2] = Math.min(k[i + 2], a); out[i + 3] = a;
+    }
+    if (out[i + 3] > 24) visible++;
+  }
+  if (!visible) return null;
+  return { width: w, height: hgt, hx: Math.min(ii.xHotspot, w - 1), hy: Math.min(ii.yHotspot, hgt - 1), bgra: out };
 }
 
-module.exports = { handle, reset, setMonitors, cursorName, target };
+// Current host cursor: { key, name } for a standard cursor, { key, bitmap } for an app-specific one.
+function cursorState() {
+  const ci = { cbSize: koffi.sizeof(CURSORINFO), flags: 0, hCursor: 0, pt: { x: 0, y: 0 } };
+  if (!GetCursorInfo(ci) || !ci.hCursor) return { key: '0', name: 'default' };
+  const key = String(ci.hCursor);
+  const name = cursorByHandle.get(key);
+  return name ? { key, name } : { key, handle: ci.hCursor };
+}
+
+// ---- hiding the host cursor during a session --------------------------------
+// Chromium always paints the cursor into captured frames, and it reads the cursor
+// picture from the system. Swapping the system cursors for a transparent one
+// before capture starts therefore gives cursor-free video, so the only cursor the
+// remote user sees is the one their own machine draws, with no trailing copy.
+// SPI_SETCURSORS reloads the user's real cursors. Handles stay the same across
+// both, so cursorState() keeps working while hidden.
+const CreateCursor = user32.func('CreateCursor', 'uintptr_t', ['uintptr_t', 'int', 'int', 'int', 'int', 'uint8*', 'uint8*']);
+const SetSystemCursor = user32.func('SetSystemCursor', 'bool', ['uintptr_t', 'uint32']);
+const SystemParametersInfoW = user32.func('SystemParametersInfoW', 'bool', ['uint32', 'uint32', 'uintptr_t', 'uint32']);
+function hideCursors() {
+  let ok = 0;
+  for (const id of Object.keys(IDC)) {
+    const h = CreateCursor(0, 0, 0, 32, 32, Buffer.alloc(128, 0xff), Buffer.alloc(128, 0x00)); // fully transparent
+    if (h && SetSystemCursor(h, Number(id))) ok++; // SetSystemCursor takes ownership of h
+  }
+  return ok;
+}
+function restoreCursors() { return SystemParametersInfoW(0x0057, 0, 0, 0); }
+
+// Changes whenever the clipboard content changes; reading it does not open the clipboard.
+const GetClipboardSequenceNumber = user32.func('GetClipboardSequenceNumber', 'uint32', []);
+
+module.exports = { handle, reset, setMonitors, target, cursorState, cursorBitmap, hideCursors, restoreCursors, clipSeq: () => GetClipboardSequenceNumber() };
