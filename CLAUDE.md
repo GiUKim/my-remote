@@ -105,7 +105,8 @@ direction) and two topic names.
 Signaling (through the relay, each message deflated, encrypted, chunked to 3000 chars):
 
 1. client -> host topic: `{t:'hello', sid, ts, mode}`
-2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, monitors:[{idx, mid, width, height, primary}]}`
+2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, monitors:[{idx, mid, x, y, width, height, primary}]}`
+   (`x`,`y`,`width`,`height` are the monitor's rectangle on the host's virtual desktop, physical pixels)
 3. client -> host topic: `{t:'answer', sid, ts, sdp}`
 
 ICE is non-trickle (candidates are gathered before sending). The host rejects messages older than five
@@ -115,24 +116,44 @@ Data channel `input` (JSON text):
 
 | Direction | Message | Meaning |
 |---|---|---|
-| client -> host | `mm` `md` `mu` `mw` | Mouse move/down/up/wheel; `d` = monitor index, `x`,`y` = 0..1 within that monitor |
+| client -> host | `mm` `md` `mu` `mw` | Mouse move/down/up/wheel; `d` = monitor index, `x`,`y` = 0..1 within that monitor. During a drag they may leave 0..1, which continues onto the neighbouring monitor |
 | client -> host | `kd` `ku` | Key down/up; `c` = `KeyboardEvent.code`, `k` = `key` |
 | client -> host | `reset` | Release every held key and button |
-| client -> host | `view` | `v` = monitor indexes on screen; the host pauses encoding of the rest |
+| client -> host | `view` | `v` = `[{i, w, h}]`: monitors on screen and the size each is shown at, in device pixels (`0` = full size). The host pauses the rest, scales down to the shown size (never up) and splits bitrate by pixels sent |
 | client -> host | `mode` | `sharp` or `smooth` |
 | both | `clip` | Clipboard text, at most 60000 chars |
 | host -> client | `cur` | CSS cursor name for the current host cursor |
 | host -> client | `bye` | Deliberate close; the client must not auto-reconnect |
+| host -> client | `renew` | Host monitors changed; the client reconnects at once and keeps its windows |
 
 Monitor coordinates are physical pixels (`screen.dipToScreenRect`), mapped to the 0..65535 virtual
 desktop range for `SendInput`. Keys are sent as set-1 scancodes so the host's keyboard layout applies;
 `HangulMode`/`HanjaMode` and a few others go by virtual-key code.
 
+## Client layout model
+
+Each client window is a *view*: it shows one host monitor (`sel` = index) or all of them in their real
+arrangement (`sel` = `'all'`), in `fit` or `1:1` mode. The video element is sized to the monitor's exact
+aspect ratio, so pointer mapping is a plain proportion of the element. Policy, in `client.template.html`:
+
+- `planLayout(N, M, cur, primary)` decides which host monitor goes on which client screen (both sorted
+  left to right): all N on neighbouring screens when N <= M, otherwise M neighbouring monitors around the
+  primary. The result is remembered per `N:M` in localStorage.
+- Selecting a monitor that another window shows swaps the two, so a monitor is never shown twice.
+- `Ctrl+Alt` + arrows / digits / Enter are local shortcuts and are not forwarded (user can turn them off).
+- An exact integer enlargement is drawn with `image-rendering: pixelated`; anything else is smoothed.
+- Browsers allow one popup and one fullscreen request per click, so each extra window needs a click.
+  Do not try to work around this; a native client would be the way to remove it.
+
 ## Verified and unverified
 
 Verified by `--selftest` on one PC with three 1080p monitors: connection, hardware H.264 encoding,
-cursor sync, per-monitor pause and switch, auto reconnect. Input injection was verified separately.
+cursor sync, per-monitor pause and switch, size-aware downscaling, 1:1 mode, overview, shortcuts, the
+layout plan, renegotiation on a (simulated) monitor change, auto reconnect, and the coordinate math for
+dragging across monitors of different sizes. Input injection was verified separately.
 
-Not verified: any connection across two different networks, real-world latency, TURN, audio audibility,
+Not verified: anything that needs a real multi-monitor client (spreading windows across screens,
+dragging between windows, popup and fullscreen behaviour), hosts with mixed resolutions, DPI scales,
+portrait or ultrawide monitors, monitors wider than 4096 px with H.264, any connection across two different networks, real-world latency, TURN, audio audibility,
 client-to-host clipboard, the packaged exe, behaviour with monitors powered off. Say so when the user
 asks how well it works; do not present these as working.

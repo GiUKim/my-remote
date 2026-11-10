@@ -12,7 +12,7 @@ function log(s) {
 }
 function status(text, cls) { $('status').textContent = text; $('dot').className = 'dot ' + cls; }
 
-function teardown(reason) {
+function teardown(reason, silent) {
   if (!session) return;
   const s = session;
   session = null;
@@ -22,7 +22,7 @@ function teardown(reason) {
   api.session(false);
   for (const st of s.streams) st.getTracks().forEach((t) => t.stop());
   // Tell the client this was deliberate so it does not auto-reconnect, then close.
-  try { if (s.dc && s.dc.readyState === 'open') s.dc.send(JSON.stringify({ t: 'bye' })); } catch {}
+  try { if (!silent && s.dc && s.dc.readyState === 'open') s.dc.send(JSON.stringify({ t: 'bye' })); } catch {}
   setTimeout(() => { try { s.pc.close(); } catch {} }, 200);
   $('stats').textContent = '';
   status('대기 중 — 접속을 기다리는 중', 'ok');
@@ -41,20 +41,40 @@ function preferCodec(pc) {
   }
 }
 
-// Applies bitrate / fps / quality mode, and pauses encoding of monitors the
-// client is not looking at. Calls are serialized: setParameters must not overlap.
+// What to send for each monitor, from what the client says it is showing:
+//  - not on screen             -> encoding paused
+//  - shown smaller than source -> scaled down to (at least) the shown size, never up
+//  - bitrate follows the pixels actually sent, within a total cap
+const SCALE_STEPS = [1, 1.25, 1.5, 2, 2.5, 3, 4, 6, 8];
+function encodingPlan(s) {
+  const plan = s.sources.map((src, i) => {
+    const need = s.need.get(i);
+    if (!need) return null;
+    const f = need.w > 0 && need.h > 0 ? Math.max(src.width / need.w, src.height / need.h) : 1;
+    const scale = SCALE_STEPS.filter((x) => x <= f + 0.01).pop() || 1;
+    const px = (src.width / scale) * (src.height / scale);
+    return { scale, mbps: Math.max(1.5, cfg.mbpsPer1080p * Math.pow(px / (1920 * 1080), 0.75)) };
+  });
+  const total = plan.reduce((a, p) => a + (p ? p.mbps : 0), 0);
+  if (total > cfg.maxTotalMbps) for (const p of plan) if (p) p.mbps *= cfg.maxTotalMbps / total;
+  return plan;
+}
+
+// Applies the plan plus fps / quality mode. Calls are serialized: setParameters must not overlap.
 function applyEncoding(s) {
   s.encQueue = s.encQueue.then(async () => {
     if (session !== s) return;
     const smooth = s.mode === 'smooth';
+    const plan = encodingPlan(s);
     for (let i = 0; i < s.videoSenders.length; i++) {
       const sender = s.videoSenders[i];
       try {
         sender.track.contentHint = smooth ? 'motion' : 'detail';
         const p = sender.getParameters();
         if (!p.encodings || !p.encodings.length) continue;
-        p.encodings[0].active = s.viewed.has(i);
-        p.encodings[0].maxBitrate = cfg.maxBitrateMbps * 1e6;
+        p.encodings[0].active = !!plan[i];
+        p.encodings[0].scaleResolutionDownBy = plan[i] ? plan[i].scale : 1;
+        p.encodings[0].maxBitrate = Math.round((plan[i] ? plan[i].mbps : 1.5) * 1e6);
         p.encodings[0].maxFramerate = cfg.maxFps;
         p.degradationPreference = smooth ? 'maintain-framerate' : 'maintain-resolution';
         await sender.setParameters(p);
@@ -79,9 +99,10 @@ function onClientMessage(s, dc, data) {
   try { m = JSON.parse(data); } catch { return; }
   if (!m) return;
   if (m.t === 'view' && Array.isArray(m.v)) {
-    const v = new Set(m.v.filter((i) => Number.isInteger(i) && i >= 0 && i < s.videoSenders.length));
-    if (!v.size) return;
-    s.viewed = v;
+    const dim = (n) => Math.max(0, Math.min(16384, Math.round(Number(n) || 0)));
+    const need = new Map();
+    for (const e of m.v) if (e && Number.isInteger(e.i) && e.i >= 0 && e.i < s.sources.length) need.set(e.i, { w: dim(e.w), h: dim(e.h) });
+    s.need = need; // empty = every client window is hidden: pause all video
     applyEncoding(s);
   } else if (m.t === 'mode') {
     s.mode = m.m === 'smooth' ? 'smooth' : 'sharp';
@@ -119,8 +140,8 @@ async function startSession(hello) {
   if (!sources.length) { log('캡처할 모니터를 찾지 못했습니다'); return; }
   const pc = new RTCPeerConnection({ iceServers: cfg.iceServers });
   const s = (session = {
-    sid: hello.sid, pc, streams: [], timers: [], dropTimer: 0, videoSenders: [], clip: null,
-    viewed: new Set(sources.map((_, i) => i)), mode: hello.mode === 'smooth' ? 'smooth' : 'sharp', encQueue: Promise.resolve(),
+    sid: hello.sid, pc, sources, streams: [], timers: [], dropTimer: 0, videoSenders: [], clip: null,
+    need: new Map(sources.map((_, i) => [i, { w: 0, h: 0 }])), /* w,h 0 = full size */ mode: hello.mode === 'smooth' ? 'smooth' : 'sharp', encQueue: Promise.resolve(),
   });
 
   const dc = (s.dc = pc.createDataChannel('input', { ordered: true }));
@@ -163,7 +184,7 @@ async function startSession(hello) {
   const mids = s.videoSenders.map((sender) => pc.getTransceivers().find((t) => t.sender === sender).mid);
   await chan.send({
     t: 'offer', sid: s.sid, ts: Date.now(), sdp: pc.localDescription.sdp, ice: cfg.iceServers, audio,
-    monitors: sources.map((src, i) => ({ idx: i, mid: mids[i], width: src.width, height: src.height, primary: src.primary })),
+    monitors: sources.map((src, i) => ({ idx: i, mid: mids[i], x: src.x, y: src.y, width: src.width, height: src.height, primary: src.primary })),
   });
   log(`offer 전송 (모니터 ${sources.length}개${audio ? ', 소리 포함' : ''})`);
   // Give up if the client never completes the handshake.
@@ -229,5 +250,11 @@ async function onMessage(m) {
   $('regen').onclick = () => api.regenKey();
   $('kick').onclick = () => teardown('사용자가 끊음');
   api.onKick(() => teardown('사용자가 끊음'));
+  api.onDisplaysChanged(() => {
+    if (!session) return;
+    log('호스트 모니터 구성 변경 감지 — 세션을 다시 협상합니다');
+    try { if (session.dc && session.dc.readyState === 'open') session.dc.send(JSON.stringify({ t: 'renew' })); } catch {}
+    teardown('모니터 구성 변경', true);
+  });
   $('export').onclick = async () => { const p = await api.exportClient(); if (p) log('클라이언트 파일 저장: ' + p); };
 })();

@@ -58,14 +58,25 @@ function setMonitors(rects) { monitors = rects; }
 function mouse(flags, dx = 0, dy = 0, data = 0) {
   SendMouse(1, [{ type: 0, mi: { dx, dy, mouseData: data, dwFlags: flags, time: 0, dwExtraInfo: 0 } }], SIZE);
 }
-function moveTo(d, x, y) {
+// Maps (monitor, 0..1 position) to the virtual desktop. Positions outside 0..1
+// continue onto the neighbouring monitor, which is what lets a drag that leaves
+// one monitor's view carry on to the next monitor, as it would at the real desk.
+function target(d, x, y, virt) {
   const r = monitors[d];
-  if (!r || !(x >= 0 && x <= 1 && y >= 0 && y <= 1)) return false;
-  const vx = GetSystemMetrics(76), vy = GetSystemMetrics(77), vw = GetSystemMetrics(78), vh = GetSystemMetrics(79);
-  const px = r.x + x * (r.width - 1), py = r.y + y * (r.height - 1);
-  const nx = Math.round(((px - vx) * 65535) / Math.max(1, vw - 1));
-  const ny = Math.round(((py - vy) * 65535) / Math.max(1, vh - 1));
-  mouse(MF.MOVE | MF.ABS | MF.VDESK, nx, ny);
+  if (!r || !Number.isFinite(x) || !Number.isFinite(y) || Math.abs(x) > 16 || Math.abs(y) > 16) return null;
+  const v = virt || { x: GetSystemMetrics(76), y: GetSystemMetrics(77), width: GetSystemMetrics(78), height: GetSystemMetrics(79) };
+  const px = Math.min(v.x + v.width - 1, Math.max(v.x, r.x + x * (r.width - 1)));
+  const py = Math.min(v.y + v.height - 1, Math.max(v.y, r.y + y * (r.height - 1)));
+  return {
+    px, py,
+    nx: Math.round(((px - v.x) * 65535) / Math.max(1, v.width - 1)),
+    ny: Math.round(((py - v.y) * 65535) / Math.max(1, v.height - 1)),
+  };
+}
+function moveTo(d, x, y) {
+  const t = target(d, x, y);
+  if (!t) return false;
+  mouse(MF.MOVE | MF.ABS | MF.VDESK, t.nx, t.ny);
   return true;
 }
 function key(code, keyName, up) {
@@ -137,4 +148,4 @@ function cursorName() {
   return cursorByHandle.get(String(ci.hCursor)) || 'default'; // app-specific cursors fall back to the arrow
 }
 
-module.exports = { handle, reset, setMonitors, cursorName };
+module.exports = { handle, reset, setMonitors, cursorName, target };

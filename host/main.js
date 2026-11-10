@@ -16,7 +16,8 @@ const DEFAULTS = {
   // { "urls": "turn:host:3478", "username": "...", "credential": "..." }
   iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }],
   codec: 'H264',        // H264 | AV1 | VP9 | VP8
-  maxBitrateMbps: 15,   // per monitor
+  mbpsPer1080p: 10,     // bitrate for a 1080p-sized picture; scales with the pixels actually sent
+  maxTotalMbps: 60,     // cap across all monitors being viewed
   maxFps: 60,
   audio: true,          // send system sound
   clipboard: true,      // two-way text clipboard
@@ -25,6 +26,7 @@ const CLIP_MAX = 60000;
 
 let win = null, tray = null, quitting = false;
 let cfg = null;
+let savedCfg = {}; // only what the user set; defaults are not frozen into the file
 
 if (ISOLATED) {
   // Fully local: private profile dir, local relay, no STUN. Nothing leaves this PC.
@@ -40,6 +42,8 @@ function loadConfig() {
   try { saved = JSON.parse(fs.readFileSync(cfgPath(), 'utf8')); } catch {}
   cfg = { ...DEFAULTS, ...saved };
   delete cfg.keyEnc;
+  savedCfg = { ...saved };
+  delete savedCfg.keyEnc;
   let key = null;
   if (saved.keyEnc && safeStorage.isEncryptionAvailable()) {
     try { key = safeStorage.decryptString(Buffer.from(saved.keyEnc, 'base64')); } catch {}
@@ -49,8 +53,7 @@ function loadConfig() {
 }
 function saveConfig(key) {
   if (!safeStorage.isEncryptionAvailable()) throw new Error('OS 암호화 저장소(DPAPI)를 사용할 수 없습니다');
-  const out = { ...cfg, keyEnc: safeStorage.encryptString(key).toString('base64') }; // DPAPI: only this Windows user can decrypt
-  delete out.key;
+  const out = { ...savedCfg, keyEnc: safeStorage.encryptString(key).toString('base64') }; // DPAPI: only this Windows user can decrypt
   fs.mkdirSync(path.dirname(cfgPath()), { recursive: true });
   fs.writeFileSync(cfgPath(), JSON.stringify(out, null, 2));
 }
@@ -66,7 +69,7 @@ async function getSources() {
     const src = srcs.find((s) => s.display_id === String(d.id)) || (srcs.length === displays.length ? srcs[i] : null);
     if (!src) return;
     const r = screen.dipToScreenRect(null, d.bounds); // physical pixels
-    out.push({ id: src.id, idx: rects.length, width: r.width, height: r.height, primary: d.id === primaryId });
+    out.push({ id: src.id, idx: rects.length, x: r.x, y: r.y, width: r.width, height: r.height, primary: d.id === primaryId });
     rects.push(r);
   });
   input.setMonitors(rects);
@@ -155,6 +158,15 @@ else {
     });
 
     createWindow();
+    // Monitor plugged/unplugged or resolution changed: the renderer renegotiates the session.
+    let displayTimer = null;
+    const displaysChanged = () => {
+      clearTimeout(displayTimer);
+      displayTimer = setTimeout(() => { if (win && !win.isDestroyed()) win.webContents.send('displays-changed'); }, 1500);
+    };
+    screen.on('display-added', displaysChanged);
+    screen.on('display-removed', displaysChanged);
+    screen.on('display-metrics-changed', (_e, _d, changed) => { if (changed.some((c) => c !== 'workArea')) displaysChanged(); });
     if (!ISOLATED) createTray();
     if (SELFTEST) selftest.run({ cfg, buildClientHtml, app });
     if (LOCALTEST) {

@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('hostApi', {
   writeClip: (text) => ipcRenderer.send('clip-write', text),
   session: (live) => ipcRenderer.send('session', live),
   onKick: (fn) => ipcRenderer.on('kick', () => fn()),
+  onDisplaysChanged: (fn) => ipcRenderer.on('displays-changed', () => fn()),
   copyKey: () => ipcRenderer.invoke('copy-key'),
   regenKey: () => ipcRenderer.invoke('regen-key'),
   exportClient: () => ipcRenderer.invoke('export-client'),
