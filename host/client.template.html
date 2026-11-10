@@ -100,6 +100,8 @@ const store = {
 };
 // When this page was fetched from the host by the loader file, the loader leaves the key here.
 const boot = window.__mrBoot || null;
+// Present when running inside the client app (client/shell.js) rather than a browser tab.
+const shell = window.mrShell || null;
 const hash = new URLSearchParams(boot ? boot.preset : location.hash.slice(1) || '__PRESET__');
 const READONLY = hash.has('ro');
 if (READONLY) $('ro').style.display = '';
@@ -342,12 +344,8 @@ function mapPoint(ev, view, pane) {
   return q && { d: q.d, x: clamp(q.x, -8, 9), y: clamp(q.y, -8, 9) };
 }
 function queueMove(view, p) {
-  view.pending = p;
-  if (view.raf) return;
-  view.raf = view.win.requestAnimationFrame(() => {
-    view.raf = 0;
-    if (view.pending) { send({ t: 'mm', d: view.pending.d, x: view.pending.x, y: view.pending.y }); view.pending = null; }
-  });
+  view.pending = null;
+  send({ t: 'mm', d: p.d, x: p.x, y: p.y });
 }
 // 1:1 mode larger than the window: pushing the pointer against an edge pans the picture.
 function edgePan(view, ev) {
@@ -495,6 +493,10 @@ function renderBar() {
 // Client screens, left to right, or null without the Window Management permission.
 async function clientScreens() {
   try {
+    if (shell) {
+      const list = (await shell.screens()).sort((a, b) => a.left - b.left || a.top - b.top);
+      return { list, cur: Math.max(0, list.findIndex((s) => s.current)) };
+    }
     if (!('getScreenDetails' in window)) return null;
     const sd = await window.getScreenDetails();
     const list = [...sd.screens].sort((a, b) => a.left - b.left || a.top - b.top);
@@ -536,7 +538,7 @@ function openView(sel, scr, screenIdx) {
   };
   corner.onclick = () => { goFullscreen(w); if (view.panes[0]) view.panes[0].video.focus(); };
   d.addEventListener('fullscreenchange', () => { if (!cover.isConnected) corner.style.display = d.fullscreenElement ? 'none' : ''; });
-  root.append(cover, corner);
+  if (!shell) root.append(cover, corner); // the app places the window and makes it fullscreen itself
 
   w.addEventListener('pagehide', () => setTimeout(() => { liveViews(); scheduleView(); }, 100));
   render(view);
@@ -604,9 +606,6 @@ async function spread() {
   if (!valid) map = planLayout(N, M, cs.cur, primary);
   mainView.layoutSig = sig;
   mainView.screenIdx = cs.cur;
-  // Fullscreen first, then the other windows: with the permission granted the browser
-  // allows fullscreen plus a window on another screen from a single click.
-  const fsOk = goFullscreen(window);
   if (map[cs.cur]) { mainView.sel = map[cs.cur].sel; mainView.fit = map[cs.cur].fit || 'fit'; render(mainView); }
   let blocked = 0;
   for (const [k, e] of Object.entries(map)) {
@@ -620,7 +619,10 @@ async function spread() {
   renderBar();
   scheduleView();
   saveLayout();
-  await fsOk;
+  // In the app every window goes fullscreen now, from this one click. A browser places the
+  // windows first (asking for fullscreen first can keep them on this screen) and then needs
+  // one click in each window.
+  if (shell) await shell.fullscreenAll(); else await goFullscreen(window);
   if (blocked) toast(mainView, `창 ${blocked}개가 팝업 차단으로 열리지 못했습니다. 주소창에서 팝업을 "항상 허용"으로 바꾸거나 한 번 더 누르세요.`, 6000);
   else if (N > M) toast(mainView, `호스트 모니터 ${N}개 중 ${M}개를 펼쳤습니다. 나머지는 Ctrl+Alt+←/→ 로 전환하세요.`, 5000);
 }
@@ -687,6 +689,20 @@ function onHostMessage(data) {
 }
 
 async function onOffer(m) {
+  // The host now serves a different client page than the one running here (it was updated):
+  // go back through the loader, which fetches the new page and reconnects.
+  const mine = store.get('mr_app_hash');
+  let tried = null;
+  try { tried = sessionStorage.getItem('mr_reloaded_for'); } catch {}
+  if (boot && m.app && mine && m.app !== mine && tried !== m.app) {
+    try { sessionStorage.setItem('mr_reloaded_for', m.app); } catch {}
+    overlay('호스트가 업데이트되어 새 클라이언트 화면을 받아옵니다…');
+    want = false;
+    cleanupPc();
+    location.hash = 'k=' + $('key').value.trim() + '&auto' + (READONLY ? '&ro' : '');
+    location.reload();
+    return;
+  }
   const my = (pc = new RTCPeerConnection({ iceServers: m.ice }));
   let x = 0;
   monitors = m.monitors.map((mon, i) => {
@@ -848,6 +864,13 @@ setInterval(async () => {
     $('stats').textContent = `${viewed.map((i) => `${i + 1}:${fps[i]}`).join(' ')} fps · ${mbps.toFixed(1)} Mbps · 왕복 ${rtt != null ? Math.round(rtt * 1000) : '?'} ms · 버퍼 ${Math.round(buf)} ms · ${relay ? 'TURN 중계' : 'P2P 직접'}`;
     samples.push({ t: Date.now(), viewed, fps, res, mbps, rtt: rtt != null ? rtt * 1000 : null, buf, relay, lost, recv, freezes, freezeDur, dropped, nack, pli, decoder, host: hostStat });
     if (samples.length > 45) samples.shift(); // about 90 seconds
+    // The same numbers go to the host, which appends them to a local log file for troubleshooting.
+    const pick = (o) => Object.fromEntries(viewed.map((i) => [i, o[i]]));
+    send({ t: 'cs', s: {
+      fps: pick(fps), res: pick(res), mbps: +mbps.toFixed(2), rtt: rtt != null ? Math.round(rtt * 1000) : null, buf: Math.round(buf), relay,
+      lost, recv, freezes, freezeDur: +freezeDur.toFixed(2), dropped, nack, pli, dec: decoder, mode, shell: !!shell,
+      views: liveViews().map((v) => `${v.sel}/${v.fit}/${v.root.clientWidth}x${v.root.clientHeight}@${v.win.devicePixelRatio}${v.win.document.fullscreenElement ? '/fs' : ''}`),
+    } });
   }
   last = { bytes, t: now, jb, jbn };
 }, 2000);

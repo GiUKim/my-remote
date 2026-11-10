@@ -115,6 +115,9 @@ function onClientMessage(s, dc, data) {
     log('화질 모드: ' + (s.mode === 'smooth' ? '부드러움 우선' : '선명도 우선'));
   } else if (m.t === 'clip') {
     if (cfg.clipboard && typeof m.s === 'string' && m.s.length <= CLIP_MAX) { s.clip = m.s; api.writeClip(m.s); }
+  } else if (m.t === 'cs') {
+    // Client-side measurements: keep them with ours in the local diagnostics log.
+    if (data.length < 6000 && m.s && typeof m.s === 'object') api.diag({ client: m.s, host: s.lastHs || null });
   } else if (data.length < 500) {
     api.input(data);
   }
@@ -197,7 +200,9 @@ async function startSession(hello) {
   await RD.waitIce(pc, 2500);
   if (session !== s) return;
   const mids = (s.mids = s.videoSenders.map((sender) => pc.getTransceivers().find((t) => t.sender === sender).mid));
+  const appHash = (await api.getClientApp()).hash;
   await chan.send({
+    app: appHash,
     t: 'offer', sid: s.sid, ts: Date.now(), sdp: pc.localDescription.sdp, ice: cfg.iceServers, audio, codec: s.codec, cursorHidden: s.cursorHidden,
     monitors: sources.map((src, i) => ({ idx: i, mid: mids[i], x: src.x, y: src.y, width: src.width, height: src.height, primary: src.primary })),
   });
@@ -227,7 +232,8 @@ async function startSession(hello) {
     const codec = codecId && rep.get(codecId) ? rep.get(codecId).mimeType.replace('video/', '') : '';
     const now = performance.now();
     // Host-side numbers for the client's diagnostics report.
-    try { if (s.dc.readyState === 'open') s.dc.send(JSON.stringify({ t: 'hs', codec, enc: impl, availMbps: +(avail / 1e6).toFixed(1), targetMbps: +(target / 1e6).toFixed(1), mons })); } catch {}
+    s.lastHs = { codec, enc: impl, availMbps: +(avail / 1e6).toFixed(1), targetMbps: +(target / 1e6).toFixed(1), rtt: rtt != null ? Math.round(rtt * 1000) : null, mons };
+    try { if (s.dc.readyState === 'open') s.dc.send(JSON.stringify({ t: 'hs', ...s.lastHs })); } catch {}
     if (last) {
       const mbps = ((bytes - last.bytes) * 8) / ((now - last.t) / 1000) / 1e6;
       const why = limit === 'cpu' ? ' · 제한: 이 PC 성능' : limit === 'bandwidth' ? ' · 제한: 네트워크' : '';
@@ -239,10 +245,12 @@ async function startSession(hello) {
   }, 2000));
 }
 
-// Without a hint the bandwidth estimate starts near 300 kbps and takes several
-// seconds to climb, so every connection begins blurry and choppy. The start value
-// is read from the codec parameters of the remote description.
-function hintStartBitrate(sdp, kbps) {
+// Without hints the bandwidth estimate starts near 300 kbps and climbs slowly, so a
+// connection begins blurry and drops frames whenever the picture moves. Start high
+// (the estimator backs off within a second if the link cannot carry it) and never
+// sink below a usable floor. Both are read from the remote description's codec parameters.
+function hintBitrate(sdp, startKbps, minKbps) {
+  const extra = 'x-google-start-bitrate=' + startKbps + ';x-google-min-bitrate=' + minKbps;
   const lines = sdp.split('\r\n');
   let video = false;
   const pts = new Set(), withFmtp = new Set();
@@ -259,8 +267,8 @@ function hintStartBitrate(sdp, kbps) {
     if (l.startsWith('m=')) video = l.startsWith('m=video');
     const f = video && /^a=fmtp:(\d+) /.exec(l);
     const r = video && /^a=rtpmap:(\d+) /.exec(l);
-    if (f && pts.has(f[1])) out.push(l + ';x-google-start-bitrate=' + kbps);
-    else { out.push(l); if (r && pts.has(r[1]) && !withFmtp.has(r[1])) out.push('a=fmtp:' + r[1] + ' x-google-start-bitrate=' + kbps); }
+    if (f && pts.has(f[1])) out.push(l + ';' + extra);
+    else { out.push(l); if (r && pts.has(r[1]) && !withFmtp.has(r[1])) out.push('a=fmtp:' + r[1] + ' ' + extra); }
   }
   return out.join('\r\n');
 }
@@ -283,7 +291,7 @@ async function onMessage(m) {
       if (seen.size > 500) seen.clear();
       await startSession(m);
     } else if (m.t === 'answer' && session && m.sid === session.sid && session.pc.signalingState === 'have-local-offer') {
-      await session.pc.setRemoteDescription({ type: 'answer', sdp: hintStartBitrate(m.sdp, 3000) });
+      await session.pc.setRemoteDescription({ type: 'answer', sdp: hintBitrate(m.sdp, Math.round(cfg.startBitrateMbps * 1000), Math.round(cfg.minBitrateMbps * 1000)) });
       log('answer 수신 — 연결 수립 중');
     }
   } catch (e) {

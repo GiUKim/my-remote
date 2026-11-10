@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('hostApi', {
   getClientApp: () => ipcRenderer.invoke('client-app'),
   input: (text) => ipcRenderer.send('input', text),
   log: (text) => ipcRenderer.send('log', text),
+  diag: (entry) => ipcRenderer.send('diag', entry),
   cursor: () => ipcRenderer.invoke('cursor'),
   hideCursor: (on) => ipcRenderer.invoke('cursor-hide', on),
   readClip: (lastSeq) => ipcRenderer.invoke('clip-read', lastSeq),

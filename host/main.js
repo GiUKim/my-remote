@@ -18,6 +18,8 @@ const DEFAULTS = {
   codec: 'H264',        // H264 | AV1 | VP9 | VP8
   mbpsPer1080p: 10,     // bitrate for a 1080p-sized picture; scales with the pixels actually sent
   maxTotalMbps: 60,     // cap across all monitors being viewed
+  startBitrateMbps: 8,  // where the bandwidth estimate starts (it adapts from there)
+  minBitrateMbps: 1,    // it never goes below this
   maxFps: 60,
   audio: true,          // send system sound
   clipboard: true,      // two-way text clipboard
@@ -191,12 +193,21 @@ else {
       cfg.iceServers = [];
     }
     powerSaveBlocker.start('prevent-app-suspension');
+    getClientApp(); // build the client page now, from the same code this process loaded
 
     ipcMain.handle('cfg', () => cfg);
     ipcMain.handle('sources', getSources);
     ipcMain.handle('client-app', getClientApp);
     ipcMain.on('input', (_e, text) => { try { input.handle(String(text)); } catch (e) { console.error('input', e); } });
     ipcMain.on('log', (_e, text) => console.log('[host]', text));
+    // Measurements of each session (numbers only), for finding out why something felt slow.
+    const diagFile = path.join(app.getPath('userData'), 'diag.log');
+    ipcMain.on('diag', (_e, entry) => {
+      try {
+        if (fs.existsSync(diagFile) && fs.statSync(diagFile).size > 3 * 1024 * 1024) fs.renameSync(diagFile, diagFile.replace(/\.log$/, '.old.log'));
+        fs.appendFileSync(diagFile, JSON.stringify({ t: new Date().toISOString(), ...entry }) + '\n');
+      } catch {}
+    });
     ipcMain.handle('cursor', () => { try { return currentCursor(); } catch { return { k: '0', c: 'default' }; } });
     ipcMain.handle('cursor-hide', (_e, on) => { try { setCursorsHidden(!!on && !!cfg.hideHostCursor); } catch (e) { console.error('cursor hide', e); } return cursorsHidden; });
     // Only touch the clipboard when its content actually changed.

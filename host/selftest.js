@@ -14,6 +14,9 @@ const input = require('./input');
 // cursor removes it from the video. The cursor on this PC disappears for a few
 // seconds while it runs, so it is not part of the default self-test.
 const CURSOR_CHECK = process.argv.includes('--cursor-check');
+// --shell-check: additionally run the client app's one-click layout on the real screens.
+// Fullscreen windows cover every monitor of this PC for a few seconds.
+const SHELL_CHECK = process.argv.includes('--shell-check');
 
 // Minimal ntfy-compatible pub/sub: POST /topic, GET /topic/sse
 exports.startRelay = () => new Promise((resolve) => {
@@ -60,10 +63,13 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app }) => {
   // Picture of an app-specific cursor (read-only; uses the standard arrow as a stand-in).
   {
     const koffi = require('koffi');
-    const arrow = koffi.load('user32.dll').func('LoadCursorW', 'uintptr_t', ['uintptr_t', 'uintptr_t'])(0, 32512);
-    const b = input.cursorBitmap(arrow);
+    const user32 = koffi.load('user32.dll');
+    // 32x32, opaque white, hotspot (3,4)
+    const made = user32.func('CreateCursor', 'uintptr_t', ['uintptr_t', 'int', 'int', 'int', 'int', 'uint8*', 'uint8*'])(0, 3, 4, 32, 32, Buffer.alloc(128, 0x00), Buffer.alloc(128, 0xff));
+    const b = made ? input.cursorBitmap(made) : null;
+    if (made) user32.func('DestroyCursor', 'bool', ['uintptr_t'])(made);
     const url = b ? nativeImage.createFromBitmap(b.bgra, { width: b.width, height: b.height }).toDataURL() : '';
-    check('cursor picture extraction', b && url.startsWith('data:image/png;base64,') && url.length > 150, b ? `${b.width}x${b.height}, hotspot ${b.hx},${b.hy}` : 'null');
+    check('cursor picture extraction', b && b.width === 32 && b.hx === 3 && b.hy === 4 && b.bgra[3] === 255 && b.bgra[0] > 200 && url.startsWith('data:image/png;base64,'), b ? `${b.width}x${b.height}, hotspot ${b.hx},${b.hy}` : 'null');
     const dump = process.argv.find((a) => a.startsWith('--dump-cursor='));
     if (dump && b) fs.writeFileSync(dump.split('=')[1], nativeImage.createFromBitmap(b.bgra, { width: b.width, height: b.height }).resize({ width: b.width * 6, quality: 'nearest' }).toPNG());
   }
@@ -213,7 +219,37 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app }) => {
       await lw.loadFile(lf, { query: { again: '1' }, hash: `k=${cfg.key}&auto&ro` }); // a different URL forces a real reload
       let [ok2, b] = await luntil((x) => x.boot && x.state === 'connected' && x.frames > 20, 45);
       check('loader reuses the cached page when the host version is unchanged', ok2 && b.boot.updated === false, JSON.stringify(b));
+
+      // The host was updated while this page is open: the page must notice and fetch the new one by itself.
+      await ljs(`localStorage.setItem('mr_app_hash', 'stale')`);
+      hostWin.webContents.send('displays-changed'); // any new offer carries the host's page version
+      let [ok3, c] = await luntil((x) => x.boot && x.boot.updated === true && x.state === 'connected' && x.frames > 20, 60);
+      check('an open client updates itself when the host version changes', ok3, JSON.stringify(c));
       lw.destroy();
+
+      if (SHELL_CHECK) {
+        // The client app: one call to spread() must put one fullscreen window on every screen, in order.
+        const shell = require('../client/shell');
+        const sw = new BrowserWindow({ width: 1280, height: 720, webPreferences: { preload: shell.PRELOAD, backgroundThrottling: false, partition: 'shell-check' } });
+        const st = shell.attach(sw);
+        const sjs = (code, gesture) => sw.webContents.executeJavaScript(code, !!gesture);
+        await sw.loadFile(lf, { query: { app: '1' }, hash: `k=${cfg.key}&auto&ro` });
+        let okc = false;
+        for (let i = 0; i < 45 && !okc; i++) { await sleep(1000); try { okc = await sjs(`!!window.__rd && window.__rd.state === 'connected' && !!window.mrShell`); } catch {} }
+        await sjs('spread()', true);
+        await sleep(5000);
+        const displays = screen.getAllDisplays().sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
+        const wins = [sw, ...st.children].filter((x) => !x.isDestroyed());
+        const placed = wins.map((x) => ({ display: displays.findIndex((d) => d.id === screen.getDisplayMatching(x.getBounds()).id), fullscreen: x.isFullScreen() }));
+        const views = await sjs(`liveViews().map((v) => ({ sel: v.sel, x: v.win.screenX, fs: !!v.win.document.fullscreenElement })).sort((a, b) => a.x - b.x)`);
+        const mons = await sjs('monitors.length');
+        const want = Math.min(mons, displays.length);
+        const sels = views.map((v) => v.sel);
+        check('client app: one click puts a fullscreen window on every screen, left to right',
+          okc && wins.length === want && new Set(placed.map((x) => x.display)).size === want && placed.every((x) => x.fullscreen) && views.every((v) => v.fs) && sels.every((s, i) => i === 0 || s === sels[i - 1] + 1),
+          `${wins.length} window(s) on displays ${JSON.stringify(placed.map((x) => x.display))}, fullscreen ${JSON.stringify(placed.map((x) => x.fullscreen))}, host monitors left to right ${JSON.stringify(sels)}`);
+        for (const x of wins) if (!x.isDestroyed()) x.destroy();
+      }
     }
   } catch (e) {
     console.log('[selftest] aborted:', e.message);

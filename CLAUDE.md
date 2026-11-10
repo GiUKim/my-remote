@@ -86,6 +86,7 @@ Run from `host/` with Electron's env var cleared.
 | Command | What it does |
 |---|---|
 | `npm run selftest` | Local end-to-end test, prints `[selftest] PASS/FAIL` lines, exits 0 or 1 |
+| `electron . --selftest --shell-check` | Same, plus the client app's one-click layout on the real screens. Fullscreen windows cover every monitor for a few seconds, so ask the user first |
 | `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first |
 | `npm run localtest` | Local trial: host window plus view-only client in the default browser |
 | `npm start` | The real host (connects to the signaling server). User-initiated only |
@@ -104,6 +105,8 @@ must then be given the new file). Run `npm run selftest` after either.
 | `setup.ps1` | One-shot host setup and self-test |
 | `start-host.bat`, `local-test.bat` | Launchers for the real host and the local trial |
 | `my-remote-client.html` | Built loader: the one file a client PC keeps (generated, committed for convenience) |
+| `start-client.bat` | Launcher for the client app (uses the Electron installed under `host/node_modules`) |
+| `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window and grants permissions. Exposes `window.mrShell` |
 | `host/main.js` | Electron main: config and key storage, monitor enumeration, tray, IPC, isolated modes |
 | `host/preload.js` | The only bridge between the renderer and main (`window.hostApi`) |
 | `host/host.html`, `host/host.js` | Host UI and the WebRTC side: capture, encoding control, data-channel routing |
@@ -132,7 +135,7 @@ The host builds the page once at start, so page and host always match.
 Signaling (through the relay, each message deflated, encrypted, chunked to 3000 chars):
 
 1. client -> host topic: `{t:'hello', sid, ts, mode, codec}` (`codec` optional: `H264`, `VP9`, `AV1`)
-2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, codec, cursorHidden, monitors:[{idx, mid, x, y, width, height, primary}]}`
+2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, codec, cursorHidden, app, monitors:[{idx, mid, x, y, width, height, primary}]}`
    (`x`,`y`,`width`,`height` are the monitor's rectangle on the host's virtual desktop, physical pixels)
 3. client -> host topic: `{t:'answer', sid, ts, sdp}`
 
@@ -149,6 +152,7 @@ Data channel `input` (JSON text):
 | client -> host | `reset` | Release every held key and button |
 | client -> host | `view` | `v` = `[{i, w, h}]`: monitors on screen and the size each is shown at, in device pixels (`0` = full size). The host pauses the rest, scales down to the shown size (never up) and splits bitrate by pixels sent |
 | client -> host | `mode` | `sharp` or `smooth` |
+| client -> host | `cs` | Client measurements for the host's diagnostics log |
 | both | `clip` | Clipboard text, at most 60000 chars |
 | host -> client | `cur` | Current host cursor: `c` = CSS cursor name, or `img` (PNG data URL) with hotspot `hx`,`hy` for an app-specific cursor |
 | host -> client | `hs` | Host-side statistics every 2 s (codec, encoder, bitrate, per-monitor capture/encode fps and limiting factor) for the client's diagnostics report |
@@ -171,21 +175,36 @@ aspect ratio, so pointer mapping is a plain proportion of the element. Policy, i
 - Selecting a monitor that another window shows swaps the two, so a monitor is never shown twice.
 - `Ctrl+Alt` + arrows / digits / Enter are local shortcuts and are not forwarded (user can turn them off).
 - An exact integer enlargement is drawn with `image-rendering: pixelated`; anything else is smoothed.
-- Browsers allow one popup and one fullscreen request per click, so each extra window needs a click.
-  Do not try to work around this; a native client would be the way to remove it.
+- Browsers allow one popup and one fullscreen request per click and restrict window placement, so in
+  a browser each extra window needs a click. The client app (`client/`) removes this: the page detects
+  it through `window.mrShell`, asks it for the screens and for `fullscreenAll()`. The page is the same
+  in both; keep app-only behaviour behind `if (shell)`.
+- The offer carries the hash of the page the host serves (`app`). An open page whose stored hash
+  differs reloads through the loader to fetch the new one, so clients follow host updates by themselves.
+
+## Diagnostics log
+
+The client sends its measurements every 2 s (`cs` message) and the host appends them, with its own
+encoder statistics, to `%APPDATA%\my-remote-host\diag.log` (JSON lines, numbers only, rotated at 3 MB).
+Read this file when the user reports stutter or lag instead of guessing: compare host capture fps,
+encode fps and the limiting factor (`cpu`, `bandwidth`, `none`) with the client's received fps, freeze
+count, packet loss, round-trip time and jitter-buffer delay. It never contains the key; `config.json`
+in the same folder does, so do not read that one.
 
 ## Verified and unverified
 
 Verified by `--selftest` on one PC with three 1080p monitors: connection, hardware H.264 encoding,
-the loader (fetch from host, cached reuse), cursor sync, cursor picture extraction, the paste-event path, host statistics, per-monitor pause and switch, size-aware downscaling, 1:1 mode, overview, shortcuts, the
+the loader (fetch from host, cached reuse, self-update of an open page), the client app's one-click
+layout on three real screens (`--shell-check`), cursor sync, cursor picture extraction, the paste-event path, host statistics, per-monitor pause and switch, size-aware downscaling, 1:1 mode, overview, shortcuts, the
 layout plan, renegotiation on a (simulated) monitor change, auto reconnect, and the coordinate math for
 dragging across monitors of different sizes. Input injection was verified separately, and
 `--cursor-check` confirmed on the real screen that hiding the host cursor removes it from the video and
 that it is restored afterwards. The hardware encoder is used at window-sized and full resolutions; the
 small overview tiles (480x270) fall back to OpenH264 and the hardware encoder returns afterwards.
 
-Not verified: anything that needs a real multi-monitor client (spreading windows across screens,
-dragging between windows, popup and fullscreen behaviour), hosts with mixed resolutions, DPI scales,
+Not verified: the effect of the start/min bitrate hints on a real link, whether Keyboard Lock captures
+Alt+Tab and the Windows key inside the client app, dragging between windows on a real multi-monitor
+client, popup and fullscreen behaviour in a plain browser, hosts with mixed resolutions, DPI scales,
 portrait or ultrawide monitors, monitors wider than 4096 px with H.264, any connection across two different networks, real-world latency, TURN, audio audibility,
 client-to-host clipboard, the packaged exe, behaviour with monitors powered off. Say so when the user
 asks how well it works; do not present these as working.
