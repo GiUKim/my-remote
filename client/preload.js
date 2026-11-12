@@ -7,8 +7,9 @@ contextBridge.exposeInMainWorld('mrShell', {
   // Things dragged out of the remote picture (see shell.js).
   dropPoint: () => ipcRenderer.invoke('shell:dropPoint'),
   dropText: (id, text) => ipcRenderer.invoke('shell:dropText', id, text),
-  fileBegin: (name) => ipcRenderer.invoke('shell:fileBegin', name),
+  fileBegin: (name, group) => ipcRenderer.invoke('shell:fileBegin', name, group),
+  makeDir: (name, group) => ipcRenderer.invoke('shell:makeDir', name, group),
   fileChunk: (id, bytes) => ipcRenderer.invoke('shell:fileChunk', id, bytes),
   fileEnd: (id) => ipcRenderer.invoke('shell:fileEnd', id),
-  dropFiles: (id, ids) => ipcRenderer.invoke('shell:dropFiles', id, ids),
+  dropFiles: (id, ids, group) => ipcRenderer.invoke('shell:dropFiles', id, ids, group),
 });

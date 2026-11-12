@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('hostApi', {
   dragFileRead: (id, offset, len) => ipcRenderer.invoke('drag-file-read', id, offset, len),
   dragFileDone: (id) => ipcRenderer.send('drag-file-done', id),
   cursor: () => ipcRenderer.invoke('cursor'),
+  dragging: () => ipcRenderer.invoke('dragging'),
   hideCursor: (on) => ipcRenderer.invoke('cursor-hide', on),
   readClip: (lastSeq) => ipcRenderer.invoke('clip-read', lastSeq),
   writeClip: (text) => ipcRenderer.send('clip-write', text),

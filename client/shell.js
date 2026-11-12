@@ -56,10 +56,20 @@ function freePath(dir, name) {
   for (let i = 1; i < 10000; i++) { const f = path.join(dir, i === 1 ? name : `${base} (${i})${ext}`); if (!fs.existsSync(f)) return f; }
   throw new Error('no free file name');
 }
+// Moves a received file or folder into `dir` under a free name; across drives it is copied.
 function moveInto(dir, file) {
   const to = freePath(dir, path.basename(file));
-  try { fs.renameSync(file, to); } catch { fs.copyFileSync(file, to, fs.constants.COPYFILE_EXCL); fs.unlinkSync(file); } // another drive: copy
+  try { fs.renameSync(file, to); } catch {
+    if (fs.statSync(file).isDirectory()) { fs.cpSync(file, to, { recursive: true, errorOnExist: true, force: false }); fs.rmSync(file, { recursive: true, force: true }); }
+    else { fs.copyFileSync(file, to, fs.constants.COPYFILE_EXCL); fs.unlinkSync(file); }
+  }
   return to;
+}
+// A path inside `base` for a name from the other side ('folder/sub/file.txt'): every part made safe,
+// nothing that could climb out of `base`.
+function stagedPath(base, name) {
+  const parts = String(name).split(/[\\/]+/).filter((p) => p && p !== '.' && p !== '..').map(safeName).slice(0, 64);
+  return path.join(base, ...(parts.length ? parts : ['file']));
 }
 // The folder an Explorer window shows (asked of the shell, read-only). Null when it is not a real
 // folder (This PC, a library, ...) or when the window has several tabs and it is unclear which one is in front.
@@ -127,13 +137,24 @@ function setupIpc() {
     if (d && FOLDERISH.has(d.cls)) return 'copied'; // a folder cannot take text
     return (await pasteAt(d)) ? 'pasted' : 'copied';
   });
-  ipcMain.handle('shell:fileBegin', (e, name) => {
+  // `group` (pages from 2026-11-13 on): every file of one transfer goes under one folder, keeping the
+  // folders a dragged folder had; `name` may then be 'folder/sub/file'. Without it, each file gets a
+  // folder of its own (older pages).
+  const groupDir = (group) => (typeof group === 'string' && /^[a-z0-9]{4,32}$/.test(group) ? path.join(stageDir(), 'g-' + group) : null);
+  ipcMain.handle('shell:fileBegin', (e, name, group) => {
     if (!shellOf(e.sender)) return null;
-    const dir = path.join(stageDir(), crypto.randomBytes(6).toString('hex'));
-    fs.mkdirSync(dir, { recursive: true });
-    const id = crypto.randomBytes(8).toString('hex'), file = path.join(dir, safeName(name));
-    staged.set(id, { path: file, fd: fs.openSync(file, 'wx'), done: false });
+    const g = groupDir(group);
+    const file = g ? stagedPath(g, name) : path.join(stageDir(), crypto.randomBytes(6).toString('hex'), safeName(name));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const id = crypto.randomBytes(8).toString('hex'), at = fs.existsSync(file) ? freePath(path.dirname(file), path.basename(file)) : file;
+    staged.set(id, { path: at, fd: fs.openSync(at, 'wx'), done: false, group: g });
     return id;
+  });
+  ipcMain.handle('shell:makeDir', (e, name, group) => {
+    const g = groupDir(group);
+    if (!shellOf(e.sender) || !g) return false;
+    fs.mkdirSync(stagedPath(g, name), { recursive: true });
+    return true;
   });
   ipcMain.handle('shell:fileChunk', (_e, id, bytes) => {
     const f = staged.get(id);
@@ -148,11 +169,17 @@ function setupIpc() {
     f.fd = null; f.done = true;
     return true;
   });
-  ipcMain.handle('shell:dropFiles', async (e, id, ids) => {
+  ipcMain.handle('shell:dropFiles', async (e, id, ids, group) => {
     if (!shellOf(e.sender) || !Array.isArray(ids)) return { how: '' };
-    const files = ids.map((x) => staged.get(x)).filter((f) => f && f.done).map((f) => f.path);
+    const got = ids.map((x) => staged.get(x)).filter((f) => f && f.done);
     for (const x of ids) staged.delete(x);
-    return files.length ? placeFiles(files, drops.get(id)) : { how: '' };
+    // What goes to the drop target: the top-level files and folders of the transfer.
+    const g = groupDir(group);
+    let items = got.map((f) => f.path);
+    if (g) { try { items = fs.readdirSync(g).map((n) => path.join(g, n)); } catch {} }
+    const r = items.length ? await placeFiles(items, drops.get(id)) : { how: '' };
+    if (g && r.how === 'saved') { try { fs.rmdirSync(g); } catch {} }
+    return r;
   });
   // Screens in the coordinates window.open() uses, left to right is up to the page.
   ipcMain.handle('shell:screens', (e) => {
@@ -203,4 +230,4 @@ function attach(win) {
   return state;
 }
 
-module.exports = { attach, PRELOAD, _drop: { safeName, freePath, placeFiles, explorerFolder } };
+module.exports = { attach, PRELOAD, _drop: { safeName, freePath, placeFiles, explorerFolder, stagedPath, moveInto } };

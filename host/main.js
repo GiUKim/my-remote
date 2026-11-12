@@ -105,14 +105,29 @@ function currentCursor() {
 // here without a drop (Escape), what was being dragged is still selected and gets copied
 // (Ctrl+C), and the result is handed over: text, or the names and sizes of files the client may
 // then fetch. Only files that this very step found on the clipboard can be fetched.
-const DRAG_MAX_BYTES = 2 * 1024 * 1024 * 1024, DRAG_MAX_FILES = 200;
+const DRAG_MAX_BYTES = 2 * 1024 * 1024 * 1024, DRAG_MAX_FILES = 5000;
 const dragFiles = new Map(); // id -> { path, size, fd }
-function offerFile(file) {
+// `rel`: the name the client gets, with the folders it sits in when a folder was dragged ('a/b/c.txt').
+function offerFile(file, rel) {
   const st = fs.statSync(file);
   if (!st.isFile()) return null;
   const id = crypto.randomBytes(8).toString('hex');
   dragFiles.set(id, { path: file, size: st.size, fd: null });
-  return { id, name: path.basename(file), size: st.size };
+  return { id, name: rel || path.basename(file), size: st.size };
+}
+// Everything inside a dragged folder: its files with their path in it, and its empty folders.
+// Links and junctions are not followed (one pointing at a parent would never end).
+function listFolder(dir, rel, out, room) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  if (!entries.length) out.push({ dir: true, rel });
+  for (const e of entries) {
+    if (out.length >= room.left) { room.cut = true; return; }
+    if (e.isSymbolicLink()) continue;
+    const p = path.join(dir, e.name), r = rel + '/' + e.name;
+    if (e.isDirectory()) listFolder(p, r, out, room);
+    else if (e.isFile()) out.push({ path: p, rel: r });
+  }
 }
 function closeDragFiles(id) {
   for (const [k, f] of [...dragFiles]) if (id == null || k === id) { try { if (f.fd != null) fs.closeSync(f.fd); } catch {} dragFiles.delete(k); }
@@ -120,7 +135,7 @@ function closeDragFiles(id) {
 async function dragOut(button) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const cls = input.captureClass();
-  if (cls !== 'CLIPBRDWNDCLASS') { input.buttonUp(button); return { kind: 'none', why: 'no drag in progress' + (cls ? ' (mouse held by ' + cls + ')' : '') }; }
+  if (cls !== 'CLIPBRDWNDCLASS') { input.buttonUp(button); console.log('drag out: no drag in progress' + (cls ? ' (mouse held by ' + cls + ')' : '')); return { kind: 'none', why: 'nodrag' }; }
   const before = input.clipSeq();
   input.tap(['Escape']);
   await sleep(90);
@@ -128,22 +143,32 @@ async function dragOut(button) {
   let changed = false;
   for (let i = 0; i < 40 && !changed; i++) { await sleep(25); changed = input.clipSeq() !== before; }
   input.buttonUp(button);
-  if (!changed) return { kind: 'none', why: 'nothing was copied' };
+  if (!changed) return { kind: 'none', why: 'nocopy' };
   await sleep(80); // the program may still be adding formats
   const paths = input.clipboardFiles();
   if (paths.length) {
     closeDragFiles();
-    const files = [];
+    const files = [], room = { left: DRAG_MAX_FILES, cut: false };
     let skipped = 0, total = 0;
-    for (const f of paths) {
+    const add = (file, rel) => {
       let o = null;
-      try { o = files.length < DRAG_MAX_FILES ? offerFile(f) : null; } catch {}
+      try { o = files.length < DRAG_MAX_FILES ? offerFile(file, rel) : null; } catch {}
       if (o && total + o.size <= DRAG_MAX_BYTES) { files.push(o); total += o.size; } else { skipped++; if (o) dragFiles.delete(o.id); }
+    };
+    for (const f of paths) {
+      let st = null;
+      try { st = fs.statSync(f); } catch { skipped++; continue; }
+      if (!st.isDirectory()) { add(f, path.basename(f)); continue; }
+      const list = [];
+      room.left = DRAG_MAX_FILES - files.length;
+      listFolder(f, path.basename(f), list, room);
+      for (const e of list) if (e.dir) files.push({ id: '', name: e.rel, size: 0, dir: true }); else add(e.path, e.rel);
     }
-    return files.length ? { kind: 'files', files, skipped } : { kind: 'none', why: 'only folders, or more than 2 GB' };
+    if (room.cut) skipped++;
+    return files.length ? { kind: 'files', files, skipped } : { kind: 'none', why: 'toobig' };
   }
   const text = clipboard.readText();
-  return text ? { kind: 'text', s: text.slice(0, CLIP_MAX), cut: text.length > CLIP_MAX } : { kind: 'none', why: 'neither text nor files' };
+  return text ? { kind: 'text', s: text.slice(0, CLIP_MAX), cut: text.length > CLIP_MAX } : { kind: 'none', why: 'empty' };
 }
 let cfg = null;
 let savedCfg = {}; // only what the user set; defaults are not frozen into the file
@@ -325,9 +350,11 @@ else {
       require('child_process').execFile('tasklist', ['/FI', 'IMAGENAME eq remoting_desktop.exe', '/NH', '/FO', 'CSV'], { windowsHide: true, timeout: 5000 },
         (err, out) => resolve({ crd: !err && /remoting_desktop\.exe/i.test(String(out)), outline }));
     }));
+    ipcMain.handle('dragging', () => timed('dragging', () => { try { return input.dragging(); } catch { return false; } }));
     ipcMain.handle('cursor', () => timed('cursor', () => { try { return { ...currentCursor(), drag: input.dragging() }; } catch { return { k: '0', c: 'default', drag: false }; } }));
     ipcMain.handle('drag-out', async (_e, button) => {
-      if (ISOLATED) return { kind: 'none', why: 'not in a local trial' }; // those never send input to this PC
+      // Local trials never press keys on this PC, except the opt-in drag-out check (dragcheck.js).
+      if (ISOLATED && !process.argv.includes('--dragout-check')) return { kind: 'none', why: 'not in a local trial' };
       try { return await dragOut(button | 0); } catch (e) { console.error('drag out', e); try { input.buttonUp(button | 0); } catch {} return { kind: 'none', why: 'error' }; }
     });
     ipcMain.handle('drag-file-read', (_e, id, offset, len) => {
@@ -383,7 +410,7 @@ else {
     screen.on('display-removed', displaysChanged);
     screen.on('display-metrics-changed', (_e, _d, changed) => { if (changed.some((c) => c !== 'workArea')) displaysChanged(); });
     if (!ISOLATED) createTray();
-    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile });
+    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder });
     if (BENCH) require('./bench').run({ cfg, bench: benchCfg, buildClientHtml, app });
     if (LOCALTEST) {
       const file = path.join(app.getPath('userData'), 'my-remote-localtest.html');

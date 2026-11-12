@@ -45,10 +45,20 @@ exports.startRelay = () => new Promise((resolve) => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile }) => {
+exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder }) => {
   const results = [];
   const check = (name, ok, detail) => { results.push(!!ok); console.log(`[selftest] ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  - ' + detail : ''}`); };
   const info = (text) => console.log(`[selftest] INFO  ${text}`);
+
+  // --dragout-check: only a real drag out of a real Explorer window (dragcheck.js), then exit.
+  // It injects input on this PC for about ten seconds, so it is opt-in and the user must agree first.
+  if (process.argv.includes('--dragout-check')) {
+    await sleep(2500); // let the host subscribe before the client window of parts B and C connects
+    await require('./dragcheck').run({ check, info, dragOut, closeDragFiles, cfg, buildClientHtml });
+    const pass = results.length > 0 && results.every(Boolean);
+    console.log(pass ? '[selftest] ALL PASS' : '[selftest] SOME FAILED');
+    return app.exit(pass ? 0 : 1);
+  }
 
   // host/bin/capture.dll is a built file that is committed: it must be the one built from the
   // source in native/ as it is now (native/build.js records both). Not there in a packaged copy.
@@ -287,13 +297,77 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile }) 
       const big = path.join(src, 'big file \ud55c\uae00.bin'), small = path.join(src, 'note.txt');
       fs.writeFileSync(big, crypto.randomBytes(3 * 1024 * 1024 + 123));
       fs.writeFileSync(small, 'hello drag\n');
-      const offered = [offerFile(big), offerFile(small)];
+      // A file inside a dragged folder travels with its path in it; an empty folder as a 'dir' entry.
+      const offered = [offerFile(big), offerFile(small), { id: '', name: 'proj/empty', size: 0, dir: true }, offerFile(small, 'proj/sub/note.txt')];
       await js(`window.__rd.keepFiles = true; window.__rd.files = []; 1`);
       await hostWin.webContents.executeJavaScript(`sendFiles(session, ${JSON.stringify(offered)}); 1`);
-      [ok, s] = await until((x) => x.files.length === 2, 25);
-      check('dragged-out files arrive intact', ok && s.files[0].sha === sha(big) && s.files[1].sha === sha(small) && s.files[0].name === path.basename(big),
-        ok ? s.files.map((f) => `${f.size} bytes`).join(', ') : JSON.stringify(s.files));
+      [ok, s] = await until((x) => x.files.length === 3, 25);
+      check('dragged-out files arrive intact, with their folders', ok && s.files[0].sha === sha(big) && s.files[1].sha === sha(small) && s.files[0].name === path.basename(big)
+        && s.files[2].name === 'proj/sub/note.txt' && s.files[2].sha === sha(small),
+        ok ? s.files.map((f) => `${f.name}: ${f.size} bytes`).join(', ') : JSON.stringify(s.files));
       await js(`window.__rd.keepFiles = false; 1`);
+
+      // What a dragged folder becomes on the host: its files with their paths, its empty folders,
+      // and nothing behind a link (a junction pointing at the folder itself must not loop).
+      {
+        const tree = path.join(src, 'tree');
+        fs.mkdirSync(path.join(tree, 'a', 'b'), { recursive: true });
+        fs.mkdirSync(path.join(tree, 'empty'));
+        fs.writeFileSync(path.join(tree, 'a', 'b', 'x.txt'), 'x');
+        fs.writeFileSync(path.join(tree, 'top.txt'), 't');
+        let linked = false;
+        try { fs.symlinkSync(tree, path.join(tree, 'a', 'loop'), 'junction'); linked = true; } catch {}
+        const list = [], room = { left: 100, cut: false };
+        listFolder(tree, 'tree', list, room);
+        const rels = list.map((e) => (e.dir ? 'dir:' : '') + e.rel).sort();
+        check('a dragged folder is listed with its paths, links are not followed', JSON.stringify(rels) === JSON.stringify(['dir:tree/empty', 'tree/a/b/x.txt', 'tree/top.txt']) && !room.cut,
+          `${rels.join(', ')}${linked ? ' (a junction back to the folder was skipped)' : ' (no junction could be made here)'}`);
+      }
+
+      // Letting go outside every window with a button held. The host's pointer must wait while the
+      // host is asked whether a drag-and-drop is under way (a program may take ~0.35 s to start one),
+      // then: carry it out when there is one, otherwise let go where it waited, and only after the
+      // wait carry on past the edge (a window moved onto a monitor not shown here).
+      {
+        const leave = await js(`(async () => {
+          const v = mainView.panes[0].video, b = v.getBoundingClientRect(), w = window, sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+          const inside = { clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, screenX: w.screenX + 40, screenY: w.screenY + 40 };
+          const outside = { clientX: -300, clientY: b.top + b.height / 2, screenX: w.screenX - 300, screenY: w.screenY + 40 };
+          const fire = (type, at, buttons) => v.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 9, pointerType: 'mouse', button: 0, buttons, ...at }));
+          const sent = (t) => window.__rd.trace.filter((m) => m.t === t);
+          const res = {};
+          // While tracing nothing is sent at all, so the view-only lock can be lifted for the test.
+          window.__rd.trace = []; READONLY = false;
+          try {
+          hostDrag = false; window.__rd.trace = [];
+          fire('pointerdown', inside, 1); fire('pointermove', outside, 1);
+          res.heldBack = sent('mm').length === 0 && sent('dragq').length === 1;
+          fire('pointerup', outside, 0);
+          await sleep(${700 + 450});
+          res.letGoWhereItWaited = sent('mu').length === 1 && sent('mu')[0].x >= 0 && sent('mu')[0].x <= 1 && sent('dragout').length === 0;
+          window.__rd.trace = []; drop = null;
+          fire('pointerdown', inside, 1); fire('pointermove', outside, 1);
+          hostDrag = true; fire('pointermove', outside, 1);
+          res.outMode = mainView.dragOut === true;
+          fire('pointerup', outside, 0);
+          res.carriedOut = sent('dragout').length === 1 && sent('mu').length === 0;
+          window.__rd.trace = []; hostDrag = false; drop = null;
+          fire('pointerdown', inside, 1); fire('pointermove', outside, 1); fire('pointerup', outside, 0);
+          setTimeout(() => { hostDrag = true; }, 200);
+          await sleep(550);
+          res.lateDragCarriedOut = sent('dragout').length === 1 && sent('mu').length === 0;
+          window.__rd.trace = []; hostDrag = false; drop = null;
+          fire('pointerdown', inside, 1); fire('pointermove', outside, 1);
+          await sleep(${700 + 100});
+          fire('pointermove', outside, 1);
+          res.pastTheEdgeAfterTheWait = sent('mm').length === 1 && sent('mm')[0].x < 0;
+          fire('pointerup', outside, 0);
+          await sleep(50);
+          } finally { READONLY = true; window.__rd.trace = null; hostDrag = false; drop = null; }
+          return res;
+        })()`);
+        check('drag out: the host pointer waits to learn whether a drag started, then carries it out or lets go where it waited', Object.values(leave).every(Boolean), JSON.stringify(leave));
+      }
 
       const out = await js(`(() => { const w = window, at = (x, y) => leftAll({ screenX: x, screenY: y });
         return [at(w.screenX + 50, w.screenY + 50), at(w.screenX - 200, w.screenY + 50), at(w.screenX + w.outerWidth + 30, w.screenY + 50)]; })()`);
@@ -312,6 +386,21 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile }) 
         && sha(path.join(dst, path.basename(big))) === sha(big) && drop.safeName('..\\..\\evil:na|me?.txt') === '.._.._evil_na_me_.txt' && drop.safeName('CON') === 'file'
         && buf.readUInt32LE(0) === 20 && buf.readUInt32LE(16) === 1 && buf.toString('utf16le', 20) === 'C:\\a.txt\0D:\\b c.txt\0\0',
         `${fs.readdirSync(dst).length} files in the folder`);
+      // A received folder: names from the other side can never climb out of the staging folder, and
+      // the folder (with an empty sub-folder) lands in the target under a free name.
+      {
+        const g = fs.mkdtempSync(path.join(src, 'g'));
+        const escaped = drop.stagedPath(g, '../..\\evil/./sub/..\\CON');
+        fs.mkdirSync(path.join(g, 'proj', 'sub'), { recursive: true });
+        fs.mkdirSync(path.join(g, 'proj', 'empty'));
+        fs.writeFileSync(path.join(g, 'proj', 'sub', 'a.txt'), 'x');
+        fs.mkdirSync(path.join(dst, 'proj'));
+        const r = await drop.placeFiles([path.join(g, 'proj')], { at: Date.now(), own: false, cls: 'CabinetWClass', folder: Promise.resolve(dst) });
+        check('drop of a folder: it keeps its inside and never overwrites; received names cannot leave the staging folder',
+          r.how === 'saved' && escaped.startsWith(g + path.sep) && path.relative(g, escaped) === path.join('evil', 'sub', 'file')
+          && fs.readFileSync(path.join(dst, 'proj (2)', 'sub', 'a.txt'), 'utf8') === 'x' && fs.statSync(path.join(dst, 'proj (2)', 'empty')).isDirectory(),
+          `staged as ${path.relative(g, escaped)}, placed as ${fs.readdirSync(dst).filter((n) => n.startsWith('proj')).join(', ')}`);
+      }
 
       if (process.argv.includes('--clip-check')) {
         // Opt-in: puts two files on this PC's clipboard and reads them back. Only when the clipboard

@@ -199,6 +199,8 @@ function onClientMessage(s, dc, data) {
     if (cfg.clipboard && typeof m.s === 'string' && m.s.length <= CLIP_MAX) { s.clip = m.s; api.writeClip(m.s); }
   } else if (m.t === 'dragout') {
     dragOut(s, m.b | 0);
+  } else if (m.t === 'dragq') {
+    pollDrag(s, 1200);
   } else if (m.t === 'cs') {
     // Client-side measurements: keep them with ours in the local diagnostics log.
     if (data.length < 6000 && m.s && typeof m.s === 'object') api.diag({ client: m.s, host: s.lastHs || null });
@@ -210,21 +212,38 @@ function onClientMessage(s, dc, data) {
 // The client let go of something it had dragged out of the picture: fetch it from this PC
 // (see dragOut in main.js) and send it over - text at once, files over a channel of their own
 // so that a large file does not hold up the cursor and input messages.
+const txTo = (s, o) => { try { if (s.dc && s.dc.readyState === 'open') s.dc.send(JSON.stringify(o)); } catch {} };
 async function dragOut(s, button) {
   const r = await api.dragOut(button);
   if (session !== s) return;
-  const tx = (o) => { try { if (s.dc.readyState === 'open') s.dc.send(JSON.stringify(o)); } catch {} };
   if (r.kind === 'files') {
-    log(`끌어내기: 파일 ${r.files.length}개를 보냅니다${r.skipped ? ` (${r.skipped}개는 제외: 폴더이거나 너무 큼)` : ''}`);
-    tx({ t: 'dragdata', kind: 'files', files: r.files, skipped: r.skipped || 0 });
+    const n = r.files.filter((f) => !f.dir).length;
+    log(`끌어내기: 파일 ${n}개를 보냅니다${r.skipped ? ` (${r.skipped}개는 제외: 너무 많거나 큼)` : ''}`);
+    txTo(s, { t: 'dragdata', kind: 'files', files: r.files, skipped: r.skipped || 0 });
     sendFiles(s, r.files);
   } else if (r.kind === 'text') {
     log(`끌어내기: 글자 ${r.s.length}자를 보냅니다`);
-    tx({ t: 'dragdata', kind: 'text', s: r.s, cut: !!r.cut });
+    txTo(s, { t: 'dragdata', kind: 'text', s: r.s, cut: !!r.cut });
   } else {
     log('끌어내기: 가져올 것이 없습니다 — ' + r.why);
-    tx({ t: 'dragdata', kind: 'none' });
+    txTo(s, { t: 'dragdata', kind: 'none', why: r.why });
   }
+}
+// The client's pointer left its windows with a button held. Whether a drag-and-drop is under way
+// here decides what that means, and a program may take a few hundred ms to start one (Explorer:
+// about 0.35 s on the test PC), so look often for a while and tell the client the moment it starts.
+async function pollDrag(s, ms) {
+  if (s.dragPoll) return;
+  s.dragPoll = true;
+  try {
+    const end = performance.now() + ms;
+    while (session === s && performance.now() < end) {
+      const on = !!(await api.dragging());
+      if (on !== !!s.drag) { s.drag = on; txTo(s, { t: 'drag', on }); }
+      if (on) break;
+      await new Promise((r) => setTimeout(r, 15));
+    }
+  } finally { s.dragPoll = false; }
 }
 async function sendFiles(s, files) {
   const ch = s.pc.createDataChannel('file', { ordered: true });
@@ -233,6 +252,7 @@ async function sendFiles(s, files) {
   try {
     await new Promise((res, rej) => { ch.onopen = res; ch.onerror = rej; setTimeout(() => rej(new Error('channel did not open')), 8000); });
     for (const f of files) {
+      if (f.dir) { ch.send(JSON.stringify({ t: 'dir', name: f.name })); continue; } // an empty folder of a dragged folder
       ch.send(JSON.stringify({ t: 'file', id: f.id, name: f.name, size: f.size }));
       for (let off = 0; off < f.size; off += CHUNK) {
         if (session !== s || ch.readyState !== 'open') throw new Error('connection closed');
@@ -258,10 +278,11 @@ function startChannelTasks(s, dc) {
   const tx = (o) => { if (dc.readyState === 'open') dc.send(JSON.stringify(o)); };
   // Cursor shape (or picture) -> the client draws the cursor itself.
   // Also whether something is being dragged here, so the client knows what leaving its window means.
-  let cur = null, drag = false;
+  let cur = null;
+  s.drag = false;
   s.timers.push(setInterval(async () => {
     const c = await api.cursor();
-    if (!!c.drag !== drag) { drag = !!c.drag; tx({ t: 'drag', on: drag }); }
+    if (!!c.drag !== s.drag) { s.drag = !!c.drag; tx({ t: 'drag', on: s.drag }); }
     if (c.k === cur) return;
     cur = c.k;
     tx(c.img ? { t: 'cur', img: c.img, hx: c.hx, hy: c.hy } : { t: 'cur', c: c.c });

@@ -56,7 +56,8 @@ self-test, opens a view-only client in their default browser).
   it only as `native/build.js` wrote it, in the same commit as the `capture.cpp` it was built from.
   The self-test fails when the two do not match. Never commit a DLL from anywhere else.
 - **Do not inject input on the user's machine as a test** beyond what `--selftest` does (it injects
-  none). Stray clicks and keystrokes land in whatever the user has open.
+  none). Stray clicks and keystrokes land in whatever the user has open. `--dragout-check` does
+  inject (into an Explorer window it opens itself), so run it only after the user agreed.
 - Do not commit `node_modules/`, `tools/`, `dist/`, or any `config.json` (see `.gitignore`).
 
 ## Gotchas
@@ -100,7 +101,15 @@ self-test, opens a view-only client in their default browser).
   read-only) and the host tells the client (`drag`). When the client's pointer then leaves every client
   window, moves are no longer sent (the host's pointer waits); on release outside, the host presses
   Escape (ends the drag without a drop), Ctrl+C (what was dragged is still selected), releases the
-  button and sends the clipboard's files or text (`dragOut` in `main.js`). This replaces the host's
+  button and sends the clipboard's files or text (`dragOut` in `main.js`). Explorer takes 0.35-0.5 s
+  from the first move to starting its drag (measured with `--dragout-check`), so a quick drag leaves
+  the client window before the host knows: while the pointer is outside with a button held and no
+  drag is reported, the client sends no moves for up to `LEAVE_WAIT` (0.7 s) and asks the host at once
+  (`dragq`; the host then polls `input.dragging()` every 15 ms). Let go in that time, it waits for the
+  answer: a drag shows up -> `dragout`, else `mu` where the host's pointer waited. The old behaviour
+  (moves past the edge at once) clamped the host's drag at the screen edge and, on release, let go
+  there - the failure the user reported. A dragged folder is sent as its files with paths ('a/b/c')
+  plus `dir` entries for empty folders; links and junctions are not followed. This replaces the host's
   clipboard. Isolated modes never do the key presses. On the client the app (`client/shell.js`) saves
   files into the folder they were dropped on (desktop, or an Explorer window whose folder it asks the
   shell for through PowerShell); for other targets it puts the data on the clipboard and, within 8 s of
@@ -152,6 +161,7 @@ Run from `host/` with Electron's env var cleared.
 | `electron . --selftest --dump-panel=<file.png>` | Quick look at the arrangement panel: connects, draws the panel as if the client had two screens, writes pictures (`<file>.png`, `-ctrl-drag`, `-swap-drag`, `-together`) and exits. About 20 s, opens no window |
 | `node native/build.js user@host[:folder]` | Builds the native modules on a Linux machine with mingw-w64: `host/bin/capture.dll` + `capture.dll.json` (commit them with the source), `tools/native/capprobe.dll`. After a change in `native/` |
 | `npm run bench -- --native-probe --capture-probe ...` | Bench with a native observer of the same display: reports when the picture was on the host's own screen and how long after that the capturer in use had it. Needs `tools/native/capprobe.dll` |
+| `electron . --selftest --dragout-check` | Only real drags out of a real Explorer window this check opens on a temp folder (`dragcheck.js`): A straight on the host, B and C through a client window running the real page in the client app's shell (held outside; let go at once, before Explorer started its drag). INJECTS INPUT for about half a minute, so only with the user's agreement; skipped when the clipboard holds more than text, which is put back |
 | `electron . --selftest --clip-check` | Same, plus putting two files on this PC's clipboard and reading them back. Only runs when the clipboard holds nothing or plain text, which is put back |
 | `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first |
 | `npm run bench -- --net=direct,home,narrow,wifi --try=old,base` | Measures delay and smoothness on this PC for the given link conditions and settings, prints a table (see "Performance"). `--picture-test=quality` measures picture quality instead (a window opening, a window being dragged, scrolling); `--snapshot` saves what the client showed next to what was drawn. About 45 s per run. Shows a test picture on one display and a small window on another for that time; they never take focus and no input is injected, but tell the user before a long series |
@@ -230,18 +240,21 @@ Data channel `input` (JSON text):
 | client -> host | `mode` | `sharp` or `smooth` |
 | client -> host | `cs` | Client measurements for the host's diagnostics log |
 | client -> host | `dragout` | The pointer was let go outside every client window while the host reported a drag; `b` = button. The host ends its drag, copies what was dragged and answers with `dragdata` |
+| client -> host | `dragq` | The pointer just left every client window with a button held: the host checks for a drag-and-drop every 15 ms for 1.2 s and sends `drag` the moment one starts |
 | both | `clip` | Clipboard text, at most 60000 chars |
 | host -> client | `cur` | Current host cursor: `c` = CSS cursor name, or `img` (PNG data URL) with hotspot `hx`,`hy` for an app-specific cursor |
 | host -> client | `hs` | Host-side statistics every 2 s (codec, encoder, bitrate, per-monitor capture/encode fps and limiting factor) for the client's diagnostics report |
 | host -> client | `drag` | `on`: whether a drag-and-drop is under way on the host |
-| host -> client | `dragdata` | Answer to `dragout`: `kind` `text` (`s`, `cut`), `files` (`files:[{id,name,size}]`, `skipped`; the bytes follow on the `file` channel) or `none` |
+| host -> client | `dragdata` | Answer to `dragout`: `kind` `text` (`s`, `cut`), `files` (`files:[{id,name,size,dir?}]`, `skipped`; the bytes follow on the `file` channel; `name` may be a path 'folder/sub/file') or `none` with `why`: `nodrag`, `nocopy`, `empty`, `toobig` |
 | host -> client | `others` | `crd`: a Chrome Remote Desktop session is connected to the host as well (`remoting_desktop.exe` runs); `outline`: the host drags windows as an outline only. Checked every 10 s, sent when it changes; the client shows a warning |
 | host -> client | `bye` | Deliberate close; the client must not auto-reconnect |
 | host -> client | `renew` | Host monitors changed; the client reconnects at once and keeps its windows |
 
 Data channel `file` (host -> client, opened by the host per transfer, ordered): text `{t:'file', id, name, size}`,
-then the bytes in binary messages of at most 60000, text `{t:'fileend', id}`; after the last file
-`{t:'filesdone'}`, or `{t:'fileerror'}`. The host only sends files it found on its own clipboard in the
+then the bytes in binary messages of at most 60000, text `{t:'fileend', id}`; an empty folder of a
+dragged folder as `{t:'dir', name}`; after the last file `{t:'filesdone'}`, or `{t:'fileerror'}`. The
+client app stages one transfer under one folder (`shell.fileBegin(name, group)`, names made safe part
+by part, never leaving the staging folder) and moves its top-level files and folders to the target. The host only sends files it found on its own clipboard in the
 `dragout` step; the client cannot ask for a path.
 
 Monitor coordinates are physical pixels (`screen.dipToScreenRect`), mapped to the 0..65535 virtual
@@ -379,7 +392,9 @@ written many at once after a gap mean the same. `released`: buttons the host let
 client's moves said they were no longer held. The client's part may carry `ptr`: `cancel` (the
 browser ended a pointer while a button was held), `lost` (pointer capture went away while held),
 `drag` (browser drag-and-drop starts that were blocked), `released` (host buttons let go after a
-cancel). It never contains the key; `config.json`
+cancel), and `xfer` for dragging out: `out` (dragouts sent), `late` (let go before the host's drag
+started, carried out after waiting), `files`, `placed`, `text`, `none`, `failed`, and the last `why`
+code and placement `how` (fixed words, no names or paths). It never contains the key; `config.json`
 in the same folder does, so do not read that one.
 
 ## Verified and unverified
@@ -398,12 +413,17 @@ three monitors on two graphics cards, a host window reload during a session, the
 "Performance". Not verified: a monitor in HDR mode or rotated, the lock screen and permission prompts
 (the capturer should pause and resume), a resolution change during a session, any PC but this one.
 
-Verified by the self-test for dragging out: the file channel end to end (3 MB, hashes compared), the
-"pointer left every window" test, saving into a folder under a free name, the clipboard file format
-(`--clip-check`). Not verified, because it needs a real drag and real input: that the host really
-reports `CLIPBRDWNDCLASS` during a drag from Explorer or a text editor, that Escape plus Ctrl+C yields
-the dragged item in those programs, the click-and-paste on the client, Windows 11 tabbed Explorer.
-(Resolving an Explorer window's folder was checked by hand on this PC, Windows 10, read-only.)
+Verified by the self-test for dragging out: the file channel end to end (3 MB, hashes compared, a
+file inside a folder), listing a dragged folder (links skipped), the "pointer left every window"
+test, the wait-then-decide rules with traced pointer events, saving files and folders into a folder
+under a free name, staged names never leaving the staging folder, the clipboard file format
+(`--clip-check`). Verified with `--dragout-check` on this PC (Windows 10, real Explorer, real injected
+input, 2026-11-13): the host sees Explorer's drag (`CLIPBRDWNDCLASS` held by Explorer's foreground
+thread, 0.36-0.5 s after the first move), Escape plus Ctrl+C yields the dragged file, and the whole
+way through a client window in the app's shell, held outside and let go at once, ends with the file
+in the Explorer folder it was let go over (the folder resolved through the shell). Not verified:
+text dragged out of an editor, the client app's click-and-paste into another program, a real second
+PC as the client, Windows 11 tabbed Explorer.
 
 Verified by the self-test: the arrangement rules, applying an arrangement (two monitors together, an
 empty screen), the panel showing every monitor live, and a drag and a click done with synthetic pointer

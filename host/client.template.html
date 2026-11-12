@@ -171,9 +171,9 @@ const boot = window.__mrBoot || null;
 // Present when running inside the client app (client/shell.js) rather than a browser tab.
 const shell = window.mrShell || null;
 const hash = new URLSearchParams(boot ? boot.preset : location.hash.slice(1) || '__PRESET__');
-const READONLY = hash.has('ro');
+let READONLY = hash.has('ro'); // let: the self-test lifts it while it traces (nothing is sent then, see send)
 if (READONLY) $('ro').style.display = '';
-const BLOCKED_WHEN_RO = new Set(['mm', 'md', 'mu', 'mw', 'kd', 'ku', 'reset', 'clip', 'dragout']);
+const BLOCKED_WHEN_RO = new Set(['mm', 'md', 'mu', 'mw', 'kd', 'ku', 'reset', 'clip', 'dragout', 'dragq']);
 const CURSORS = new Set(['default', 'text', 'wait', 'crosshair', 'nwse-resize', 'nesw-resize', 'ew-resize', 'ns-resize', 'move', 'not-allowed', 'pointer', 'progress', 'help']);
 const HINT = 'Ctrl+Alt+←/→ 모니터 전환 · ↑ 전체 보기 · ↓ 원본 크기 · Enter 전체화면 끝내기';
 
@@ -194,13 +194,15 @@ $('mode').value = mode;
 $('hk').checked = hotkeysOn;
 
 window.__rd = { state: 'idle', monitors: 0, frames: 0, fps: {}, res: {}, cursor: '', clipRx: false, audio: false, connects: 0, pastes: 0, host: null, dragouts: 0, files: [], keepFiles: false,  // files/keepFiles: the self-test looks at received files instead of saving them
-  ptr: { cancel: 0, lost: 0, drag: 0, released: 0 }, others: null }; // ptr: pointer streams the browser broke off, and what was done about it
+  ptr: { cancel: 0, lost: 0, drag: 0, released: 0 }, others: null, // ptr: pointer streams the browser broke off, and what was done about it
+  xfer: { out: 0, late: 0, files: 0, placed: 0, text: 0, none: 0, failed: 0, why: '', how: '' }, trace: null }; // xfer: things dragged out; trace: the self-test sees what would be sent
 let hostDrag = false; // the host says a drag-and-drop is under way there (a file, selected text, ...)
 let drop = null;      // the last thing dragged out to this PC: where it was let go, what has arrived
 
 function msg(s) { $('msg').textContent = s; window.__rd.state = s; }
 function overlay(s) { $('ov').textContent = s; $('ov').style.display = s ? 'flex' : 'none'; }
 function send(o) {
+  if (window.__rd.trace) { window.__rd.trace.push(o); return; } // self-test: record what would be sent, send nothing
   if (READONLY && BLOCKED_WHEN_RO.has(o.t)) return;
   if (dc && dc.readyState === 'open') dc.send(JSON.stringify(o));
 }
@@ -487,67 +489,97 @@ function leftAll(ev) {
 }
 // The client app can put things where they were let go (client/shell.js); a browser cannot.
 const canDrop = () => !!(shell && shell.dropPoint && shell.dropText && shell.dropFiles && shell.fileBegin);
-function startDrop() {
-  const d = (drop = { id: null, ready: null });
-  // The app notes now, before the pointer moves on, what it was let go over.
+// How long a program on the host may take to start its drag-and-drop after the pointer started
+// moving (Explorer: about 0.35 s on the test PC), plus a round trip. While the pointer is outside
+// every client window with a button held and the host has not yet said whether a drag-and-drop is
+// under way, the host's pointer waits where it was instead of running off along the screen edge.
+const LEAVE_WAIT = 700;
+// Note at once, before the pointer moves on, what it was let go over (the app only).
+function noteDrop(view) {
+  const d = { id: null, ready: null, view };
   if (canDrop()) d.ready = shell.dropPoint().then((id) => { d.id = id; }, () => {});
-  window.__rd.dragouts++;
-  toast(mainView, '호스트에서 가져오는 중…', 6000);
+  return d;
 }
+function startDrop(d) {
+  drop = d;
+  window.__rd.dragouts++;
+  window.__rd.xfer.out++;
+  toast(where(d), '호스트에서 가져오는 중…', 6000);
+}
+// The window a message about a drop belongs in: the one it was let go from, while it is open.
+const where = (d) => (d && d.view && !d.view.win.closed ? d.view : mainView);
+const WHY = {
+  nodrag: '호스트에서 끌기가 진행 중이 아니었습니다', nocopy: '끌던 항목을 복사하지 못했습니다',
+  empty: '끌던 것이 파일이나 글자가 아닙니다', toobig: '파일이 너무 많거나 큽니다 (최대 5000개, 2 GB)',
+};
 async function gotDragData(m) {
   const d = drop;
   if (!d) return;
   if (m.kind === 'text' && typeof m.s === 'string' && m.s.length <= CLIP_MAX) {
     drop = null;
+    window.__rd.xfer.text++;
     lastClip = m.s; // it goes onto this PC's clipboard; do not send it back to the host
     let how = '';
     if (canDrop()) { await d.ready; how = await shell.dropText(d.id, m.s).catch(() => ''); }
     if (!how) gotClip(m.s);
-    toast(mainView, how === 'pasted' ? '놓은 곳에 붙여 넣었습니다' + (m.cut ? ' (너무 길어 앞부분만)' : '') : '가져온 글자를 복사해 두었습니다. 붙여 넣을 곳에서 Ctrl+V를 누르세요', how === 'pasted' ? 2500 : 6000);
+    toast(where(d), how === 'pasted' ? '놓은 곳에 붙여 넣었습니다' + (m.cut ? ' (너무 길어 앞부분만)' : '') : '가져온 글자를 복사해 두었습니다. 붙여 넣을 곳에서 Ctrl+V를 누르세요', how === 'pasted' ? 2500 : 6000);
   } else if (m.kind === 'files' && Array.isArray(m.files)) {
-    toast(mainView, `파일 ${m.files.length}개를 받는 중…`, 600000);
+    toast(where(d), `파일 ${m.files.filter((f) => !f.dir).length}개를 받는 중…`, 600000);
   } else {
     drop = null;
-    toast(mainView, '가져올 수 있는 것이 없습니다. 파일과 선택한 글자만 끌어낼 수 있습니다', 4000);
+    window.__rd.xfer.none++;
+    window.__rd.xfer.why = String(m.why || '');
+    toast(where(d), '가져올 수 있는 것이 없습니다' + (WHY[m.why] ? ' — ' + WHY[m.why] : ''), 5000);
   }
 }
-// Files arrive on a channel of their own: a header, the bytes in pieces, an end mark - one file after another.
+// Files arrive on a channel of their own: a header, the bytes in pieces, an end mark - one file after
+// another. A dragged folder comes as its files with their path inside it ("folder/sub/file") and its
+// empty folders as {t:'dir'}; the app rebuilds it, a browser saves the files one by one.
 function receiveFiles(ch) {
   ch.binaryType = 'arraybuffer';
-  const d = drop, app = canDrop(), ids = [], names = [];
-  let cur = null, bytes = 0, shownAt = 0, failed = false;
+  const d = drop, app = canDrop(), ids = [], tops = new Set(), group = Math.random().toString(36).slice(2, 12);
+  let cur = null, bytes = 0, shownAt = 0, failed = false, files = 0;
   let queue = Promise.resolve(); // the app writes to disk asynchronously; keep the pieces in order
-  const fail = () => { failed = true; if (drop === d) drop = null; toast(mainView, '파일을 받지 못했습니다', 5000); };
+  const fail = () => { failed = true; if (drop === d) drop = null; window.__rd.xfer.failed++; toast(where(d), '파일을 받지 못했습니다', 5000); };
   const step = async (data) => {
     if (failed) return;
     if (typeof data !== 'string') {
       if (!cur) return;
       bytes += data.byteLength;
       if (app) await shell.fileChunk(cur.id, new Uint8Array(data)); else cur.parts.push(data);
-      if (performance.now() - shownAt > 400) { shownAt = performance.now(); toast(mainView, `파일 받는 중… ${(bytes / 1048576).toFixed(1)} MB`, 600000); }
+      if (performance.now() - shownAt > 400) { shownAt = performance.now(); toast(where(d), `파일 받는 중… ${(bytes / 1048576).toFixed(1)} MB`, 600000); }
       return;
     }
     const m = JSON.parse(data);
-    if (m.t === 'file') cur = { name: String(m.name), parts: [], id: app ? await shell.fileBegin(String(m.name)) : null };
-    else if (m.t === 'fileend' && cur) {
-      names.push(cur.name);
+    if (m.t === 'file') {
+      const name = String(m.name);
+      tops.add(name.split('/')[0]);
+      cur = { name, parts: [], id: app ? await shell.fileBegin(name, group) : null };
+    } else if (m.t === 'dir') {
+      tops.add(String(m.name).split('/')[0]);
+      if (app && shell.makeDir) await shell.makeDir(String(m.name), group);
+    } else if (m.t === 'fileend' && cur) {
+      files++;
       if (app) { await shell.fileEnd(cur.id); ids.push(cur.id); }
       else {
         const blob = new Blob(cur.parts);
         if (window.__rd.keepFiles) {
           const h = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
           window.__rd.files.push({ name: cur.name, size: blob.size, sha: [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('') });
-        } else { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = cur.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 60000); }
+        } else { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = cur.name.replace(/\//g, '_'); a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 60000); }
       }
       cur = null;
     } else if (m.t === 'filesdone') {
       if (drop === d) drop = null;
-      const n = names.length;
-      if (!app) { toast(mainView, `파일 ${n}개를 이 PC의 다운로드 폴더에 저장했습니다`, 6000); return; }
+      window.__rd.xfer.files++;
+      const what = tops.size === 1 && files > 1 ? `"${[...tops][0]}" (파일 ${files}개)` : `파일 ${files}개`;
+      if (!app) { toast(where(d), `${what}를 이 PC의 다운로드 폴더에 저장했습니다`, 6000); return; }
       if (d) await d.ready;
-      const r = (await shell.dropFiles(d ? d.id : null, ids)) || {};
-      toast(mainView, r.how === 'saved' ? `파일 ${n}개를 "${r.where}"에 넣었습니다` : r.how === 'pasted' ? `파일 ${n}개를 놓은 곳에 붙여 넣었습니다`
-        : r.how === 'clipboard' ? `파일 ${n}개를 받았습니다. 넣을 폴더에서 Ctrl+V를 누르세요` : '받은 파일을 놓지 못했습니다', r.how === 'clipboard' ? 9000 : 4000);
+      const r = (await shell.dropFiles(d ? d.id : null, ids, group)) || {};
+      window.__rd.xfer.how = r.how || 'none';
+      window.__rd.xfer.placed++;
+      toast(where(d), r.how === 'saved' ? `${what}를 "${r.where}"에 넣었습니다` : r.how === 'pasted' ? `${what}를 놓은 곳에 붙여 넣었습니다`
+        : r.how === 'clipboard' ? `${what}를 받았습니다. 넣을 폴더에서 Ctrl+V를 누르세요` : '받은 파일을 놓지 못했습니다', r.how === 'clipboard' ? 9000 : 4000);
     } else if (m.t === 'fileerror') throw new Error('host');
   };
   ch.onmessage = (e) => { queue = queue.then(() => step(e.data)).catch(fail); };
@@ -578,9 +610,17 @@ function attachPointer(view, pane) {
   const here = (ev) => { const q = rel(pane, ev.clientX, ev.clientY); return q && { d: q.d, x: clamp(q.x, 0, 1), y: clamp(q.y, 0, 1) }; };
   const setOut = (on) => { if (view.dragOut !== on) { view.dragOut = on; v.style.cursor = on ? 'copy' : cursorCss; } };
   v.addEventListener('pointermove', (ev) => {
-    // Something is being dragged on the host and the pointer has left our windows: it is being
-    // carried out to this PC. The host's pointer waits where it was until we know how this ends.
-    if (ev.buttons && hostDrag && !READONLY && leftAll(ev)) { setOut(true); return; }
+    if (ev.buttons && !READONLY && leftAll(ev)) {
+      // A button is held and the pointer is over this PC's own desktop or programs.
+      // Something is being dragged on the host: it is being carried out to this PC. The host's
+      // pointer waits where it was until we know how this ends.
+      if (hostDrag) { setOut(true); return; }
+      // Not (yet) known to be a drag-and-drop: ask the host at once and hold the pointer meanwhile.
+      if (!view.leftAt) { view.leftAt = performance.now(); send({ t: 'dragq' }); }
+      if (performance.now() - view.leftAt < LEAVE_WAIT) return;
+      // No drag-and-drop after all (a window being moved, text being selected): carry on past the
+      // edge, onto the host's neighbouring monitor, as at the real desk.
+    } else view.leftAt = 0;
     setOut(false);
     const p = ev.buttons ? mapPoint(ev, view, pane) : here(ev);
     if (!p) return;
@@ -607,15 +647,33 @@ function attachPointer(view, pane) {
   });
   v.addEventListener('pointerup', (ev) => {
     if (ev.button >= 0 && ev.button < 5) held &= ~(1 << ev.button);
-    if (view.dragOut) {
+    const outside = !READONLY && leftAll(ev), b = ev.button;
+    if (view.dragOut || (outside && hostDrag)) {
       // Let go outside: the host ends its drag and sends what was being dragged (see gotDragData).
       setOut(false);
       ev.preventDefault();
-      view.pending = null;
-      startDrop();
-      send({ t: 'dragout', b: ev.button });
+      view.pending = null; view.leftAt = 0;
+      startDrop(noteDrop(view));
+      send({ t: 'dragout', b });
       return;
     }
+    if (outside && view.leftAt && performance.now() - view.leftAt < LEAVE_WAIT) {
+      // Let go outside before the host could say whether a drag-and-drop had started. Note where,
+      // and give the host a moment: a drag that shows up means "carry it out to here"; otherwise the
+      // button is let go where the host's pointer waited (never out along the screen edge).
+      ev.preventDefault();
+      view.pending = null;
+      const d = noteDrop(view), until = view.leftAt + LEAVE_WAIT + 300;
+      view.leftAt = 0;
+      const decide = () => {
+        if (hostDrag) { window.__rd.xfer.late++; startDrop(d); send({ t: 'dragout', b }); }
+        else if (performance.now() < until) setTimeout(decide, 25);
+        else if (lastAt) send({ t: 'mu', b, d: lastAt.d, x: lastAt.x, y: lastAt.y });
+      };
+      decide();
+      return;
+    }
+    view.leftAt = 0;
     const p = mapPoint(ev, view, pane) || lastAt; if (!p) return;
     ev.preventDefault();
     view.pending = null;
@@ -1424,6 +1482,7 @@ setInterval(async () => {
       lost, recv, freezes, freezeDur: +freezeDur.toFixed(2), dropped, nack, pli, dec: decoder, mode, shell: !!shell,
       views: liveViews().map((v) => `${v.sel}/${v.fit}/${v.root.clientWidth}x${v.root.clientHeight}@${v.win.devicePixelRatio}${v.win.document.fullscreenElement ? '/fs' : ''}`),
       ...(Object.values(window.__rd.ptr).some(Boolean) ? { ptr: { ...window.__rd.ptr } } : {}),
+      ...(Object.values(window.__rd.xfer).some(Boolean) ? { xfer: { ...window.__rd.xfer } } : {}),
     } });
   }
   last = { bytes, t: now, jb, jbn };

@@ -1,0 +1,236 @@
+// `electron . --selftest --dragout-check`: real drags out of a real Explorer window on this PC.
+//
+// A. Straight on the host: press on a test file, move until Explorer starts its drag-and-drop, then
+//    do what the host does when a client lets go outside its windows (dragOut in main.js): Escape,
+//    Ctrl+C, release, read the clipboard. On the way it records what the host can see of the drag
+//    (which window of which thread holds the mouse, the drag picture, the cursor).
+// B. The whole way through a client window: the real client page inside the client app's shell,
+//    driven with pointer events as a person at another PC would: press on the file in the picture,
+//    move, leave the window, hold outside, let go. The page waits for the host's drag and asks for
+//    it ('dragout'), the host sends the file, the shell puts it where the pointer was let go, which
+//    on this one PC is the Explorer window itself: the file must come back as "... (2).txt".
+// C. As B, but let go right after leaving the window, before Explorer has started its drag.
+//
+// THIS INJECTS INPUT on this PC for about half a minute, into the Explorer window it opened itself:
+// whoever uses this PC must not touch the mouse or keyboard meanwhile, so ask first. It runs only
+// when the clipboard holds nothing or text (plain, HTML, RTF), which is put back afterwards, and it
+// presses nothing when anything else covers the test file on the screen.
+const { BrowserWindow, clipboard, screen } = require('electron');
+const { execFile } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
+const koffi = require('koffi');
+const input = require('./input');
+
+const user32 = koffi.load('user32.dll'), kernel32 = koffi.load('kernel32.dll');
+const POINT = koffi.struct('DC_POINT', { x: 'long', y: 'long' });
+const RECT = koffi.struct('DC_RECT', { left: 'long', top: 'long', right: 'long', bottom: 'long' });
+const GTI = koffi.struct('DC_GUITHREADINFO', {
+  cbSize: 'uint32', flags: 'uint32', hwndActive: 'uintptr_t', hwndFocus: 'uintptr_t', hwndCapture: 'uintptr_t',
+  hwndMenuOwner: 'uintptr_t', hwndMoveSize: 'uintptr_t', hwndCaret: 'uintptr_t', rcCaret: RECT,
+});
+const TE32 = koffi.struct('DC_THREADENTRY32', {
+  dwSize: 'uint32', cntUsage: 'uint32', th32ThreadID: 'uint32', th32OwnerProcessID: 'uint32', tpBasePri: 'int32', tpDeltaPri: 'int32', dwFlags: 'uint32',
+});
+const GetGUIThreadInfo = user32.func('GetGUIThreadInfo', 'bool', ['uint32', koffi.inout(koffi.pointer(GTI))]);
+const GetClassNameW = user32.func('GetClassNameW', 'int', ['uintptr_t', 'uint8*', 'int']);
+const WindowFromPoint = user32.func('WindowFromPoint', 'uintptr_t', [POINT]);
+const GetAncestor = user32.func('GetAncestor', 'uintptr_t', ['uintptr_t', 'uint32']);
+const GetWindowThreadProcessId = user32.func('GetWindowThreadProcessId', 'uint32', ['uintptr_t', koffi.out(koffi.pointer('uint32'))]);
+const SetWindowPos = user32.func('SetWindowPos', 'bool', ['uintptr_t', 'intptr_t', 'int', 'int', 'int', 'int', 'uint32']);
+const ShowWindow = user32.func('ShowWindow', 'bool', ['uintptr_t', 'int']);
+const PostMessageW = user32.func('PostMessageW', 'bool', ['uintptr_t', 'uint32', 'uintptr_t', 'intptr_t']);
+const FindWindowW = user32.func('FindWindowW', 'uintptr_t', ['str16', 'str16']);
+const IsWindowVisible = user32.func('IsWindowVisible', 'bool', ['uintptr_t']);
+const IsWindow = user32.func('IsWindow', 'bool', ['uintptr_t']);
+const GetCursorPos = user32.func('GetCursorPos', 'bool', [koffi.out(koffi.pointer(POINT))]);
+const CreateToolhelp32Snapshot = kernel32.func('CreateToolhelp32Snapshot', 'intptr_t', ['uint32', 'uint32']);
+const Thread32First = kernel32.func('Thread32First', 'bool', ['intptr_t', koffi.inout(koffi.pointer(TE32))]);
+const Thread32Next = kernel32.func('Thread32Next', 'bool', ['intptr_t', koffi.inout(koffi.pointer(TE32))]);
+const CloseHandle = kernel32.func('CloseHandle', 'bool', ['intptr_t']);
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const classOf = (h) => { if (!h) return ''; const b = Buffer.alloc(512), n = GetClassNameW(h, b, 256); return n > 0 ? b.toString('utf16le', 0, n * 2) : '?'; };
+function gui(tid) {
+  const gi = { cbSize: koffi.sizeof(GTI), flags: 0, hwndActive: 0, hwndFocus: 0, hwndCapture: 0, hwndMenuOwner: 0, hwndMoveSize: 0, hwndCaret: 0, rcCaret: { left: 0, top: 0, right: 0, bottom: 0 } };
+  return GetGUIThreadInfo(tid, gi) ? gi : null;
+}
+function threadsOf(pid) {
+  const snap = CreateToolhelp32Snapshot(4, 0), out = []; // TH32CS_SNAPTHREAD
+  if (snap === -1 || !snap) return out;
+  try {
+    const te = { dwSize: koffi.sizeof(TE32), cntUsage: 0, th32ThreadID: 0, th32OwnerProcessID: 0, tpBasePri: 0, tpDeltaPri: 0, dwFlags: 0 };
+    for (let ok = Thread32First(snap, te); ok; ok = Thread32Next(snap, te)) if (te.th32OwnerProcessID === pid) out.push(te.th32ThreadID);
+  } finally { CloseHandle(snap); }
+  return out;
+}
+// What the host can see of a drag in the program that owns `hwnd`.
+function look(hwnd) {
+  const fg = gui(0) || {}, pid = [0];
+  GetWindowThreadProcessId(hwnd, pid);
+  const holders = [];
+  for (const tid of threadsOf(pid[0])) { const g = gui(tid); if (g && g.hwndCapture) holders.push(classOf(g.hwndCapture)); }
+  const img = FindWindowW('SysDragImage', null), cur = input.cursorState();
+  return {
+    foreground: { active: classOf(fg.hwndActive), capture: classOf(fg.hwndCapture), flags: fg.flags || 0 },
+    explorerThreadsHoldingTheMouse: holders,
+    dragPicture: !!img && IsWindowVisible(img),
+    cursor: cur.name || 'not a system cursor',
+    hostSaysDragging: input.dragging(),
+  };
+}
+const ps = (script, ms = 20000) => new Promise((resolve) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Console]::OutputEncoding=[Text.Encoding]::UTF8;' + script],
+  { windowsHide: true, timeout: ms }, (err, out) => resolve(err ? '' : String(out).trim())));
+// The Explorer window that shows `dir` (asked of the shell, read-only).
+async function explorerWindow(dir) {
+  const out = await ps(`$t=[DateTime]::Now.AddSeconds(12); do { foreach($w in (New-Object -ComObject Shell.Application).Windows()){ try { if($w.Document.Folder.Self.Path -eq '${dir.replace(/'/g, "''")}'){ [int64]$w.HWND; exit } } catch {} }; Start-Sleep -Milliseconds 300 } while([DateTime]::Now -lt $t)`);
+  return Number(out) || 0;
+}
+// Where an item whose name starts with `prefix` is on the screen in that window (UI Automation, read-only).
+async function itemRect(hwnd, prefix) {
+  const out = await ps(`Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes; $A=[System.Windows.Automation.AutomationElement]; $root=$A::FromHandle([IntPtr]${hwnd}); $c=New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty,[System.Windows.Automation.ControlType]::ListItem); $t=[DateTime]::Now.AddSeconds(8); do { foreach($e in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$c)){ $n=$e.Current.Name; if($n -like '${prefix}*' -and $n -notlike '*(*'){ $r=$e.Current.BoundingRectangle; if($r.Width -gt 0){ '{0},{1},{2},{3}' -f [int]$r.X,[int]$r.Y,[int]$r.Width,[int]$r.Height; exit } } }; Start-Sleep -Milliseconds 300 } while([DateTime]::Now -lt $t)`);
+  const m = /^(-?\d+),(-?\d+),(\d+),(\d+)/.exec(out);
+  return m ? { x: +m[1], y: +m[2], w: +m[3], h: +m[4] } : null;
+}
+
+exports.run = async ({ check, info, dragOut, closeDragFiles, cfg, buildClientHtml }) => {
+  // The clipboard is put back afterwards; that is only possible for text (plain, HTML, RTF).
+  const formats = clipboard.availableFormats(), TEXTY = new Set(['text/plain', 'text/html', 'text/rtf']);
+  if (!formats.every((f) => TEXTY.has(f))) { info('drag-out check skipped: the clipboard holds more than text (' + formats.join(', ') + ')'); return; }
+  const keep = Object.fromEntries([['text', clipboard.readText()], ['html', formats.includes('text/html') ? clipboard.readHTML() : ''], ['rtf', formats.includes('text/rtf') ? clipboard.readRTF() : '']].filter(([, v]) => v));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-dragtest-'));
+  const content = {};
+  for (const n of ['drag-test-a.txt', 'drag-test-b.txt', 'drag-test-c.txt']) fs.writeFileSync(path.join(dir, n), (content[n] = crypto.randomBytes(48000).toString('hex')));
+  const rects = screen.getAllDisplays().map((d) => screen.dipToScreenRect(null, d.bounds));
+  input.setMonitors(rects);
+  const at = (px, py) => {
+    const i = rects.findIndex((r) => px >= r.x && px < r.x + r.width && py >= r.y && py < r.y + r.height);
+    return i < 0 ? null : { d: i, x: (px - rects[i].x) / (rects[i].width - 1), y: (py - rects[i].y) / (rects[i].height - 1) };
+  };
+  const send = (o) => input.handle(JSON.stringify(o));
+  const home = { x: 0, y: 0 }, hadHome = GetCursorPos(home);
+  let hwnd = 0, pressed = false, cw = null;
+  // Finds a test file in the Explorer window and makes sure nothing covers it.
+  const target = async (prefix) => {
+    const r = await itemRect(hwnd, prefix);
+    if (!r) { check(`drag-out check: ${prefix} is found in the Explorer window`, false, 'UI Automation did not find it'); return null; }
+    const cx = r.x + Math.min(Math.round(r.w / 2), 40), cy = r.y + Math.round(r.h / 2);
+    const leaf = WindowFromPoint({ x: cx, y: cy }), root = leaf ? GetAncestor(leaf, 2) : 0;
+    if (Number(root) !== Number(hwnd) || !at(cx, cy)) {
+      check('drag-out check: nothing covers the test file', false, `the window at ${cx},${cy} is ${classOf(root) || 'none'}; nothing was pressed`);
+      return null;
+    }
+    return { cx, cy };
+  };
+  try {
+    execFile('explorer.exe', [dir], { windowsHide: false }, () => {});
+    hwnd = await explorerWindow(dir);
+    if (!hwnd) { check('drag-out check: an Explorer window on the test folder opens', false, 'not found within 12 s'); return; }
+    const primary = screen.dipToScreenRect(null, screen.getPrimaryDisplay().bounds);
+    ShowWindow(hwnd, 9); // SW_RESTORE
+    SetWindowPos(hwnd, -1, primary.x + 160, primary.y + 140, 960, 640, 0x0040); // topmost while the test runs, shown
+    await sleep(900);
+
+    // ---- A: straight on the host ----
+    let t = await target('drag-test-a');
+    if (!t) return;
+    const before = look(hwnd);
+    send({ t: 'mm', ...at(t.cx, t.cy), h: 0 });
+    await sleep(250);
+    send({ t: 'md', b: 0, ...at(t.cx, t.cy) });
+    pressed = true;
+    await sleep(150);
+    const t0 = Date.now();
+    let seenAt = null;
+    for (let k = 1; k <= 12; k++) {
+      const p = at(t.cx + k * 8, t.cy + k * 2);
+      if (p) send({ t: 'mm', ...p, h: 1 });
+      await sleep(30);
+      if (seenAt == null && input.dragging()) seenAt = Date.now() - t0;
+    }
+    for (let k = 0; k < 40 && seenAt == null; k++) { await sleep(25); if (input.dragging()) seenAt = Date.now() - t0; }
+    const during = look(hwnd);
+    info('A, before the press: ' + JSON.stringify(before));
+    info('A, while dragging: ' + JSON.stringify(during));
+    check('A: a real Explorer drag is seen by the host', during.hostSaysDragging,
+      seenAt != null ? `seen ${seenAt} ms after the pointer started moving` : `not seen; the foreground thread holds the mouse with ${during.foreground.capture || 'nothing'}, Explorer threads with ${during.explorerThreadsHoldingTheMouse.join(', ') || 'nothing'}`);
+    const result = await dragOut(0);
+    pressed = false;
+    const f = result && result.files && result.files[0];
+    check('A: dragging out hands over the dragged file', result && result.kind === 'files' && result.files.length === 1 && f.name === 'drag-test-a.txt' && f.size === content['drag-test-a.txt'].length, JSON.stringify(result));
+    const after = look(hwnd);
+    check('A: no button or drag is left over afterwards', !after.hostSaysDragging && !after.explorerThreadsHoldingTheMouse.length, JSON.stringify(after));
+    if (closeDragFiles) closeDragFiles(null);
+
+    // ---- B and C: through a client window running the real page in the client app's shell ----
+    if (!cfg || !buildClientHtml) return;
+    const shell = require('../client/shell');
+    const page = path.join(os.tmpdir(), `myremote-dragtest-client-${process.pid}.html`);
+    fs.writeFileSync(page, buildClientHtml());
+    // On another display than the Explorer window when there is one, and never taking the focus:
+    // on one PC, a client window that loses the focus to the clicked Explorer window would let go of
+    // every held button (as it must at a real client when the person switches away).
+    const displays = screen.getAllDisplays(), prim = screen.getPrimaryDisplay(), other = displays.find((d) => d.id !== prim.id);
+    const spot = other ? { x: other.bounds.x + 40, y: other.bounds.y + 40 } : { x: prim.bounds.x + prim.bounds.width - 760, y: prim.bounds.y + prim.bounds.height - 520 };
+    cw = new BrowserWindow({ show: false, focusable: false, ...spot, width: 720, height: 460, webPreferences: { preload: shell.PRELOAD, backgroundThrottling: false } });
+    shell.attach(cw);
+    await cw.loadFile(page, { hash: `k=${cfg.key}&auto` });
+    cw.showInactive();
+    const cj = (code) => cw.webContents.executeJavaScript(code);
+    let st = null;
+    for (let i = 0; i < 40; i++) { await sleep(500); st = await cj(`({ s: window.__rd.state, f: window.__rd.frames, n: monitors.length })`); if (st.s === 'connected' && st.f > 20) break; }
+    if (!st || st.s !== 'connected') { check('B: the client window connects', false, JSON.stringify(st)); return; }
+    const through = async (label, prefix, holdOutsideMs, insideMoves) => {
+      const tt = await target(prefix);
+      if (!tt) return;
+      const mi = await cj(`monitors.findIndex((m) => ${tt.cx} >= m.x && ${tt.cx} < m.x + m.width && ${tt.cy} >= m.y && ${tt.cy} < m.y + m.height)`);
+      await cj(`setSel(mainView, ${mi}); 1`);
+      await sleep(1200);
+      const g = await cj(`(() => { const r = mainView.panes[0].video.getBoundingClientRect(), m = monitors[${mi}];
+        return { left: r.left, top: r.top, w: r.width, h: r.height, mx: m.x, my: m.y, mw: m.width, mh: m.height, sx: window.screenX, sy: window.screenY }; })()`);
+      const inPage = (px, py) => ({ clientX: g.left + ((px - g.mx) / (g.mw - 1)) * g.w, clientY: g.top + ((py - g.my) / (g.mh - 1)) * g.h, screenX: g.sx + 20, screenY: g.sy + 60 });
+      const outside = (k) => ({ clientX: -150 - k, clientY: g.top + 40, screenX: g.sx - 150 - k, screenY: g.sy + 40 });
+      const fire = (type, p, buttons) => cj(`mainView.panes[0].video.dispatchEvent(new PointerEvent('${type}', { bubbles: true, cancelable: true, pointerId: 11, pointerType: 'mouse', button: 0, buttons: ${buttons},
+        clientX: ${p.clientX}, clientY: ${p.clientY}, screenX: ${p.screenX}, screenY: ${p.screenY} })); 1`);
+      const xfer0 = await cj(`({ ...window.__rd.xfer })`);
+      await fire('pointermove', inPage(tt.cx, tt.cy), 0);
+      await sleep(200);
+      await fire('pointerdown', inPage(tt.cx, tt.cy), 1);
+      await sleep(150);
+      for (let k = 1; k <= insideMoves; k++) { await fire('pointermove', inPage(tt.cx + k * 8, tt.cy + k * 2), 1); await sleep(30); }
+      // Out of the window at once: a quick drag leaves before Explorer has started its drag.
+      const left = Date.now();
+      await fire('pointermove', outside(0), 1);
+      const moves = [];
+      for (let k = 1; Date.now() - left < holdOutsideMs; k++) { await sleep(40); await fire('pointermove', outside(k), 1); moves.push(await cj(`[hostDrag, mainView.dragOut === true]`)); }
+      const state = await cj(`({ hostDrag, out: mainView.dragOut === true })`);
+      await fire('pointerup', outside(99), 0);
+      let x = null;
+      for (let i = 0; i < 80; i++) { await sleep(250); x = await cj(`({ ...window.__rd.xfer })`); if (x.placed > xfer0.placed || x.none > xfer0.none || x.failed > xfer0.failed) break; }
+      const back = path.join(dir, prefix + ' (2).txt');
+      const firstOut = moves.findIndex((m) => m[1]);
+      info(`${label}: held outside ${holdOutsideMs} ms; the client was told of the drag ${firstOut < 0 ? 'only after letting go' : 'about ' + (firstOut + 1) * 40 + ' ms after leaving'}; at release ${JSON.stringify(state)}; transfer ${JSON.stringify(x)}`);
+      check(`${label}: the dragged file lands where it was let go`, x && x.how === 'saved' && fs.existsSync(back) && fs.readFileSync(back, 'utf8') === content[prefix + '.txt'],
+        fs.existsSync(back) ? 'came back as ' + path.basename(back) : 'nothing arrived; ' + JSON.stringify(x));
+      const end = look(hwnd);
+      check(`${label}: no button or drag is left over afterwards`, !end.hostSaysDragging && !end.explorerThreadsHoldingTheMouse.length, JSON.stringify(end));
+    };
+    await through('B (held outside)', 'drag-test-b', 900, 6);
+    // Out and let go within 0.1 s of the press: before Explorer has started its drag (about 0.35 s).
+    await through('C (let go at once)', 'drag-test-c', 30, 1);
+  } catch (e) {
+    check('drag-out check ran', false, e.stack || e.message);
+  } finally {
+    if (pressed) input.buttonUp(0);
+    input.reset();
+    if (cw && !cw.isDestroyed()) cw.destroy();
+    if (hadHome && at(home.x, home.y)) send({ t: 'mm', ...at(home.x, home.y) });
+    if (hwnd && IsWindow(hwnd)) { SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); PostMessageW(hwnd, 0x0010, 0, 0); } // not topmost, then WM_CLOSE
+    if (Object.keys(keep).length) clipboard.write(keep); else clipboard.clear();
+    if (closeDragFiles) closeDragFiles(null);
+    try { fs.rmSync(path.join(os.tmpdir(), `myremote-dragtest-client-${process.pid}.html`), { force: true }); } catch {}
+    for (let i = 0; i < 20; i++) { try { fs.rmSync(dir, { recursive: true, force: true }); break; } catch { await sleep(250); } }
+  }
+};
