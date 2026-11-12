@@ -201,6 +201,8 @@ function onClientMessage(s, dc, data) {
     dragOut(s, m.b | 0);
   } else if (m.t === 'dragq') {
     pollDrag(s, 1200);
+  } else if (m.t === 'clipget') {
+    clipGet(s, Number(m.seq));
   } else if (m.t === 'cs') {
     // Client-side measurements: keep them with ours in the local diagnostics log.
     if (data.length < 6000 && m.s && typeof m.s === 'object') api.diag({ client: m.s, host: s.lastHs || null });
@@ -351,16 +353,33 @@ function startChannelTasks(s, dc) {
   };
   checkOthers();
   s.timers.push(setInterval(checkOthers, 10000));
-  // Clipboard (text) host -> client.
+  // Clipboard host -> client: text as it is; files only as a note of what they are (the client
+  // fetches them with 'clipget' when it wants them, see main.js). Files that were already on the
+  // clipboard when the session began are not announced: only what is copied during it.
   if (cfg.clipboard) {
-    let seq = -1;
+    let seq = -1, first = true;
     s.timers.push(setInterval(async () => {
       const r = await api.readClip(seq);
       seq = r.seq;
-      const t = r.text;
-      if (t && t !== s.clip && t.length <= CLIP_MAX) { s.clip = t; tx({ t: 'clip', s: t }); }
+      if (r.files) {
+        if (!first) tx({ t: 'clipfiles', seq: r.seq, n: r.files.n, dirs: r.files.dirs, bytes: r.files.bytes, names: r.files.names });
+      } else {
+        const t = r.text;
+        if (t && t !== s.clip && t.length <= CLIP_MAX) { s.clip = t; tx({ t: 'clip', s: t }); }
+      }
+      first = false;
     }, 500));
   }
+}
+// The client wants the files now on this PC's clipboard (it was told of them with 'clipfiles').
+async function clipGet(s, seq) {
+  const r = await api.clipGet(seq);
+  if (session !== s) return;
+  if (r.kind === 'files') {
+    log(`복사한 파일: ${r.files.filter((f) => !f.dir).length}개를 보냅니다`);
+    txTo(s, { t: 'dragdata', kind: 'files', files: r.files, skipped: r.skipped || 0, clip: true });
+    sendFiles(s, r.files);
+  } else txTo(s, { t: 'dragdata', kind: 'none', why: r.why, clip: true });
 }
 
 async function startSession(hello) {

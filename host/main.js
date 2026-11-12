@@ -186,6 +186,44 @@ async function dragOut(button) {
   return text ? { kind: 'text', s: text.slice(0, CLIP_MAX), cut: text.length > CLIP_MAX } : { kind: 'none', why: 'empty' };
 }
 
+// ---- files copied here (Ctrl+C) for pasting on the client ------------------------------------
+// When this PC's clipboard gets files, the client is told what they are (how many, how large the
+// plain files are, whether there are folders, a few names - never paths); the client app fetches
+// them when the person leaves the remote picture for the client's own programs, and puts them on
+// the client's clipboard, so Ctrl+C here and Ctrl+V there work as between two folders of one PC.
+// Only the files that are on the clipboard right now (same change count) can be fetched.
+let clipFiles = null; // { seq, paths }
+function clipFilesNow(seq) {
+  const paths = input.clipboardFiles();
+  clipFiles = paths.length ? { seq, paths } : null;
+  if (!clipFiles) return null;
+  let bytes = 0, dirs = 0;
+  for (const p of paths) { try { const st = fs.statSync(p); if (st.isDirectory()) dirs++; else bytes += st.size; } catch {} }
+  return { n: paths.length, dirs, bytes, names: paths.slice(0, 3).map((p) => path.basename(p)) };
+}
+function clipGet(seq) {
+  if (!clipFiles || clipFiles.seq !== seq || clipFiles.seq !== input.clipSeq()) return { kind: 'none', why: 'changed' };
+  closeDragFiles();
+  const files = [], room = { left: DRAG_MAX_FILES, cut: false };
+  let skipped = 0, total = 0;
+  const add = (file, rel) => {
+    let o = null;
+    try { o = files.length < DRAG_MAX_FILES ? offerFile(file, rel) : null; } catch {}
+    if (o && total + o.size <= DRAG_MAX_BYTES) { files.push(o); total += o.size; } else { skipped++; if (o) dragFiles.delete(o.id); }
+  };
+  for (const f of clipFiles.paths) {
+    let st = null;
+    try { st = fs.statSync(f); } catch { skipped++; continue; }
+    if (!st.isDirectory()) { add(f, path.basename(f)); continue; }
+    const list = [];
+    room.left = DRAG_MAX_FILES - files.length;
+    listFolder(f, path.basename(f), list, room);
+    for (const e of list) if (e.dir) files.push({ id: '', name: e.rel, size: 0, dir: true }); else add(e.path, e.rel);
+  }
+  if (room.cut) skipped++;
+  return files.length ? { kind: 'files', files, skipped } : { kind: 'none', why: 'toobig' };
+}
+
 // ---- files dragged or pasted in from the client ------------------------------------------
 // They come over a data channel of their own (receiveUpload in host.js) and are written here under
 // a staging folder, one per transfer, with names made safe part by part (files.js). Complete, they
@@ -513,8 +551,11 @@ else {
     ipcMain.handle('clip-read', (_e, lastSeq) => {
       if (!cfg.clipboard) return { seq: 0 };
       const seq = input.clipSeq();
-      return seq === lastSeq ? { seq } : { seq, text: timed('clip-read', () => clipboard.readText()) };
+      if (seq === lastSeq) return { seq };
+      const files = timed('clip-files', () => clipFilesNow(seq));
+      return files ? { seq, files } : { seq, text: timed('clip-read', () => clipboard.readText()) };
     });
+    ipcMain.handle('clip-get', (_e, seq) => timed('clip-get', () => { try { return clipGet(Number(seq)); } catch (e) { console.error('clip get', e.message); return { kind: 'none', why: 'error' }; } }));
     ipcMain.on('clip-write', (_e, text) => { if (cfg.clipboard && typeof text === 'string' && text.length <= CLIP_MAX) timed('clip-write', () => clipboard.writeText(text)); });
     ipcMain.on('session', (_e, live) => {
       if (tray) { tray.setImage(icon(!!live)); tray.setToolTip('My Remote Host — ' + (live ? '원격 접속 중' : '대기 중')); }

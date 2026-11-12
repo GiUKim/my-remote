@@ -567,6 +567,37 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       for (const d of fresh) try { fs.rmSync(d, { recursive: true, force: true }); } catch {}
     }
 
+    // --clip-check: files copied on the host (put on this PC's clipboard the way Explorer's Copy
+    // does) are announced to the client, and fetched when it leaves its windows. Only when the
+    // clipboard holds nothing or text (plain, HTML), which is put back.
+    if (process.argv.includes('--clip-check')) {
+      const { clipboard } = require('electron');
+      const formats = clipboard.availableFormats();
+      if (formats.every((f) => ['text/plain', 'text/html'].includes(f))) {
+        const keep = Object.fromEntries([['text', clipboard.readText()], ['html', formats.includes('text/html') ? clipboard.readHTML() : '']].filter(([, v]) => v));
+        const cdir = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-clipfiles-'));
+        const a = path.join(cdir, 'copied-a.bin'), b = path.join(cdir, 'copied-b.txt');
+        fs.writeFileSync(a, require('crypto').randomBytes(200000)); fs.writeFileSync(b, 'copied on the host\n');
+        const shaOf = (f) => require('crypto').createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+        try {
+          await js(`window.__rd.keepFiles = true; window.__rd.files = []; 1`);
+          const notes0 = (await state()).xfer.clipNotes;
+          input.setClipboardFiles([a, b]);
+          const [noted] = await until((x) => x.xfer.clipNotes > notes0, 8);
+          await js(`READONLY = false; try { maybeFetchClipFiles(); } finally { READONLY = true; } 1`);
+          const [got, s2] = await until((x) => x.files.length === 2, 20);
+          const files = got ? s2.files : [];
+          check('files copied on the host are announced and fetched when the client leaves its windows', noted && got
+            && files.some((f) => f.name === 'copied-a.bin' && f.sha === shaOf(a)) && files.some((f) => f.name === 'copied-b.txt' && f.sha === shaOf(b)),
+            `announced ${!!noted}, received ${files.map((f) => f.name).join(', ') || 'nothing'}`);
+        } finally {
+          await js(`window.__rd.keepFiles = false; 1`);
+          if (Object.keys(keep).length) clipboard.write(keep); else clipboard.clear();
+          try { fs.rmSync(cdir, { recursive: true, force: true }); } catch {}
+        }
+      } else info('copied-files check skipped: the clipboard holds more than text');
+    }
+
     // Pasting must reach the page through the browser's paste event (no clipboard-read permission).
     w.webContents.focus();
     w.webContents.paste();

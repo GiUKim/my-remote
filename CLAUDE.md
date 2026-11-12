@@ -151,6 +151,13 @@ the client app instead).
   never answered for a folder in the client app (no file-system permission is granted), so after
   1.5 s the older entries API is used; in one case that threw `InvalidStateError` (a real folder with
   a `.cache` inside), then only plain files go and the page says so.
+- **Files copied on the host, pasted on the client.** No transfer when something is copied: the host
+  only announces it (`clipfiles`). The client app fetches (`clipget`) when focus leaves every client
+  window, i.e. when the person goes to the client's own programs, which is when they would paste
+  there; copying and pasting inside the host costs nothing. The files then go through the drag-out
+  path with no drop point, so `shell.dropFiles` puts them on the client's clipboard. A person who
+  presses Ctrl+V on the client before a large transfer is done pastes nothing (the toast shows the
+  progress).
 - **The drop-in check once dragged a real folder of the user's.** Explorer scrolls its list sideways
   while something is dragged past its edge; a press point computed as "item left + 40 px" then lay on
   the navigation pane, which showed the user's `서버` folders, and that folder was dragged (the read
@@ -359,6 +366,8 @@ Data channel `input` (JSON text):
 | host -> client | `hs` | Host-side statistics every 2 s (codec, encoder, bitrate, per-monitor capture/encode fps and limiting factor) for the client's diagnostics report |
 | host -> client | `drag` | `on`: whether a drag-and-drop is under way on the host |
 | host -> client | `dragdata` | Answer to `dragout`: `kind` `text` (`s`, `cut`), `files` (`files:[{id,name,size,dir?}]`, `skipped`; the bytes follow on the `file` channel; `name` may be a path 'folder/sub/file') or `none` with `why`: `nodrag`, `nocopy`, `empty`, `toobig` |
+| host -> client | `clipfiles` | Files were copied on the host during the session: `seq` (the clipboard's change count), `n` items, `dirs` of them folders, `bytes` of the plain files, `names` (at most 3, no paths). Files already on the clipboard when the session began are not announced |
+| client -> host | `clipget` | Fetch the files of `clipfiles` `seq`; refused (`dragdata` `none`, `why:'changed'`) when the clipboard changed since. The answer is a `dragdata` with `clip: true`, the bytes on a `file` channel as for dragging out. The client asks when focus leaves all of its windows (the person went to the client's own programs to paste), at most 512 MB, the app only; the files go onto the client's clipboard |
 | host -> client | `others` | `crd`: a Chrome Remote Desktop session is connected to the host as well (`remoting_desktop.exe` runs); `outline`: the host drags windows as an outline only. Checked every 10 s, sent when it changes; the client shows a warning. Both are checked on Windows only (elsewhere always false) |
 | host -> client | `bye` | Deliberate close; the client must not auto-reconnect |
 | host -> client | `renew` | Host monitors changed; the client reconnects at once and keeps its windows |

@@ -173,7 +173,7 @@ const shell = window.mrShell || null;
 const hash = new URLSearchParams(boot ? boot.preset : location.hash.slice(1) || '__PRESET__');
 let READONLY = hash.has('ro'); // let: the self-test lifts it while it traces (nothing is sent then, see send)
 if (READONLY) $('ro').style.display = '';
-const BLOCKED_WHEN_RO = new Set(['mm', 'md', 'mu', 'mw', 'kd', 'ku', 'reset', 'clip', 'dragout', 'dragq']);
+const BLOCKED_WHEN_RO = new Set(['mm', 'md', 'mu', 'mw', 'kd', 'ku', 'reset', 'clip', 'dragout', 'dragq', 'clipget']);
 const CURSORS = new Set(['default', 'text', 'wait', 'crosshair', 'nwse-resize', 'nesw-resize', 'ew-resize', 'ns-resize', 'move', 'not-allowed', 'pointer', 'progress', 'help']);
 const HINT = 'Ctrl+Alt+←/→ 모니터 전환 · ↑ 전체 보기 · ↓ 원본 크기 · Enter 전체화면 끝내기';
 
@@ -195,7 +195,7 @@ $('hk').checked = hotkeysOn;
 
 window.__rd = { state: 'idle', monitors: 0, frames: 0, fps: {}, res: {}, cursor: '', clipRx: false, audio: false, connects: 0, pastes: 0, host: null, dragouts: 0, files: [], keepFiles: false,  // files/keepFiles: the self-test looks at received files instead of saving them
   ptr: { cancel: 0, lost: 0, drag: 0, released: 0 }, others: null, // ptr: pointer streams the browser broke off, and what was done about it
-  xfer: { out: 0, late: 0, files: 0, placed: 0, text: 0, none: 0, failed: 0, why: '', how: '', inStart: 0, inDone: 0, inFailed: 0, inHow: '' }, trace: null,
+  xfer: { out: 0, late: 0, files: 0, placed: 0, text: 0, none: 0, failed: 0, why: '', how: '', inStart: 0, inDone: 0, inFailed: 0, inHow: '', clipNotes: 0, clipGets: 0 }, trace: null,
   stillOver: false }; // stillOver: files dragged over the picture do not move the host's pointer (a test on one PC, where both pointers are one) // xfer: things dragged out; trace: the self-test sees what would be sent
 let hostDrag = false; // the host says a drag-and-drop is under way there (a file, selected text, ...)
 let drop = null;      // the last thing dragged out to this PC: where it was let go, what has arrived
@@ -526,6 +526,8 @@ async function gotDragData(m) {
     toast(where(d), how === 'pasted' ? '놓은 곳에 붙여 넣었습니다' + (m.cut ? ' (너무 길어 앞부분만)' : '') : '가져온 글자를 복사해 두었습니다. 붙여 넣을 곳에서 Ctrl+V를 누르세요', how === 'pasted' ? 2500 : 6000);
   } else if (m.kind === 'files' && Array.isArray(m.files)) {
     toast(where(d), `파일 ${m.files.filter((f) => !f.dir).length}개를 받는 중…`, 600000);
+  } else if (d.clip) {
+    drop = null; // the host's clipboard changed meanwhile: nothing to say
   } else {
     drop = null;
     window.__rd.xfer.none++;
@@ -690,6 +692,32 @@ async function upload(view, mode, at, got) {
     return false;
   } finally { putting = false; }
 }
+// ---- files copied on the host, for pasting here ------------------------------------------
+// The host says when files are copied there (Ctrl+C in Explorer, ...). They are fetched when the
+// person leaves the remote picture for this PC's own programs - which is when they would paste here -
+// and go onto this PC's clipboard (the client app does that; a browser cannot), so Ctrl+C there and
+// Ctrl+V here work as between two folders of one PC. Copying and pasting within the host costs nothing.
+const CLIP_FILES_AUTO = 512 * 1024 * 1024; // larger copies are not fetched on their own
+let hostFiles = null; // { seq, n, dirs, bytes, names, asked }
+function gotClipFiles(m) {
+  hostFiles = { seq: Number(m.seq), n: Number(m.n) || 0, dirs: Number(m.dirs) || 0, bytes: Number(m.bytes) || 0, names: Array.isArray(m.names) ? m.names.map(String).slice(0, 3) : [], asked: false };
+  window.__rd.xfer.clipNotes++;
+}
+const canPlaceHere = () => canDrop() || window.__rd.keepFiles; // keepFiles: the self-test reads what arrives
+function maybeFetchClipFiles() {
+  const h = hostFiles;
+  if (!h || h.asked || READONLY || !canPlaceHere() || drop) return;
+  if (liveViews().some((v) => !v.win.closed && v.win.document.hasFocus())) return; // still in one of ours
+  h.asked = true;
+  if (h.bytes > CLIP_FILES_AUTO) {
+    toast(mainView, `호스트에서 복사한 파일이 커서(${(h.bytes / 1048576).toFixed(0)} MB) 가져오지 않았습니다. 필요하면 끌어내기로 가져오세요`, 8000);
+    return;
+  }
+  drop = { id: null, ready: null, view: mainView, clip: true };
+  window.__rd.xfer.clipGets++;
+  send({ t: 'clipget', seq: h.seq });
+}
+
 // The host's answer once it has handed the files over.
 function gotPut(m) {
   const v = putView && !putView.win.closed ? putView : mainView;
@@ -899,7 +927,7 @@ function attachKeys(view) {
     flushPaste();
   });
   for (const t of ['copy', 'cut']) doc.addEventListener(t, (ev) => { if (!local()) ev.preventDefault(); });
-  win.addEventListener('blur', () => { view.swallow.clear(); flushPaste(); send({ t: 'reset' }); held = 0; }); // never leave keys or buttons stuck on the host
+  win.addEventListener('blur', () => { view.swallow.clear(); flushPaste(); send({ t: 'reset' }); held = 0; setTimeout(maybeFetchClipFiles, 150); }); // never leave keys or buttons stuck on the host
   win.addEventListener('focus', () => flushClip(win)); // host -> client text that arrived while we were away
   win.addEventListener('mouseup', (ev) => { if (ev.button > 2) ev.preventDefault(); }); // no browser back/forward
 }
@@ -1434,6 +1462,7 @@ function onHostMessage(data) {
   }
   else if (m.t === 'dragdata') gotDragData(m);
   else if (m.t === 'put') gotPut(m);
+  else if (m.t === 'clipfiles') gotClipFiles(m);
   else if (m.t === 'clip' && typeof m.s === 'string' && m.s.length <= CLIP_MAX) gotClip(m.s);
   else if (m.t === 'bye') disconnect('호스트에서 연결을 종료했습니다.');
   else if (m.t === 'renew') {

@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('hostApi', {
   putAbort: (gid) => ipcRenderer.invoke('put-abort', gid),
   hideCursor: (on) => ipcRenderer.invoke('cursor-hide', on),
   readClip: (lastSeq) => ipcRenderer.invoke('clip-read', lastSeq),
+  clipGet: (seq) => ipcRenderer.invoke('clip-get', seq),
   writeClip: (text) => ipcRenderer.send('clip-write', text),
   session: (live) => ipcRenderer.send('session', live),
   onKick: (fn) => ipcRenderer.on('kick', () => fn()),
