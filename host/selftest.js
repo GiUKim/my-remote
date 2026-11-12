@@ -195,6 +195,51 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     if (!ok) throw new Error('no connection');
     const N = s.monitors;
 
+    // --soak=<minutes>: a long session instead of the rest, to find what grows (no input injected).
+    // The client keeps switching monitors and going to the overview and back, and every minute the
+    // host drops the session so that the client connects again. Memory of every process and the two
+    // pages' script heaps are sampled every 20 s; growth after the first three minutes is the result.
+    const soakArg = process.argv.find((a) => a.startsWith('--soak='));
+    if (soakArg) {
+      const minutes = Math.max(3, Number(soakArg.split('=')[1]) || 15), end = Date.now() + minutes * 60e3, t0 = Date.now();
+      const mb = (kb) => Math.round(kb / 1024);
+      const sample = async () => {
+        const by = {};
+        for (const p of app.getAppMetrics()) {
+          const k = p.type === 'Tab' ? 'renderer' : p.type.toLowerCase();
+          by[k] = (by[k] || 0) + (p.memory.privateBytes || p.memory.workingSetSize || 0);
+        }
+        const heap = async (wc) => { try { return Math.round((await wc.executeJavaScript('performance.memory ? performance.memory.usedJSHeapSize : 0')) / 1048576); } catch { return -1; } };
+        return { min: +((Date.now() - t0) / 60e3).toFixed(1), browser: mb(by.browser || 0), gpu: mb(by.gpu || 0), renderers: mb(by.renderer || 0), utility: mb(by.utility || 0),
+          hostHeap: await heap(hostWin.webContents), clientHeap: await heap(w.webContents), sessions: 0 };
+      };
+      const rows = [];
+      let n = 0, reconnects = 0;
+      while (Date.now() < end) {
+        await sleep(5000);
+        n++;
+        if (n % 3 === 0) await key('ArrowRight');                                   // every 15 s: another monitor
+        if (n % 12 === 6) { await key('ArrowUp'); await sleep(2500); await key('Digit1'); } // every minute: the overview and back
+        if (n % 12 === 0) {                                                           // every minute: the host drops the session
+          await hostWin.webContents.executeJavaScript(`teardown('soak', true); 1`);
+          const [back] = await until((x) => x.state === 'connected' && x.frames > 0, 30);
+          if (back) reconnects++;
+        }
+        if (n % 4 === 0) { const r = await sample(); r.sessions = reconnects; rows.push(r); }
+      }
+      for (const r of rows) info(`soak ${String(r.min).padStart(5)} min  browser ${r.browser} MB  gpu ${r.gpu} MB  renderers ${r.renderers} MB  utility ${r.utility} MB  heaps host ${r.hostHeap} / client ${r.clientHeap} MB  reconnects ${r.sessions}`);
+      const base = rows.find((r) => r.min >= 3) || rows[0], last = rows[rows.length - 1];
+      const perHour = (k) => (last.min > base.min ? Math.round(((last[k] - base[k]) * 60) / (last.min - base.min)) : 0);
+      const growth = { browser: perHour('browser'), gpu: perHour('gpu'), renderers: perHour('renderers'), hostHeap: perHour('hostHeap'), clientHeap: perHour('clientHeap') };
+      const total = growth.browser + growth.gpu + growth.renderers;
+      check(`soak: ${minutes} min, ${reconnects} reconnects, memory growth after the first 3 min under 100 MB an hour`, total < 100 && reconnects >= Math.floor(minutes) - 1,
+        `MB per hour: ${JSON.stringify(growth)}`);
+      const pass = results.every(Boolean);
+      console.log(pass ? '[selftest] ALL PASS' : '[selftest] SOME FAILED');
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+      return app.exit(pass ? 0 : 1);
+    }
+
     // --dump-panel=<file.png>: pictures of the arrangement panel for checking its design, then exit.
     // It is drawn as if this PC had two 2560x1440 screens; nothing is applied and no window is opened.
     const dumpPanel = process.argv.find((a) => a.startsWith('--dump-panel='));

@@ -110,7 +110,10 @@ the client app instead).
 
 - **Dragging out of the remote picture.** A program that runs a drag-and-drop has handed the mouse to
   OLE's hidden window of class `CLIPBRDWNDCLASS`; `input.dragging()` reads that (`GetGUIThreadInfo`,
-  read-only) and the host tells the client (`drag`). When the client's pointer then leaves every client
+  read-only) and the host tells the client (`drag`). Once seen, the thread running the drag is
+  followed, so a window that comes to the front meanwhile does not end it; `captureClass()`, which
+  `dragOut` checks before pressing Escape and Ctrl+C, stays about the program in front, because
+  those keys go there. When the client's pointer then leaves every client
   window, moves are no longer sent (the host's pointer waits); on release outside, the host presses
   Escape (ends the drag without a drop), Ctrl+C (what was dragged is still selected), releases the
   button and sends the clipboard's files or text (`dragOut` in `main.js`). Explorer takes 0.35-0.5 s
@@ -258,6 +261,7 @@ Run from `host/` with Electron's env var cleared.
 | `npm run bench -- --native-probe --capture-probe ...` | Bench with a native observer of the same display: reports when the picture was on the host's own screen and how long after that the capturer in use had it. Needs `tools/native/capprobe.dll` |
 | `electron . --selftest --dragout-check` | Only real drags out of a real Explorer window this check opens on a temp folder (`dragcheck.js`): A straight on the host, B and C through a client window running the real page in the client app's shell (held outside; let go at once, before Explorer started its drag). INJECTS INPUT for about half a minute, so only with the user's agreement; skipped when the clipboard holds more than text, which is put back |
 | `electron . --selftest --dropin-check` | Only real drags IN (`dragcheck.js runIn`): from an Explorer window on the second display onto a client window's picture of the first, dropped by the host into another Explorer window (empty space; a folder icon; a whole folder). Needs two displays. INJECTS INPUT for about half a minute: only with the user's agreement |
+| `electron . --selftest --soak=<minutes>` | A long session instead of the rest of the self-test, to find what grows: the view-only client keeps switching monitors and going to the overview, and the host drops the session every minute so the client reconnects. Memory of every process and both pages' script heaps every 20 s; fails when growth after the first 3 minutes passes 100 MB an hour. No input injected |
 | `electron . --selftest --clip-check` | Same, plus putting two files on this PC's clipboard and reading them back. Only runs when the clipboard holds nothing or plain text, which is put back |
 | `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first. Windows only |
 | `electron . --selftest --input-check` | Linux (X11) only (`inputcheck.js`): the pointer read back after an XTest move, whether the engine's video has the pointer in it (INFO), all 133 keys of the table, five buttons and the wheel into a test window, window-or-desktop under the pointer, text and a file dragged out of a second program it starts, and the client app's drop placement. INJECTS INPUT: on a virtual display only, or with the user's agreement |
@@ -377,7 +381,12 @@ by part, never leaving the staging folder) and moves its top-level files and fol
 
 Monitor coordinates are physical pixels (`screen.dipToScreenRect`), mapped to the 0..65535 virtual
 desktop range for `SendInput`. Keys are sent as set-1 scancodes so the host's keyboard layout applies;
-`HangulMode`/`HanjaMode` and a few others go by virtual-key code. On X11 the physical pixels are the
+`HangulMode`/`HanjaMode` and a few others go by virtual-key code. A numpad key goes as what the
+client's NumLock made of it (`k`): a digit as the numpad digit's virtual key, End/arrows/... as those
+keys, so the host's NumLock state does not matter; a key is released the way it was pressed. Keys the
+host presses itself (`tap`: Escape, Ctrl+C, Ctrl+V for drag-out and pasted files) go as virtual keys
+(the same in every layout), skip keys the person already holds and lift other held modifiers around
+themselves. On X11 the physical pixels are the
 root window's coordinates as they are, and keys go as X key codes (Linux evdev code + 8), which the
 host's keyboard layout applies to in the same way.
 
