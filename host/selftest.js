@@ -401,7 +401,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       fs.writeFileSync(big, crypto.randomBytes(3 * 1024 * 1024 + 123));
       fs.writeFileSync(small, 'hello drag\n');
       // A file inside a dragged folder travels with its path in it; an empty folder as a 'dir' entry.
-      const offered = [offerFile(big), offerFile(small), { id: '', name: 'proj/empty', size: 0, dir: true }, offerFile(small, 'proj/sub/note.txt')];
+      const offered = await Promise.all([offerFile(big), offerFile(small), { id: '', name: 'proj/empty', size: 0, dir: true }, offerFile(small, 'proj/sub/note.txt')]);
       await js(`window.__rd.keepFiles = true; window.__rd.files = []; 1`);
       await hostWin.webContents.executeJavaScript(`sendFiles(session, ${JSON.stringify(offered)}); 1`);
       [ok, s] = await until((x) => x.files.length === 3, 25);
@@ -421,7 +421,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         let linked = false;
         try { fs.symlinkSync(tree, path.join(tree, 'a', 'loop'), 'junction'); linked = true; } catch {}
         const list = [], room = { left: 100, cut: false };
-        listFolder(tree, 'tree', list, room);
+        await listFolder(tree, 'tree', list, room);
         const rels = list.map((e) => (e.dir ? 'dir:' : '') + e.rel).sort();
         check('a dragged folder is listed with its paths, links are not followed', JSON.stringify(rels) === JSON.stringify(['dir:tree/empty', 'tree/a/b/x.txt', 'tree/top.txt']) && !room.cut,
           `${rels.join(', ')}${linked ? ' (a junction back to the folder was skipped)' : ' (no junction could be made here)'}`);
