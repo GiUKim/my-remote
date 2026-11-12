@@ -42,7 +42,7 @@ const HOST_STATS = `(async () => {
       try { ts = s.videoSenders[idx].track.stats; } catch {}
       out.mons[idx] = {
         discarded: ts ? ts.discardedFrames : null, delivered: ts ? ts.deliveredFrames : null, total: ts ? ts.totalFrames : null,
-        active: r.active, framesEncoded: r.framesEncoded || 0, framesSent: r.framesSent || 0, keyFramesEncoded: r.keyFramesEncoded || 0, bytesSent: r.bytesSent || 0,
+        active: r.active, contentType: r.contentType || '', framesEncoded: r.framesEncoded || 0, framesSent: r.framesSent || 0, keyFramesEncoded: r.keyFramesEncoded || 0, bytesSent: r.bytesSent || 0,
         qpSum: r.qpSum || 0, totalEncodeTime: r.totalEncodeTime || 0, totalPacketSendDelay: r.totalPacketSendDelay || 0, packetsSent: r.packetsSent || 0,
         hugeFramesSent: r.hugeFramesSent || 0, targetBitrate: r.targetBitrate || 0, w: r.frameWidth || 0, h: r.frameHeight || 0,
         limit: r.qualityLimitationReason, limitDur: r.qualityLimitationDurations, impl: r.encoderImplementation || '', codec: codec ? codec.mimeType.replace('video/', '') : '',
@@ -120,11 +120,16 @@ function format(r) {
   L.push(`${r.name}: ${r.ok ? '' : 'FAILED - ' + String(r.error).split('\n')[0]}`);
   if (!r.ok) return L;
   const h = r.host, s = r.scroll, sp = r.sparse, c = r.client || {}, q = r.quality;
-  L.push(`  setup    ${h.codec} ${h.encoder} ${h.res}, picture ${r.setup.picture} on display ${r.setup.display} (${r.setup.monitor}), link ${r.config.net ? JSON.stringify(r.config.net) : 'direct'}`);
+  L.push(`  setup    ${r.captureKind || ''} ${h.codec} ${h.encoder} ${h.res}, picture ${r.setup.picture} on display ${r.setup.display} (${r.setup.monitor}), link ${r.config.net ? JSON.stringify(r.config.net) : 'direct'}`);
   if (s.lat.n) L.push(`  scroll   shown ${s.shownFps} of ${s.drawnFps} fps drawn | delay ms p50/p95/max ${d(s.lat)} (first 0.5 s ${d(s.latHead)}) | gaps >25/>50/>100 ms: ${s.gap.over25}/${s.gap.over50}/${s.gap.over100}, longest ${s.gap.max} ms`);
   if (sp.events) L.push(`  sparse   delay ms p50/p95/max ${d(sp.lat)} over ${sp.events} changes, ${sp.missed} never shown`);
   if (s.lat.n || sp.events) L.push(`  where    until received p50 ${s.toRecv.p50} ms (scroll) ${sp.toRecv.p50} ms (sparse) | received to screen p50 ${s.clientSide.p50} / ${sp.clientSide.p50} ms | jitter buffer ${c.jitterBufferMs} ms, decode ${c.decodeMs} ms, sound packets ${c.audioPackets}`);
   if (r.capture) L.push(`  split    drawn to "frame reaches the encoder" p50/p95: scroll ${r.capture.scroll.p50}/${r.capture.scroll.p95} ms, typing ${r.capture.sparse.p50}/${r.capture.sparse.p95} ms (${r.capture.fps} frames/s, ${r.capture.fmt}) | from there until received: scroll ${r.capture.restScroll} ms, typing ${r.capture.restSparse} ms`);
+  if (r.native) {
+    const n = r.native, pp = (x) => (x && x.n ? x.p50 + '/' + x.p95 : '-');
+    L.push(`  native   on the host's own screen ${pp(n.toScreen.scroll)} ms after it is drawn (typing ${pp(n.toScreen.sparse)}) | a native capturer has the frame ${pp(n.handed.scroll)} ms after that (p50/p95), ${n.scrollFps} frames/s of ${r.scroll.drawnFps} drawn | the capturer in use hands it to the encoder ${pp(n.chromium.scroll)} ms after the screen (typing ${pp(n.chromium.sparse)})`);
+    L.push(`  behind   the client shows it this long after the host's own screen, p50/p95: scroll ${pp(n.remote.scroll)} ms, typing ${pp(n.remote.sparse)} ms`);
+  }
   if (q && q.open) L.push(`  open     new picture first shown after ${q.open.firstMs} ms at ${q.open.firstDb} dB | dB at 150/300/500/1000/2000 ms: ${Object.values(q.open.at).map((x) => (x == null ? '-' : x)).join('/')} | settles at ${q.open.finalDb} dB | good (36 dB) after ${q.open.goodMs} ms, settled after ${q.open.settledMs} ms (${q.open.events} changes)`);
   if (q && (q.drag || q.scroll)) L.push(`  moving   dB p10/p50: drag ${q.drag ? q.drag.p10 + '/' + q.drag.p50 : '-'}, scroll ${q.scroll ? q.scroll.p10 + '/' + q.scroll.p50 : '-'}   (30 = soft but readable, 35 = good, 40+ = like the original)`);
   for (const type of Object.keys(h).filter((k) => ['scroll', 'sparse', 'open', 'drag'].includes(k) && h[k])) {
@@ -154,6 +159,7 @@ exports.run = async ({ cfg, bench, buildClientHtml, app }) => {
     if (done) return;
     done = true;
     const result = { name: B.name, config: B, ...res };
+    try { result.captureKind = await hostWin.webContents.executeJavaScript(`session && session.native ? 'native capture,' : 'engine capture,'`); } catch {}
     try { if (link) result.link = await link.stats(); } catch {}
     try { if (B.out) fs.writeFileSync(B.out, JSON.stringify(result, null, 1)); } catch (e) { console.log('[bench] could not write the result file: ' + e.message); }
     for (const l of format(result)) console.log('[bench] ' + l);

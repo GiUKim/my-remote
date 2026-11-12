@@ -165,7 +165,7 @@ const quant = (a, p) => { if (!a.length) return null; const s = [...a].sort((x, 
 const r1 = (x) => (x == null || !isFinite(x) ? null : Math.round(x * 10) / 10);
 const dist = (a) => ({ n: a.length, p50: r1(quant(a, 0.5)), p95: r1(quant(a, 0.95)), max: r1(a.length ? Math.max(...a) : null) });
 
-function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon, cap, offH }) {
+function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon, cap, offH, nat }) {
   // `drawn` is on the picture renderer's clock, `rows` on the client renderer's; bring both to this process's clock.
   const info = new Map(), burstStart = new Map();
   for (const [t, ph, cyc] of drawn) {
@@ -232,8 +232,8 @@ function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon, 
     out.sparse = { events: events.length, missed: events.length - lat.length, lat: dist(lat), toRecv: dist(toRecv), clientSide: dist(clientSide) };
   }
   // capture: when each picture frame reached the encoder on the host (config captureProbe)
+  const first = new Map();
   if (cap && cap.rows && offH) {
-    const first = new Map();
     for (const [at, t] of cap.rows) if (!first.has(t)) first.set(t, at - offH.off);
     const lat = [[], []];
     let n = 0;
@@ -248,6 +248,29 @@ function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon, 
       sparse: sp, scroll: sc, fmt: cap.fmt, frames: cap.n, unreadable: cap.bad, err: cap.err, fps: r1(cap.rows.length > 1 ? (cap.rows.length - 1) / ((cap.rows[cap.rows.length - 1][0] - cap.rows[0][0]) / 1000) : 0),
       restScroll: r1(out.scroll.toRecv.p50 != null && sc.p50 != null ? out.scroll.toRecv.p50 - sc.p50 : null),
       restSparse: r1(out.sparse.toRecv.p50 != null && sp.p50 != null ? out.sparse.toRecv.p50 - sp.p50 : null),
+    };
+  }
+  // native: the same frames as a native capturer saw them. Everything here is counted from the
+  // moment Windows presented the frame, i.e. from when a person at the host would see it.
+  if (nat && nat.rows.length) {
+    const seenN = new Map();
+    for (const [acquired, presented, readable, code] of nat.rows) if (!seenN.has(code)) seenN.set(code, { acquired: acquired - nat.off, presented: presented - nat.off, readable: readable - nat.off });
+    const A = { toScreen: [[], []], handed: [[], []], readable: [[], []], chromium: [[], []], remote: [[], []] };
+    for (const [t, ph] of drawn) {
+      const e = info.get(t), n = seenN.get(t);
+      if (ph > 1 || !inWin(e.at) || !n) continue;
+      A.toScreen[ph].push(n.presented - e.at);
+      A.handed[ph].push(n.acquired - n.presented);
+      A.readable[ph].push(n.readable - n.presented);
+      if (first.has(t)) A.chromium[ph].push(first.get(t) - n.presented);
+      const s = seen.get(t);
+      if (s) A.remote[ph].push(s.disp - n.presented);
+    }
+    const both = (a) => ({ sparse: dist(a[0]), scroll: dist(a[1]) });
+    const secs = out.scroll.drawnFps ? out.scroll.drawn / out.scroll.drawnFps : 0;
+    out.native = {
+      toScreen: both(A.toScreen), handed: both(A.handed), readable: both(A.readable), chromium: both(A.chromium), remote: both(A.remote),
+      scrollFps: r1(secs ? A.handed[1].length / secs : 0), stats: nat.stats,
     };
   }
   // host: what the encoder and the bandwidth estimate did, overall and during scrolling only
@@ -282,7 +305,7 @@ function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon, 
     const lim = (k) => (lastS && first ? r1(((lastS.mons[mon].limitDur || {})[k] || 0) - ((first.mons[mon].limitDur || {})[k] || 0)) : null);
     out.host = {
       all: sum(pairs), ...Object.fromEntries([...new Set(P.phases.map((x) => x.type))].map((type) => [type, sum(pairs.filter(during(type)))])),
-      encoder: lastS ? lastS.mons[mon].impl : '', codec: lastS ? lastS.mons[mon].codec : '', res: lastS ? lastS.mons[mon].w + 'x' + lastS.mons[mon].h : '',
+      contentType: lastS ? lastS.mons[mon].contentType : '', encoder: lastS ? lastS.mons[mon].impl : '', codec: lastS ? lastS.mons[mon].codec : '', res: lastS ? lastS.mons[mon].w + 'x' + lastS.mons[mon].h : '',
       bwe: { min: r1(Math.min(...avail)), p50: r1(quant(avail, 0.5)), max: r1(Math.max(...avail)), series: avail.map(r1) },
       targetMbps: r1(quant(list.map((h) => (h.mons[mon].targetBitrate || 0) / 1e6), 0.5)),
       limitedSecs: { cpu: lim('cpu'), bandwidth: lim('bandwidth'), other: lim('other') },
@@ -395,6 +418,38 @@ async function quality({ crops, drawn, pat, offP, offC, rect, snapshot }) {
     }
   }
   return out;
+}
+
+// A native capturer watching the same display (config nativeProbe; native/capprobe.cpp built into
+// tools/native/capprobe.dll by native/build.js). For every desktop image it reports when Windows
+// presented it - the moment the picture is on the host's own screen - and when a native capturer
+// had it. Read-only.
+function nativeProbe(d, phys, pat) {
+  const koffi = require('koffi');
+  const lib = koffi.load(path.join(__dirname, '..', 'tools', 'native', 'capprobe.dll'));
+  const start = lib.func('int cap_start(int px, int py, int x, int y, int cell, int cells)');
+  const rowsOf = lib.func('int cap_rows(_Out_ double *out, int max)');
+  const statsOf = lib.func('void cap_stats(_Out_ double *out)');
+  const now = lib.func('double cap_now()');
+  const error = lib.func('const char *cap_error()');
+  const stop = lib.func('void cap_stop()');
+  const cell = Math.round(P.cell * d.scaleFactor);
+  const x = Math.round((pat.getBounds().x - d.bounds.x) * d.scaleFactor), y = Math.round((pat.getBounds().y - d.bounds.y) * d.scaleFactor + cell / 2);
+  if (start(phys.x + 8, phys.y + 8, x, y, cell, 36) !== 1) throw new Error('the native capture probe did not start: ' + error());
+  return {
+    // How far its clock is from this process's clock.
+    offset() { let best = null; for (let i = 0; i < 20; i++) { const a = epoch(), n = now(), b = epoch(); if (!best || b - a < best.rt) best = { rt: b - a, off: n - (a + b) / 2 }; } return best.off; },
+    finish() {
+      const MAX = 60000, buf = new Float64Array(MAX * 4), st = new Float64Array(8);
+      const n = rowsOf(buf, MAX);
+      statsOf(st);
+      stop();
+      const rows = [];
+      for (let i = 0; i < n; i++) rows.push([buf[i * 4], buf[i * 4 + 1], buf[i * 4 + 2], buf[i * 4 + 3]]);
+      const [images, pointerOnly, timeouts, unreadable, composed, lost, refresh, format] = st;
+      return { rows, stats: { images, pointerOnly, timeouts, unreadable, composed, lost, refresh, format } };
+    },
+  };
 }
 
 // The client on another machine (config `remote: { ssh: 'user@host', dir }`): bench-remote.js is
@@ -513,6 +568,7 @@ async function run() {
     }
     return best;
   };
+  const native = B.nativeProbe ? nativeProbe(d, phys, pat) : null;
   if (B.captureProbe) await ctl('/capprobe', { mon, x: (pat.getBounds().x - d.bounds.x) * d.scaleFactor, y: (pat.getBounds().y - d.bounds.y) * d.scaleFactor, cell: Math.round(P.cell * d.scaleFactor), cells: 36, monW: phys.width, t0: C.t0 });
   await sleep(B.warmup * 1000);
   const offH = B.captureProbe ? await clockOffset(() => ctl('/hostnow'), 25) : null;
@@ -545,7 +601,8 @@ async function run() {
   }
   const pinfo = await pat.webContents.executeJavaScript('({ drawn: window.__pat.drawn, started: window.__pat.started, raf: window.__pat.raf, w: window.__pat.w, h: window.__pat.h })');
   const cap = B.captureProbe ? await ctl('/caprows') : null;
-  const res = analyze({ rows, drawn: pinfo.drawn, started: pinfo.started, hs, cs0, cs1, m0, m1, offP, offC, mon, cap, offH });
+  const nat = native ? { off: native.offset() + C.t0, ...native.finish() } : null; // its times are absolute; everything else here counts from t0
+  const res = analyze({ rows, drawn: pinfo.drawn, started: pinfo.started, hs, cs0, cs1, m0, m1, offP, offC, mon, cap, offH, nat });
   // The kept pieces of frames come over in batches (they are large), then are compared with what was drawn.
   const crops = [];
   for (const total = await js('window.__bench.crops.length'); crops.length < total;) crops.push(...(await js(`window.__bench.crops.slice(${crops.length}, ${crops.length + 30})`)));

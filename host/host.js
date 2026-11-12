@@ -12,10 +12,60 @@ function log(s) {
 }
 function status(text, cls) { $('status').textContent = text; $('dot').className = 'dot ' + cls; }
 
+// ---- native capture (optional) -----------------------------------------------------
+// The preload script runs the native capturer and sends each monitor's frames over a message
+// port (see preload.js); here they go into a MediaStreamTrackGenerator, which the engine encodes
+// and sends like any other video track.
+let nativePort = null, nativeOff = false;
+const nativeOpening = new Map();
+function nativeChannel() {
+  if (nativePort) return nativePort;
+  const ch = new MessageChannel();
+  nativePort = ch.port1;
+  nativePort.onmessage = (e) => {
+    const m = e.data;
+    if (m.t === 'frame') {
+      const n = session && session.native && session.native[m.i];
+      if (n) n.writer.write(m.frame).catch(() => {}); else m.frame.close();
+    } else if (m.t === 'opened') {
+      const done = nativeOpening.get(m.i);
+      if (done) { nativeOpening.delete(m.i); done(m); }
+    } else if (m.t === 'failed' && session && session.native) {
+      // A monitor in HDR mode, or one the capturer lost for good: go on with the engine's capturer.
+      log(`네이티브 캡처 중단 (모니터 ${m.i + 1}: ${m.error}) — 기본 캡처로 다시 연결합니다`);
+      if (m.error !== 'size') nativeOff = true; // a changed size is a changed monitor setup: that renegotiates by itself
+      try { if (session.dc && session.dc.readyState === 'open') session.dc.send(JSON.stringify({ t: 'renew' })); } catch {}
+      teardown('캡처 방식 변경', true);
+    }
+  };
+  window.postMessage('mr-native-capture', '*', [ch.port2]);
+  return nativePort;
+}
+// One generator per monitor, or null when any monitor cannot be captured natively.
+async function openNative(sources) {
+  const port = nativeChannel(), list = [];
+  for (let i = 0; i < sources.length; i++) {
+    const r = await new Promise((done) => {
+      nativeOpening.set(i, done);
+      port.postMessage({ t: 'open', i, x: sources[i].x + 8, y: sources[i].y + 8, gap: Math.max(0, Number(cfg.captureGap) || 0) });
+      setTimeout(() => done({ ok: false, error: 'no answer' }), 4000);
+    });
+    if (!r.ok || r.width !== sources[i].width || r.height !== sources[i].height) {
+      log(`네이티브 캡처를 쓸 수 없습니다 (모니터 ${i + 1}: ${r.ok ? '크기 불일치' : r.error}) — 기본 캡처를 사용합니다`);
+      port.postMessage({ t: 'close' });
+      return null;
+    }
+    const gen = new MediaStreamTrackGenerator({ kind: 'video' });
+    list.push({ gen, writer: gen.writable.getWriter() });
+  }
+  return list;
+}
+
 function teardown(reason, silent) {
   if (!session) return;
   const s = session;
   session = null;
+  if (s.native && nativePort) nativePort.postMessage({ t: 'close' });
   for (const t of s.timers) clearInterval(t);
   clearTimeout(s.dropTimer);
   api.input('{"t":"reset"}');
@@ -100,6 +150,7 @@ function applyEncoding(s) {
         p.degradationPreference = smooth ? 'maintain-framerate' : 'maintain-resolution';
         await sender.setParameters(p);
       } catch (e) { log('인코더 설정 실패: ' + e.message); }
+      if (s.native && nativePort) nativePort.postMessage({ t: 'show', i, on: !!plan[i] }); // a monitor nobody looks at is not captured
     }
   });
   return s.encQueue;
@@ -244,9 +295,14 @@ async function startSession(hello) {
   dc.onmessage = (e) => onClientMessage(s, dc, e.data);
   dc.onopen = () => { if (session === s) startChannelTasks(s, dc); };
 
-  // Hide this PC's cursor before capture starts, so the frames carry no cursor (see input.js).
-  s.cursorHidden = await api.hideCursor(true);
+  // The native capturer when it is there: its images carry no pointer, so nothing has to be hidden
+  // on this PC. Otherwise the engine's capturer, with this PC's pointer hidden before capture
+  // starts, so that the frames carry no pointer (see input.js).
+  s.native = cfg.capture !== 'engine' && !nativeOff && api.nativeCapture() ? await openNative(sources) : null;
+  if (session !== s) { if (s.native && nativePort) nativePort.postMessage({ t: 'close' }); return; }
+  s.cursorHidden = s.native ? true : await api.hideCursor(true);
   if (session !== s) return;
+  log(s.native ? '화면 캡처: 네이티브' : '화면 캡처: 기본(브라우저 엔진)');
   Object.assign(s, pickCodec(hello));
   const refine = s.codec === 'AV1' ? (cfg.refine === 'always' ? 'always' : cfg.refine !== false) : false;
 
@@ -257,7 +313,12 @@ async function startSession(hello) {
       try { stream = await capture(sources[i], true, refine); audio = true; }
       catch (e) { log('시스템 소리 캡처 불가 — 소리 없이 진행: ' + e.message); }
     }
-    if (!stream) stream = await capture(sources[i], false, refine);
+    if (s.native) {
+      // From the engine's capture only the sound is kept.
+      const a = stream && stream.getAudioTracks()[0];
+      if (stream) stream.getVideoTracks().forEach((t) => t.stop());
+      stream = new MediaStream(a ? [s.native[i].gen, a] : [s.native[i].gen]);
+    } else if (!stream) stream = await capture(sources[i], false, refine);
     if (session !== s) { stream.getTracks().forEach((t) => t.stop()); return; }
     s.streams.push(stream);
     s.videoSenders.push(pc.addTrack(stream.getVideoTracks()[0], stream));

@@ -143,6 +143,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile }) 
       return need && got > 0 && got >= need.w - 2 && (need.w >= x.mons[main].w || got < x.mons[main].w);
     }, 15);
     const encOf = (x) => (x.host && x.host.mons ? Object.entries(x.host.mons).map(([i, m]) => `monitor ${Number(i) + 1} ${m.res} ${m.impl}`).join('; ') : '?');
+    info('screen capture: ' + (await hostWin.webContents.executeJavaScript(`session && session.native ? 'native (native/capture.cpp)' : "the browser engine's"`)));
     await sleep(4500); s = await state(); info('video encoder: ' + encOf(s) + ' (libaom = AV1 on the CPU, MediaFoundation = H.264 on the graphics card, OpenH264 = H.264 on the CPU)');
     check('sends only as many pixels as are shown', ok, `monitor ${main + 1} is ${s.mons[main].w}x${s.mons[main].h}, shown at ${JSON.parse(s.view).map((e) => e.w + 'x' + e.h)[0]}, received ${s.res[main]}`);
 

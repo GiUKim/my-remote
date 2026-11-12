@@ -49,11 +49,36 @@ self-test, opens a view-only client in their default browser).
   the user asking. Use `--selftest` or `--localtest` for verification.
 - **RustDesk is AGPL-3.0.** Its source may be read for ideas (see "Performance"), but do not copy code from
   it, or from any other copyleft project, into this repository.
+- **Native code is built from the sources in `native/`** with the distribution's own cross-compiler on a
+  Linux machine the user provides (`node native/build.js user@host`). Do not download compilers,
+  toolchains or prebuilt binaries from elsewhere onto either machine, and do not commit the DLLs.
 - **Do not inject input on the user's machine as a test** beyond what `--selftest` does (it injects
   none). Stray clicks and keystrokes land in whatever the user has open.
 - Do not commit `node_modules/`, `tools/`, `dist/`, or any `config.json` (see `.gitignore`).
 
 ## Gotchas
+
+- **Native capture** (`capture: 'auto'`, used when the DLL is there). `preload.js` loads the DLL through
+  koffi (so the host window runs with `sandbox: false`; context isolation stays on) and runs one loop
+  per monitor: `mc_next` waits for the next desktop image on a worker thread, the pixels become a
+  `VideoFrame`, that goes over a message port to the page, and `host.js` writes it into a
+  `MediaStreamTrackGenerator` whose track is sent like any other. Things that bit:
+  - A wait that is under way when the page's script environment is torn down (the window reloads,
+    e.g. after a new key is issued) kills the renderer process. The loops are therefore closed in
+    `beforeunload`; closing waits for the wait under way. Keep it that way.
+  - Windows allows one duplication of an output per process: a capturer left open by an earlier
+    page makes the next `mc_open` fail. `capturer()` closes all eight handles when it loads the DLL.
+  - Without a rest between images (`captureGap: 0`) the capturer has every image at once, but
+    reading the screen back that often delayed the host's own screen under full-screen motion
+    (the bench picture reached the host's screen in 78 ms at the 95th percentile instead of 26).
+    With 8 ms of rest it does not, at the price of about 4 ms.
+  - The images carry no pointer, so the system cursors are not hidden in this mode
+    (`s.cursorHidden` is still reported as true: the video has no pointer in it).
+  - The sound still comes from the engine's capture of the first monitor; its video track is stopped.
+  - A still screen is sent `REPEATS` more times (`preload.js`) so the encoder brings it to full
+    quality, then nothing is sent. A monitor nobody looks at is not captured at all (`show`).
+  - A monitor in HDR mode or rotated, or any failure: the session is renegotiated with the engine's
+    capturer (`nativeOff`). Not tried on such a monitor.
 
 - **Dragging out of the remote picture.** A program that runs a drag-and-drop has handed the mouse to
   OLE's hidden window of class `CLIPBRDWNDCLASS`; `input.dragging()` reads that (`GetGUIThreadInfo`,
@@ -110,6 +135,8 @@ Run from `host/` with Electron's env var cleared.
 | `npm run selftest` | Local end-to-end test, prints `[selftest] PASS/FAIL` lines, exits 0 or 1 |
 | `electron . --selftest --shell-check` | Same, plus the client app's one-click layout on the real screens. Fullscreen windows cover every monitor for a few seconds, so ask the user first |
 | `electron . --selftest --dump-panel=<file.png>` | Quick look at the arrangement panel: connects, draws the panel as if the client had two screens, writes pictures (`<file>.png`, `-ctrl-drag`, `-swap-drag`, `-together`) and exits. About 20 s, opens no window |
+| `node native/build.js user@host[:folder]` | Builds the native modules on a Linux machine with mingw-w64 and puts the DLLs into `tools/native`. After a change in `native/` |
+| `npm run bench -- --native-probe --capture-probe ...` | Bench with a native observer of the same display: reports when the picture was on the host's own screen and how long after that the capturer in use had it. Needs `tools/native/capprobe.dll` |
 | `electron . --selftest --clip-check` | Same, plus putting two files on this PC's clipboard and reading them back. Only runs when the clipboard holds nothing or plain text, which is put back |
 | `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first |
 | `npm run bench -- --net=direct,home,narrow,wifi --try=old,base` | Measures delay and smoothness on this PC for the given link conditions and settings, prints a table (see "Performance"). `--picture-test=quality` measures picture quality instead (a window opening, a window being dragged, scrolling); `--snapshot` saves what the client showed next to what was drawn. About 45 s per run. Shows a test picture on one display and a small window on another for that time; they never take focus and no input is injected, but tell the user before a long series |
@@ -134,8 +161,11 @@ must then be given the new file). Run `npm run selftest` after either.
 | `start-client.bat` | Launcher for the client app (uses the Electron installed under `host/node_modules`) |
 | `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js` for Win32). Exposes `window.mrShell`. These files are not updated through the loader: the page must feature-detect what an installed app offers |
 | `host/main.js` | Electron main: config and key storage, monitor enumeration, tray, IPC, isolated modes |
-| `host/preload.js` | The only bridge between the renderer and main (`window.hostApi`) |
+| `host/preload.js` | The only bridge between the renderer and main (`window.hostApi`). Also runs the native capturer's loops and hands their frames to the page over a message port |
 | `host/host.html`, `host/host.js` | Host UI and the WebRTC side: capture, encoding control, data-channel routing |
+| `native/capture.cpp` | The native screen capturer (DXGI Desktop Duplication), a DLL the host loads when it is there (`tools/native/capture.dll` or `host/bin/capture.dll`; neither is committed) |
+| `native/capprobe.cpp` | Bench only: watches a display natively and reports when each bench frame was presented and handed over |
+| `native/build.js` | Sends the sources in `native/` to a Linux machine, builds them there with mingw-w64 and brings the DLLs back into `tools/native` |
 | `host/input.js` | Win32 through koffi FFI: `SendInput`, cursor shape and picture, hiding/restoring the system cursors |
 | `host/cursor-guard.js` | Separate small process that restores the cursors if the host process dies |
 | `host/signal.js` | Shared by host and client: key derivation, encrypted signaling channel |
@@ -295,7 +325,25 @@ Findings so far (i9-9900K, RTX 3060, three 1080p displays at 75 Hz, 1280x720 pic
 - Connection figures (round trip, available bitrate, relay or direct) must be read from the
   transport's `selectedCandidatePairId`; a machine with several addresses has several "nominated"
   pairs.
-- Not fixed: capture delivers 45-50 fps for 60 requested (the capturer spends at most half of each
+- Native capture, measured on the same frames (`--native-probe`: a second, native duplication of the
+  display reports when Windows presented each bench frame and when it had it). The picture is on the
+  host's own screen about 23 ms after it is drawn. A native capturer has the frame 0.1 ms after
+  that and sees 73-74 of 75 frames a second; the engine's capturer hands it to the encoder
+  13-14 ms after the screen (20-22 ms at the 95th percentile) and delivers 45-50 a second.
+- Native capture in use, against the engine's capturer with `refine` (the previous default), between
+  two machines: scroll delay 73 against 90 ms, typing 64 against 84 ms, 59 against 47 frames a
+  second shown, the same processor use (8.7% of the machine), picture quality the same within
+  1 dB (settles at 45 dB). Counted from the host's own screen, the client is 47 ms (scroll) and
+  41 ms (typing) behind, against 69 and 62. On the emulated links on one PC: home 119 against
+  133 ms, wireless 120 against 133, narrow 159 against 146 (more frames to send; typing 80
+  against 93 on all three).
+- Where the remaining 41-47 ms go (native capture): about 9 ms until the encoder has the frame
+  (3-4 ms of that is reading the image back from the graphics card), about 12 ms encoding and
+  sending, about 26 ms on the client (drawn in software in that test; about 20 on a PC).
+  The next steps in that order of gain: encoding on the graphics card straight from the captured
+  texture (no read-back, no colour conversion on the processor), and presenting on the client
+  without waiting for the browser's compositor - both need more native code than a capturer.
+- Not fixed: the engine's capturer delivers 45-50 fps for 60 requested (the capturer spends at most half of each
   interval capturing); on a 6 Mbps link the estimate still collapses now and then when a scroll
   starts; `minFrameRate: 0`, the WGC capturer, 120 fps capture and turning the frame dropper off
   were tried and were worse or no better.
@@ -319,6 +367,11 @@ dragging across monitors of different sizes. Input injection was verified separa
 `--cursor-check` confirmed on the real screen that hiding the host cursor removes it from the video and
 that it is restored afterwards. With `codec: H264` the hardware encoder is used at window-sized and full resolutions; the
 small overview tiles (480x270) fall back to OpenH264 and the hardware encoder returns afterwards.
+
+Verified for native capture: the whole self-test with it in use (it is what `auto` picks on this PC),
+three monitors on two graphics cards, a host window reload during a session, the figures in
+"Performance". Not verified: a monitor in HDR mode or rotated, the lock screen and permission prompts
+(the capturer should pause and resume), a resolution change during a session, any PC but this one.
 
 Verified by the self-test for dragging out: the file channel end to end (3 MB, hashes compared), the
 "pointer left every window" test, saving into a folder under a free name, the clipboard file format

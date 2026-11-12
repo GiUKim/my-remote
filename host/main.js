@@ -5,6 +5,10 @@ const path = require('path');
 const crypto = require('crypto');
 const input = require('./input');
 
+// The native capturer waits for each monitor's next image on a worker thread of the host page's
+// process; the default of four threads would be used up by three monitors. (Inherited by that process.)
+if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = '12';
+
 const SELFTEST = process.argv.includes('--selftest');
 // --localtest: try it on this PC only. Host + view-only client in your browser,
 // local relay, no STUN, throwaway key. Nothing is sent to the internet.
@@ -45,6 +49,9 @@ const DEFAULTS = {
   startBitrateMbps: 8,  // where the bandwidth estimate starts (it adapts from there)
   minBitrateMbps: 1,    // it never goes below this
   maxFps: 60,
+  capture: 'auto',      // auto: the native capturer (native/capture.cpp) when its DLL is there, else the browser engine's | engine: always the engine's
+  captureGap: 8,        // ms the native capturer rests after each image. Without a rest it has every image at once, but reading
+                        // the screen back that often made the host's own screen stutter under full-screen motion (measured)
   refine: true,         // true: send a still screen until it is fully sharp (AV1 only; adds about 15 ms of delay) | 'always': no added delay, but a still screen is sent continuously | false
   audio: true,          // send system sound
   clipboard: true,      // two-way text clipboard
@@ -235,7 +242,8 @@ function restart() { quitting = true; app.relaunch(); app.quit(); }
 function createWindow() {
   win = new BrowserWindow({
     width: 560, height: 680, title: 'My Remote Host', autoHideMenuBar: true, show: !SELFTEST && !BENCH, icon: icon(false),
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false },
+    // sandbox off: the preload script loads the native capturer (it still runs apart from the page's own scripts).
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false, sandbox: false },
   });
   win.loadFile('host.html');
   // Closing the window keeps the host running in the tray; quit from the tray menu.
@@ -262,6 +270,7 @@ else {
   app.whenReady().then(async () => {
     loadConfig();
     if (BENCH) Object.assign(cfg, benchCfg.cfg || {});
+    if (process.argv.includes('--cursor-check')) cfg.capture = 'engine'; // that check is about the engine's capturer; the native one never has the pointer in its images
     if (ISOLATED) cfg.hideHostCursor = false; // local trials share this PC's cursor with the person using it
     // A previous run that crashed while connected may have left the cursors hidden.
     if (fs.existsSync(cursorMark())) { input.restoreCursors(); try { fs.unlinkSync(cursorMark()); } catch {} }
