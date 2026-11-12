@@ -1,0 +1,91 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>bench pattern</title>
+<style>html, body { margin: 0; overflow: hidden; background: #fff; } canvas { display: block; }</style>
+<canvas id="c"></canvas>
+<script>
+// Test picture for the bench (bench.js). Two alternating phases:
+//   0 "sparse": the screen is still, one small change every EVERY ms   (typing, clicking)
+//   1 "scroll": a page of text scrolls at the display's refresh rate    (scrolling, dragging)
+// Every drawn frame carries, in a row of black/white cells at its top-left corner, the time it
+// was drawn and a frame number, so the receiving side can tell exactly which frame it is showing.
+const q = new URLSearchParams(location.search);
+const num = (k, d) => (q.has(k) ? Number(q.get(k)) : d);
+const T0 = num('t0', 0), SPARSE = num('sparse', 4000), SCROLL = num('scroll', 4000), SPEED = num('speed', 24), EVERY = num('every', 500), CELL = num('cell', 20);
+const CELLS = 36; // white, black, 32 data bits, black, white
+const dpr = devicePixelRatio || 1;
+const W = Math.round(innerWidth * dpr), H = Math.round(innerHeight * dpr);
+const c = document.getElementById('c');
+c.width = W; c.height = H; c.style.width = innerWidth + 'px'; c.style.height = innerHeight + 'px';
+const g = c.getContext('2d', { alpha: false });
+
+// A tall page that looks like a document: lines of text and a few coloured blocks.
+const page = document.createElement('canvas');
+page.width = W; page.height = H * 3;
+{
+  const p = page.getContext('2d', { alpha: false });
+  p.fillStyle = '#fff'; p.fillRect(0, 0, page.width, page.height);
+  let seed = 12345;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const words = 'the quick brown fox jumps over lazy dog remote desktop monitor window frame latency encoder network packet buffer screen cursor keyboard 원격 화면 지연 모니터 const return function await async value index'.split(' ');
+  const lh = Math.round(18 * dpr);
+  p.textBaseline = 'top';
+  for (let y = 0, n = 0; y < page.height - lh; y += lh, n++) {
+    if (n % 23 === 22) {
+      p.fillStyle = `hsl(${Math.floor(rnd() * 360)} 60% 70%)`;
+      p.fillRect(Math.round(40 * dpr), y, Math.round(W * 0.5), lh * 3);
+      y += lh * 3;
+      continue;
+    }
+    p.font = `${Math.round((n % 11 === 0 ? 16 : 13) * dpr)}px ${n % 3 ? '"Segoe UI", "Malgun Gothic", sans-serif' : 'Consolas, monospace'}`;
+    p.fillStyle = n % 7 === 3 ? '#0b57d0' : '#1f2328';
+    let line = '';
+    for (let i = 0, len = 6 + Math.floor(rnd() * 16); i < len; i++) line += words[Math.floor(rnd() * words.length)] + ' ';
+    p.fillText(String(n).padStart(4, ' ') + '  ' + line, Math.round(12 * dpr), y);
+  }
+}
+
+const cell = Math.round(CELL * dpr), stripH = cell + Math.round(6 * dpr);
+let seq = 0, y = 0, lastEvent = -1e9;
+const drawn = []; // [time drawn, phase, cycle] of every frame drawn
+const pat = (window.__pat = { drawn, raf: 0, started: 0, cell, cells: CELLS, w: W, h: H });
+
+function strip(phase, t) {
+  g.fillStyle = '#000';
+  g.fillRect(0, 0, cell * CELLS + Math.round(6 * dpr), stripH);
+  const v = phase * 2 ** 30 + (seq % 1024) * 2 ** 20 + (t % 2 ** 20);
+  g.fillStyle = '#fff';
+  for (let i = 0; i < CELLS; i++) {
+    const on = i === 0 || i === CELLS - 1 ? true : i === 1 || i === CELLS - 2 ? false : Math.floor(v / 2 ** (31 - (i - 2))) % 2 === 1;
+    if (on) g.fillRect(i * cell, 0, cell, cell);
+  }
+}
+
+function frame() {
+  requestAnimationFrame(frame);
+  pat.raf++;
+  const now = performance.timeOrigin + performance.now() - T0;
+  if (!pat.started) pat.started = now;
+  const el = now - pat.started, cyc = Math.floor(el / (SPARSE + SCROLL)), ph = el % (SPARSE + SCROLL) < SPARSE ? 0 : 1;
+  if (ph === 0) {
+    if (now - lastEvent < EVERY) return; // nothing changes on screen in between
+    lastEvent = now;
+    // One small change, like a typed character.
+    g.fillStyle = '#fff';
+    g.fillRect(Math.round(20 * dpr), stripH + Math.round(20 * dpr), Math.round(460 * dpr), Math.round(40 * dpr));
+    g.fillStyle = '#1f2328';
+    g.font = `${Math.round(22 * dpr)}px Consolas, monospace`;
+    g.textBaseline = 'top';
+    g.fillText('typed ' + seq + ' ' + '#'.repeat(seq % 12), Math.round(24 * dpr), stripH + Math.round(26 * dpr));
+  } else {
+    y = (y + Math.round(SPEED * dpr)) % page.height;
+    g.drawImage(page, 0, -y);
+    g.drawImage(page, 0, page.height - y);
+  }
+  seq++;
+  const t = Math.round(now);
+  strip(ph, t);
+  drawn.push([t, ph, cyc]);
+}
+requestAnimationFrame(frame);
+</script>

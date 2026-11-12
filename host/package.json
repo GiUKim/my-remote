@@ -8,6 +8,7 @@
     "start": "electron .",
     "selftest": "electron . --selftest",
     "localtest": "electron . --localtest",
+    "bench": "node bench-run.js",
     "build-client": "node build-client.js"
   },
   "dependencies": {

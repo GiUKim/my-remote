@@ -9,13 +9,37 @@ const SELFTEST = process.argv.includes('--selftest');
 // --localtest: try it on this PC only. Host + view-only client in your browser,
 // local relay, no STUN, throwaway key. Nothing is sent to the internet.
 const LOCALTEST = process.argv.includes('--localtest');
-const ISOLATED = SELFTEST || LOCALTEST;
+// --bench --bench-config=<file>: measure smoothness and delay on this PC only (see bench.js).
+const BENCH = process.argv.includes('--bench');
+const benchCfg = (() => {
+  if (!BENCH) return null;
+  const arg = process.argv.find((a) => a.startsWith('--bench-config='));
+  return arg ? JSON.parse(fs.readFileSync(arg.slice('--bench-config='.length), 'utf8')) : {};
+})();
+const ISOLATED = SELFTEST || LOCALTEST || BENCH;
+
+// Settings of the browser engine's video transport ("field trials"). The engine's defaults for
+// screen content suit slide sharing, not working on a remote PC; these were chosen by measuring
+// with the bench (bench.js) and each one is visible there when it is taken out again.
+//  - ProbingScreenshareBwe 1.5,250: by default screen video is sent at exactly the estimated
+//    bandwidth and up to 2.9 s of it may wait in the send queue, so one scroll puts the picture
+//    seconds behind. Sending at up to 1.5x with at most 250 ms queued keeps it interactive.
+//  - ForceSendPlayoutDelay 0/0: asks the receiver to show every frame as soon as it is decoded
+//    instead of holding it in a buffer.
+//  - Bwe-ProbingConfiguration alr_interval:1s: after a quiet moment the bandwidth estimate is
+//    probed again within a second (default: five), so it has recovered before the next scroll.
+const ENGINE_TRIALS = 'WebRTC-ProbingScreenshareBwe/1.5,250,80,40,-60,3/WebRTC-ForceSendPlayoutDelay/min_ms:0,max_ms:0/WebRTC-Bwe-ProbingConfiguration/alr_interval:1s/';
+{
+  // A bench run may replace them ("" = the engine's own defaults) to compare.
+  const trials = benchCfg && typeof benchCfg.trials === 'string' ? benchCfg.trials : ENGINE_TRIALS;
+  if (trials) app.commandLine.appendSwitch('force-fieldtrials', trials);
+}
 const DEFAULTS = {
   server: 'https://ntfy.sh',
   // Add a TURN entry here if direct P2P is blocked, e.g.
   // { "urls": "turn:host:3478", "username": "...", "credential": "..." }
   iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }],
-  codec: 'H264',        // H264 | AV1 | VP9 | VP8
+  codec: 'auto',        // auto | AV1 | H264 | VP9 | VP8  (auto: AV1 on a PC with 8+ logical processors, else H264)
   mbpsPer1080p: 10,     // bitrate for a 1080p-sized picture; scales with the pixels actually sent
   maxTotalMbps: 60,     // cap across all monitors being viewed
   startBitrateMbps: 8,  // where the bandwidth estimate starts (it adapts from there)
@@ -32,14 +56,19 @@ let cursorsHidden = false;
 const cursorMark = () => path.join(app.getPath('userData'), 'cursor-hidden');
 const cursorCache = new Map(); // handle -> { img, hx, hy } | null
 
+let cursorGuard = null;
 function setCursorsHidden(on) {
   if (on === cursorsHidden) return;
   if (on) {
     // If this process dies without restoring, the guard process puts the cursors back.
+    // One guard serves every session; it lives until this process ends.
     try {
-      const { spawn } = require('child_process');
-      spawn(process.execPath, [path.join(__dirname, 'cursor-guard.js'), String(process.pid)],
-        { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      if (!cursorGuard || cursorGuard.exitCode !== null) {
+        const { spawn } = require('child_process');
+        cursorGuard = spawn(process.execPath, [path.join(__dirname, 'cursor-guard.js'), String(process.pid)],
+          { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, detached: true, stdio: 'ignore', windowsHide: true });
+        cursorGuard.unref();
+      }
     } catch (e) { console.error('cursor guard', e); }
     try { fs.writeFileSync(cursorMark(), String(process.pid)); } catch {}
     input.hideCursors();
@@ -70,7 +99,9 @@ let savedCfg = {}; // only what the user set; defaults are not frozen into the f
 if (ISOLATED) {
   // Fully local: private profile dir, local relay, no STUN. Nothing leaves this PC.
   app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-local-')));
-  app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
+  app.commandLine.appendSwitch('disable-features', ['WebRtcHideLocalIpsWithMdns', ...((benchCfg && benchCfg.disableFeatures) || [])].join(','));
+  // A bench run can try other engine switches before they are made the default.
+  if (benchCfg) for (const [k, v] of Object.entries(benchCfg.switches || {})) app.commandLine.appendSwitch(k, String(v));
 }
 const cfgPath = () => path.join(app.getPath('userData'), 'config.json');
 
@@ -156,7 +187,7 @@ function restart() { quitting = true; app.relaunch(); app.quit(); }
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 560, height: 680, title: 'My Remote Host', autoHideMenuBar: true, show: !SELFTEST, icon: icon(false),
+    width: 560, height: 680, title: 'My Remote Host', autoHideMenuBar: true, show: !SELFTEST && !BENCH, icon: icon(false),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false },
   });
   win.loadFile('host.html');
@@ -183,6 +214,7 @@ else {
   process.on('exit', () => { if (cursorsHidden) input.restoreCursors(); });
   app.whenReady().then(async () => {
     loadConfig();
+    if (BENCH) Object.assign(cfg, benchCfg.cfg || {});
     if (ISOLATED) cfg.hideHostCursor = false; // local trials share this PC's cursor with the person using it
     // A previous run that crashed while connected may have left the cursors hidden.
     if (fs.existsSync(cursorMark())) { input.restoreCursors(); try { fs.unlinkSync(cursorMark()); } catch {} }
@@ -219,7 +251,7 @@ else {
     ipcMain.on('clip-write', (_e, text) => { if (cfg.clipboard && typeof text === 'string' && text.length <= CLIP_MAX) clipboard.writeText(text); });
     ipcMain.on('session', (_e, live) => {
       if (tray) { tray.setImage(icon(!!live)); tray.setToolTip('My Remote Host — ' + (live ? '원격 접속 중' : '대기 중')); }
-      if (live && !SELFTEST && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: '원격 접속이 시작되었습니다.' }).show();
+      if (live && !SELFTEST && !BENCH && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: '원격 접속이 시작되었습니다.' }).show();
     });
     ipcMain.handle('copy-key', () => { clipboard.writeText(cfg.key); return true; });
     ipcMain.handle('regen-key', async () => {
@@ -253,6 +285,7 @@ else {
     screen.on('display-metrics-changed', (_e, _d, changed) => { if (changed.some((c) => c !== 'workArea')) displaysChanged(); });
     if (!ISOLATED) createTray();
     if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app });
+    if (BENCH) require('./bench').run({ cfg, bench: benchCfg, buildClientHtml, app });
     if (LOCALTEST) {
       const file = path.join(app.getPath('userData'), 'my-remote-localtest.html');
       fs.writeFileSync(file, buildLoaderHtml('k=' + cfg.key + '&auto&ro'));

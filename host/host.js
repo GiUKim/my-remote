@@ -31,6 +31,19 @@ function teardown(reason, silent) {
 }
 
 const CODECS = ['H264', 'VP9', 'AV1', 'VP8'];
+// The client's choice, else the configured one, else ("auto") AV1 where this PC has the cores for it.
+// The AV1 encoder runs on the CPU and is built for screen content: in the bench it kept text sharp
+// while scrolling at about a third of the bitrate, encoded every captured frame and stayed on its
+// bitrate. The graphics card's H.264 encoder costs almost no CPU, but when a still screen starts
+// moving it sends several times its bitrate for up to a second (lag or loss on a link without that
+// much room) and the engine then drops frames to make up for it.
+function pickCodec(hello) {
+  if (CODECS.includes(hello.codec)) return hello.codec;
+  if (CODECS.includes(cfg.codec)) return cfg.codec;
+  let av1 = false;
+  try { av1 = RTCRtpSender.getCapabilities('video').codecs.some((c) => c.mimeType.toLowerCase() === 'video/av1'); } catch {}
+  return av1 && navigator.hardwareConcurrency >= 8 ? 'AV1' : 'H264';
+}
 function preferCodec(pc, codec) {
   const want = 'video/' + codec.toLowerCase();
   for (const tr of pc.getTransceivers()) {
@@ -164,7 +177,7 @@ async function startSession(hello) {
   // Hide this PC's cursor before capture starts, so the frames carry no cursor (see input.js).
   s.cursorHidden = await api.hideCursor(true);
   if (session !== s) return;
-  s.codec = CODECS.includes(hello.codec) ? hello.codec : CODECS.includes(cfg.codec) ? cfg.codec : 'H264';
+  s.codec = pickCodec(hello);
 
   let audio = false;
   for (let i = 0; i < sources.length; i++) {
@@ -248,9 +261,12 @@ async function startSession(hello) {
 // Without hints the bandwidth estimate starts near 300 kbps and climbs slowly, so a
 // connection begins blurry and drops frames whenever the picture moves. Start high
 // (the estimator backs off within a second if the link cannot carry it) and never
-// sink below a usable floor. Both are read from the remote description's codec parameters.
-function hintBitrate(sdp, startKbps, minKbps) {
-  const extra = 'x-google-start-bitrate=' + startKbps + ';x-google-min-bitrate=' + minKbps;
+// sink below a usable floor. The maximum matters just as much: without one, the engine never
+// probes the link above 5 Mbps, so on a fast link the estimate sits near 5 Mbps for the whole
+// session (seen in a real session's log) and every scroll is starved. All three are read from
+// the remote description's codec parameters.
+function hintBitrate(sdp, startKbps, minKbps, maxKbps) {
+  const extra = 'x-google-start-bitrate=' + startKbps + ';x-google-min-bitrate=' + minKbps + (maxKbps ? ';x-google-max-bitrate=' + maxKbps : '');
   const lines = sdp.split('\r\n');
   let video = false;
   const pts = new Set(), withFmtp = new Set();
@@ -291,7 +307,7 @@ async function onMessage(m) {
       if (seen.size > 500) seen.clear();
       await startSession(m);
     } else if (m.t === 'answer' && session && m.sid === session.sid && session.pc.signalingState === 'have-local-offer') {
-      await session.pc.setRemoteDescription({ type: 'answer', sdp: hintBitrate(m.sdp, Math.round(cfg.startBitrateMbps * 1000), Math.round(cfg.minBitrateMbps * 1000)) });
+      await session.pc.setRemoteDescription({ type: 'answer', sdp: hintBitrate(m.sdp, Math.round(cfg.startBitrateMbps * 1000), Math.round(cfg.minBitrateMbps * 1000), Math.round(cfg.maxTotalMbps * 1000)) });
       log('answer 수신 — 연결 수립 중');
     }
   } catch (e) {

@@ -88,6 +88,7 @@ Run from `host/` with Electron's env var cleared.
 | `npm run selftest` | Local end-to-end test, prints `[selftest] PASS/FAIL` lines, exits 0 or 1 |
 | `electron . --selftest --shell-check` | Same, plus the client app's one-click layout on the real screens. Fullscreen windows cover every monitor for a few seconds, so ask the user first |
 | `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first |
+| `npm run bench -- --net=direct,home,narrow,wifi --try=old,base` | Measures delay and smoothness on this PC for the given link conditions and settings, prints a table (see "Performance"). About 45 s per run. Shows a test picture on one display and a small window on another for that time; they never take focus and no input is injected, but tell the user before a long series |
 | `npm run localtest` | Local trial: host window plus view-only client in the default browser |
 | `npm start` | The real host (connects to the signaling server). User-initiated only |
 | `npm run build-client` | Regenerates `../my-remote-client.html` (the loader) from `loader.template.html` and `signal.js` |
@@ -117,6 +118,9 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/client.template.html` | The client page itself. Built in memory at host start and sent to loaders; never shipped as a file |
 | `host/build-client.js` | Builds both pages (`build`, `buildLoader`); the CLI writes the loader file |
 | `host/selftest.js` | Local ntfy-compatible relay and the self-test scenario |
+| `host/bench.js`, `host/bench-peer.js`, `host/bench-pattern.html` | The bench: host side, client side (its own Electron process) and the test picture |
+| `host/netem.js` | UDP link emulator for the bench: delay, jitter, loss, rate limit with a bounded queue |
+| `host/bench-run.js` | Runs the bench over link conditions (`NETS`) and settings (`TRIES`) and prints one table |
 
 ## Protocol
 
@@ -182,6 +186,42 @@ aspect ratio, so pointer mapping is a plain proportion of the element. Policy, i
 - The offer carries the hash of the page the host serves (`app`). An open page whose stored hash
   differs reloads through the loader to fetch the new one, so clients follow host updates by themselves.
 
+## Performance
+
+Do not tune by guessing; measure. `npm run bench` (from `host/`) runs the real host and the real
+client page on this PC, isolated like the self-test. A test picture alternates between a still
+screen with one small change every 0.5 s ("typing") and a page of text scrolling at the display's
+refresh rate ("scroll"); every frame carries its draw time in a row of cells, and the client side
+reads it from each frame it shows. The result is frames shown per second, the delay from "drawn on
+the host" to "on the client's screen" (p50/p95/max), gaps between shown frames, plus encoder,
+pacer, jitter-buffer and bandwidth-estimate figures. `--net=` sends the traffic through
+`netem.js` (see `NETS` in `bench-run.js`); `--try=` picks settings (`TRIES`, or `--tries-file`);
+`--snapshot` saves what the client showed mid-scroll and when still. A run's config can set host
+config, engine field trials and switches, and JavaScript to run in the host or client page, so a
+change can be tried before it is written into the code.
+
+What it measures and what it does not: both ends share this PC's CPU and GPU; the delay includes
+the test picture's own way to the screen (one to two refresh intervals); the link is a model. Runs
+vary, especially on the narrow link: repeat before concluding. With one display the client window
+sits on the captured display and feeds back (a still screen is never still).
+
+Findings so far (i9-9900K, RTX 3060, three 1080p displays at 75 Hz, 1280x720 picture):
+
+- With the engine's defaults for screen content the delay was about 2 s on every link, for scrolling
+  and for the typing that followed: packets are paced at exactly the estimated bandwidth and may
+  queue for 2.9 s, and the receiver's buffer grew to 0.4 s. The field trials in `main.js`
+  (`ENGINE_TRIALS`) bring that to about 0.13 s (scroll) and 0.07 s (typing) on a good link.
+- Without `x-google-max-bitrate` the engine never probes above 5 Mbps; a real session's log showed
+  the estimate pinned near 5 Mbps on a link with 3 ms round-trip time.
+- The hardware H.264 encoder lets the quantizer sink to its minimum on a still screen; when motion
+  starts it sends 4-6 times its bitrate for up to a second, and the engine then drops frames.
+  AV1 (libaom, on the CPU) does neither, stays sharp while scrolling at a third of the bitrate, and
+  costs about 1.6 cores for one moving 1080p picture. Hence `codec: 'auto'`.
+- Not fixed: capture delivers 45-50 fps for 60 requested (the capturer spends at most half of each
+  interval capturing); on a 6 Mbps link the estimate still collapses now and then when a scroll
+  starts; `minFrameRate: 0`, the WGC capturer, 120 fps capture and turning the frame dropper off
+  were tried and were worse or no better.
+
 ## Diagnostics log
 
 The client sends its measurements every 2 s (`cs` message) and the host appends them, with its own
@@ -193,16 +233,18 @@ in the same folder does, so do not read that one.
 
 ## Verified and unverified
 
-Verified by `--selftest` on one PC with three 1080p monitors: connection, hardware H.264 encoding,
+Verified by `--selftest` on one PC with three 1080p monitors: connection, AV1 (libaom) and hardware H.264 encoding,
 the loader (fetch from host, cached reuse, self-update of an open page), the client app's one-click
 layout on three real screens (`--shell-check`), cursor sync, cursor picture extraction, the paste-event path, host statistics, per-monitor pause and switch, size-aware downscaling, 1:1 mode, overview, shortcuts, the
 layout plan, renegotiation on a (simulated) monitor change, auto reconnect, and the coordinate math for
 dragging across monitors of different sizes. Input injection was verified separately, and
 `--cursor-check` confirmed on the real screen that hiding the host cursor removes it from the video and
-that it is restored afterwards. The hardware encoder is used at window-sized and full resolutions; the
+that it is restored afterwards. With `codec: H264` the hardware encoder is used at window-sized and full resolutions; the
 small overview tiles (480x270) fall back to OpenH264 and the hardware encoder returns afterwards.
 
-Not verified: the effect of the start/min bitrate hints on a real link, whether Keyboard Lock captures
+Not verified: anything in "Performance" on a real link between two networks (the bench is one PC with an
+emulated link), AV1 decoding speed on a client other than this PC, AV1 encoding load on a host with fewer cores,
+the effect of the start/min/max bitrate hints on a real link, whether Keyboard Lock captures
 Alt+Tab and the Windows key inside the client app, dragging between windows on a real multi-monitor
 client, popup and fullscreen behaviour in a plain browser, hosts with mixed resolutions, DPI scales,
 portrait or ultrawide monitors, monitors wider than 4096 px with H.264, any connection across two different networks, real-world latency, TURN, audio audibility,
