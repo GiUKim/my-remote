@@ -43,14 +43,28 @@ const SC = {
   ArrowUp: [0x48, 1], PageUp: [0x49, 1], ArrowLeft: [0x4b, 1], ArrowRight: [0x4d, 1], End: [0x4f, 1],
   ArrowDown: [0x50, 1], PageDown: [0x51, 1], Insert: [0x52, 1], Delete: [0x53, 1], MetaLeft: [0x5b, 1],
   MetaRight: [0x5c, 1], ContextMenu: [0x5d, 1],
+  // Japanese and Brazilian (ABNT2) keyboards, and the numpad's '=' and ',' (Mac, some laptops).
+  IntlRo: [0x73], IntlYen: [0x7d], KanaMode: [0x70], Convert: [0x79], NonConvert: [0x7b], NumpadEqual: [0x59], NumpadComma: [0x7e],
 };
 // Keys that are more reliable as virtual-key codes.
 const VK = {
   PrintScreen: 0x2c, Pause: 0x13, NumLock: 0x90, Lang1: 0x15, Lang2: 0x19,
   AudioVolumeMute: 0xad, AudioVolumeDown: 0xae, AudioVolumeUp: 0xaf,
-  MediaTrackNext: 0xb0, MediaTrackPrevious: 0xb1, MediaStop: 0xb2, MediaPlayPause: 0xb3,
-  F13: 0x7c, F14: 0x7d, F15: 0x7e, F16: 0x7f,
+  MediaTrackNext: 0xb0, MediaTrackPrevious: 0xb1, MediaStop: 0xb2, MediaPlayPause: 0xb3, MediaSelect: 0xb5,
+  BrowserBack: 0xa6, BrowserForward: 0xa7, BrowserRefresh: 0xa8, BrowserStop: 0xa9, BrowserSearch: 0xaa, BrowserFavorites: 0xab, BrowserHome: 0xac,
+  LaunchMail: 0xb4, LaunchApp1: 0xb6, LaunchApp2: 0xb7,
+  F13: 0x7c, F14: 0x7d, F15: 0x7e, F16: 0x7f, F17: 0x80, F18: 0x81, F19: 0x82, F20: 0x83, F21: 0x84, F22: 0x85, F23: 0x86, F24: 0x87,
 };
+// A numpad key means what the client's NumLock made of it, whatever the host's NumLock is: a digit
+// goes as the numpad's digit key (it types the digit with NumLock on or off), anything else as the
+// key it stood for (End, an arrow, ...), which does the same with NumLock on or off.
+const NUMPAD_DIGIT = { '0': 0x60, '1': 0x61, '2': 0x62, '3': 0x63, '4': 0x64, '5': 0x65, '6': 0x66, '7': 0x67, '8': 0x68, '9': 0x69, '.': 0x6e, ',': 0x6e };
+const NUMPAD_NAV = new Set(['Home', 'End', 'PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Insert', 'Delete']);
+// Shortcuts the host presses itself (Escape, Ctrl+C, Ctrl+V when a drag goes out or files come in)
+// go as virtual keys: a program reads Ctrl+C by the key that types C in the host's layout, which on
+// Dvorak or AZERTY is not where QWERTY has it (the scancode would press the wrong key there).
+// The modifiers go as the plain VK_CONTROL/VK_SHIFT/VK_MENU, which every way of asking for them sees.
+const SHORTCUT_VK = { Escape: 0x1b, ControlLeft: 0x11, ShiftLeft: 0x10, AltLeft: 0x12, Enter: 0x0d, Tab: 0x09 };
 
 function send(flags, dx = 0, dy = 0, data = 0) {
   SendMouse(1, [{ type: 0, mi: { dx, dy, mouseData: data, dwFlags: flags, time: 0, dwExtraInfo: 0 } }], SIZE);
@@ -61,10 +75,22 @@ const move = (t) => send(MF.MOVE | MF.ABS | MF.VDESK, t.nx, t.ny);
 const BTN = [[MF.LD, MF.LU, 0], [MF.MD, MF.MU, 0], [MF.RD, MF.RU, 0], [MF.XD, MF.XU, 1], [MF.XD, MF.XU, 2]];
 const button = (b, down) => send(BTN[b][down ? 0 : 1], 0, 0, BTN[b][2]);
 const wheel = (v, horizontal) => send(horizontal ? MF.HWHEEL : MF.WHEEL, 0, 0, v); // 120 per notch, positive = up / right
-function keyOf(code, keyName) {
-  if (keyName === 'HangulMode') return { vk: 0x15, scan: 0, flags: 0 };
-  if (keyName === 'HanjaMode') return { vk: 0x19, scan: 0, flags: 0 };
-  if (VK[code]) return { vk: VK[code], scan: 0, flags: 0 };
+// shortcut: pressed by the host itself (see SHORTCUT_VK), not typed by the person at the client.
+function keyOf(code, keyName, shortcut) {
+  const vk = (v) => ({ vk: v, scan: 0, flags: 0 });
+  if (shortcut) {
+    if (SHORTCUT_VK[code]) return vk(SHORTCUT_VK[code]);
+    const m = /^Key([A-Z])$/.exec(code) || /^Digit([0-9])$/.exec(code);
+    if (m) return vk(m[1].charCodeAt(0)); // VK_A..VK_Z and VK_0..VK_9 are the characters' codes
+  }
+  if (keyName === 'HangulMode') return vk(0x15);
+  if (keyName === 'HanjaMode') return vk(0x19);
+  if (/^Numpad[0-9]$|^NumpadDecimal$/.test(code)) {
+    if (NUMPAD_DIGIT[keyName]) return vk(NUMPAD_DIGIT[keyName]);
+    if (NUMPAD_NAV.has(keyName)) code = keyName;
+    else if (keyName === 'Clear') return vk(0x0c);
+  }
+  if (VK[code]) return vk(VK[code]);
   if (SC[code]) return { vk: 0, scan: SC[code][0], flags: KF.SCAN | (SC[code][1] ? KF.EXT : 0) };
   return null;
 }
@@ -241,25 +267,53 @@ const GUITHREADINFO = koffi.struct('GUITHREADINFO', {
 });
 const GetGUIThreadInfo = user32.func('GetGUIThreadInfo', 'bool', ['uint32', koffi.inout(koffi.pointer(GUITHREADINFO))]);
 const GetClassNameW = user32.func('GetClassNameW', 'int', ['uintptr_t', 'uint8*', 'int']);
-function captureClass() {
-  try {
-    const gi = { cbSize: koffi.sizeof(GUITHREADINFO), flags: 0, hwndActive: 0, hwndFocus: 0, hwndCapture: 0, hwndMenuOwner: 0, hwndMoveSize: 0, hwndCaret: 0, rcCaret: { left: 0, top: 0, right: 0, bottom: 0 } };
-    if (!GetGUIThreadInfo(0, gi) || !gi.hwndCapture) return '';
-    const buf = Buffer.alloc(256), n = GetClassNameW(gi.hwndCapture, buf, 128);
-    return n > 0 ? buf.toString('utf16le', 0, n * 2) : '';
-  } catch { return ''; }
+const GetWindowThreadProcessId = user32.func('GetWindowThreadProcessId', 'uint32', ['uintptr_t', 'void*']);
+// The window holding the mouse in a thread (0 = the thread of the window in front) and its class.
+function captureOf(thread) {
+  const gi = { cbSize: koffi.sizeof(GUITHREADINFO), flags: 0, hwndActive: 0, hwndFocus: 0, hwndCapture: 0, hwndMenuOwner: 0, hwndMoveSize: 0, hwndCaret: 0, rcCaret: { left: 0, top: 0, right: 0, bottom: 0 } };
+  if (!GetGUIThreadInfo(thread, gi) || !gi.hwndCapture) return null;
+  const buf = Buffer.alloc(256), n = GetClassNameW(gi.hwndCapture, buf, 128);
+  return { hwnd: gi.hwndCapture, cls: n > 0 ? buf.toString('utf16le', 0, n * 2) : '' };
 }
-const dragging = () => captureClass() === 'CLIPBRDWNDCLASS';
+// The class of the window holding the mouse in the program in front (dragOut in main.js presses
+// Escape and Ctrl+C, which reach the program in front: it must be the one dragging).
+function captureClass() {
+  try { const c = captureOf(0); return c ? c.cls : ''; } catch { return ''; }
+}
+// Whether a drag-and-drop is under way. Once one is seen, the thread running it is watched rather
+// than whichever program is in front: a window that comes to the front meanwhile (a notification, a
+// dialog) must not make a drag that is still under way look finished, or the client would let go
+// of it as an ordinary drop.
+let dragThread = 0;
+function dragging() {
+  try {
+    if (dragThread) {
+      const c = captureOf(dragThread);
+      if (c && c.cls === 'CLIPBRDWNDCLASS') return true;
+      dragThread = 0;
+    }
+    const c = captureOf(0);
+    if (c && c.cls === 'CLIPBRDWNDCLASS') { dragThread = GetWindowThreadProcessId(c.hwnd, null); return true; }
+    return false;
+  } catch { return false; }
+}
 // The files on the clipboard (what Ctrl+C in Explorer puts there), as full paths.
 const shell32 = koffi.load('shell32.dll');
 const OpenClipboard = user32.func('OpenClipboard', 'bool', ['uintptr_t']);
 const CloseClipboard = user32.func('CloseClipboard', 'bool', []);
 const GetClipboardData = user32.func('GetClipboardData', 'uintptr_t', ['uint32']);
 const DragQueryFileW = shell32.func('DragQueryFileW', 'uint32', ['uintptr_t', 'uint32', 'uint8*', 'uint32']);
+// Another program may hold the clipboard open for a moment (clipboard managers, the program that
+// just copied): try again a few times, 10 ms apart, before giving up.
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function openClipboard() {
+  for (let i = 0; i < 10; i++) { if (OpenClipboard(0)) return true; pause(10); }
+  return false;
+}
 function clipboardFiles() {
   const out = [];
   try {
-    if (!OpenClipboard(0)) return out;
+    if (!openClipboard()) return out;
     try {
       const h = GetClipboardData(15); // CF_HDROP
       const n = h ? DragQueryFileW(h, 0xffffffff, null, 0) : 0;
@@ -318,7 +372,7 @@ function setClipboardFiles(paths) {
   if (!mem) { GlobalFree(h); return false; }
   RtlMoveMemory(mem, buf, buf.length);
   GlobalUnlock(h);
-  if (!OpenClipboard(0)) { GlobalFree(h); return false; }
+  if (!openClipboard()) { GlobalFree(h); return false; }
   let ok = false;
   try { EmptyClipboard(); ok = !!SetClipboardData(15, h); } finally { CloseClipboard(); } // the clipboard owns the memory now
   if (!ok) GlobalFree(h);

@@ -98,6 +98,38 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       `x=1.25 on monitor 1 -> desktop x ${past && Math.round(past.px)}`);
   }
 
+  // Every loader handed out takes the client page in one 'app' reply of at most 40 signaling chunks
+  // (signal.js: 3000 characters each, of the deflated and encrypted message). A page that grew past
+  // that would leave every client unable to start, so stay well below it.
+  {
+    const html = buildClientHtml();
+    const msg = JSON.stringify({ t: 'app', sid: 'x'.repeat(22), ts: Date.now(), hash: 'h'.repeat(20), html });
+    const sealed = require('zlib').deflateRawSync(Buffer.from(msg, 'utf8')).length + 28; // + IV and tag
+    const chunks = Math.ceil(Math.ceil((sealed * 4) / 3) / 3000);
+    check('the client page fits in what every handed-out loader accepts (40 chunks), with room to spare', chunks <= 36,
+      `${(html.length / 1024).toFixed(0)} KB, ${chunks} of 40 chunks`);
+  }
+
+  // Keys: a numpad key goes as what the client's NumLock made of it (a digit, or End/an arrow), keys
+  // of Japanese and Brazilian keyboards and F17-F24 exist, shortcuts the host presses itself go as
+  // virtual keys (layout-independent), and a modifier the person holds is lifted around them.
+  {
+    const R = [{ x: 0, y: 0, width: 1920, height: 1080 }];
+    const seq = (r) => r.log.filter((e) => e.key).map((e) => (e.up ? '-' : '+') + e.key).join(' ');
+    const tapped = input.simulate(R, [{ t: 'kd', c: 'ShiftLeft', k: 'Shift' }], () => input.tap(['ControlLeft', 'KeyC']));
+    const ctrlHeld = input.simulate(R, [{ t: 'kd', c: 'ControlLeft', k: 'Control' }], () => input.tap(['ControlLeft', 'KeyV']));
+    let keys = 'not Windows';
+    if (process.platform === 'win32') {
+      const w = require('./platform/win32');
+      const k = (c, n, s) => { const x = w.keyOf(c, n, s); return x ? (x.vk ? 'vk' + x.vk.toString(16) : 'sc' + x.scan.toString(16) + (x.flags & 1 ? 'e' : '')) : 'none'; };
+      keys = [k('Numpad1', '1'), k('Numpad1', 'End'), k('Numpad5', 'Clear'), k('NumpadDecimal', ','), k('IntlRo', '/'), k('F20', 'F20'), k('KeyC', 'c', true), k('Escape', '', true)].join(' ');
+    }
+    check('keys: numpad as the client meant it, the extra keys, shortcuts the host presses and modifiers held around them',
+      seq(tapped) === '+ShiftLeft -ShiftLeft +ControlLeft +KeyC -KeyC -ControlLeft +ShiftLeft' && seq(ctrlHeld) === '+ControlLeft +KeyV -KeyV'
+        && (process.platform !== 'win32' || keys === 'vk61 sc4fe vkc vk6e sc73 vk83 vk43 vk1b'),
+      `${seq(tapped)} | ${seq(ctrlHeld)} | ${keys}`);
+  }
+
   // Mouse buttons: a release that got lost on the way is made up for by the next move, which says
   // what the client's pointer really holds. Nothing is injected: input.simulate records what would be.
   {

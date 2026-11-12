@@ -33,7 +33,7 @@ const MF = { MOVE: 0x1, LD: 0x2, LU: 0x4, RD: 0x8, RU: 0x10, MD: 0x20, MU: 0x40,
 const BTN = [[MF.LD, MF.LU, 0], [MF.MD, MF.MU, 0], [MF.RD, MF.RU, 0], [MF.XD, MF.XU, 1], [MF.XD, MF.XU, 2]]; // left, middle, right, back, forward
 
 let monitors = []; // physical-pixel rects, index = monitor idx sent to the client
-const down = new Set(); // codes currently held, so we can release them on disconnect
+const down = new Map(); // code -> the key as it was pressed: released the same way, and all on disconnect
 let buttonsDown = 0; // bit b = BTN[b] is held down here
 let released = 0;    // buttons let go here because the client said it no longer held them (diagnostics)
 let dry = null;      // when set (self-test only), input is recorded here instead of being injected
@@ -80,16 +80,19 @@ function moveTo(d, x, y) {
   move(t);
   return true;
 }
-function key(code, keyName, up) {
-  const k = backend.keyOf(code, keyName);
+// A key goes up the way it went down (what the client's NumLock made of a numpad key can differ
+// between its press and its release; a key pressed as a shortcut is released as one).
+// shortcut: pressed by the host itself (tap), see keyOf in platform/win32.js.
+function key(code, keyName, up, shortcut) {
+  const k = up && down.has(code) ? down.get(code) : backend.keyOf(code, keyName, shortcut);
   if (k == null) return;
-  if (up) down.delete(code); else down.add(code);
+  if (up) down.delete(code); else down.set(code, k);
   if (dry) { dry.push({ key: code, up }); return; }
   backend.sendKey(k, up);
 }
 
 function reset() {
-  for (const code of [...down]) key(code, '', true);
+  for (const code of [...down.keys()]) key(code, '', true);
   down.clear();
   for (let b = 0; b < BTN.length; b++) if (buttonsDown & (1 << b)) button(b, false);
   buttonsDown = 0;
@@ -139,24 +142,35 @@ function buttonUp(b) {
   buttonsDown &= ~(1 << (b | 0));
   button(b | 0, false);
 }
+// The host pressing a shortcut itself (Escape, Ctrl+C, Ctrl+V). Keys of it the person already holds
+// stay as they are; other modifiers they hold (Shift while letting go of a drag, ...) are lifted for
+// the moment and pressed again afterwards, so Ctrl+C does not become Ctrl+Shift+C.
+const MODIFIERS = ['ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'];
 function tap(codes) {
-  for (const c of codes) key(c, '', false);
-  for (const c of [...codes].reverse()) key(c, '', true);
+  const own = codes.filter((c) => !down.has(c));
+  const lifted = MODIFIERS.filter((c) => down.has(c) && !codes.includes(c) && !(codes.includes('ControlLeft') && c === 'ControlRight'));
+  const held = lifted.map((c) => [c, down.get(c)]);
+  for (const c of lifted) key(c, '', true);
+  for (const c of own) key(c, '', false, true);
+  for (const c of [...own].reverse()) key(c, '', true);
+  for (const [c, k] of held) { down.set(c, k); if (dry) dry.push({ key: c, up: false }); else backend.sendKey(k, false); }
 }
 
 // Self-test: runs input messages through handle() against the given monitor rectangles and returns
-// what would have been injected, without injecting anything. The real state is put back afterwards.
-function simulate(rects, msgs) {
+// what would have been injected, without injecting anything; then `then()` if given, in the same dry
+// run (to see what tap() and buttonUp() would do). The real state is put back afterwards.
+function simulate(rects, msgs, then) {
   const saved = { monitors, buttonsDown, released, down: [...down] };
   dry = [];
   monitors = rects; buttonsDown = 0; released = 0; down.clear();
   try {
     for (const m of msgs) handle(JSON.stringify(m));
+    if (then) then();
     return { log: dry, held: buttonsDown, released };
   } finally {
     dry = null;
     monitors = saved.monitors; buttonsDown = saved.buttonsDown; released = saved.released;
-    down.clear(); for (const c of saved.down) down.add(c);
+    down.clear(); for (const [c, k] of saved.down) down.set(c, k);
   }
 }
 function takeReleased() { const n = released; released = 0; return n; }
