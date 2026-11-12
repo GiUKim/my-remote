@@ -3,7 +3,7 @@
 개인용 P2P 원격 데스크톱입니다. 회사 PC(호스트)의 화면을 집 PC(클라이언트)의 브라우저에서 보고 조작합니다.
 Chrome 원격 데스크톱과 같은 기술(WebRTC)을 쓰되, **멀티 모니터를 모니터별 창으로 펼쳐 쓰는 것**에 맞췄습니다.
 
-- 호스트: Windows 10/11, 관리자 권한 불필요, 외부 포트 개방 불필요
+- 호스트: Windows 10/11, 관리자 권한 불필요, 외부 포트 개방 불필요. Linux(X11 세션)에서도 동작합니다 ([Linux](#linux) 참고)
 - 클라이언트: 설치 없음. HTML 파일 하나를 Chrome 또는 Edge로 엽니다
 - 인증: 호스트 PC마다 자동 생성되는 256비트 접속 키
 
@@ -38,7 +38,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 2. `host` 폴더에서 `npm install`을 실행합니다(Electron 약 100MB).
 3. 자체 테스트를 돌립니다. 이 PC 안에서만 동작하며 인터넷으로 아무것도 보내지 않습니다.
 
-마지막에 `[selftest] ALL PASS`가 나오면 준비가 끝난 것입니다.
+마지막에 `[selftest] ALL PASS`가 나오면 준비가 끝난 것입니다. Linux에서는 `./setup.sh`를 씁니다([Linux](#linux) 참고).
 
 ## 사용 방법
 
@@ -156,6 +156,37 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 `local-test.bat`을 실행하면 호스트와 보기 전용 클라이언트가 같은 PC에서 뜹니다.
 임시 키와 PC 내부 중계만 쓰며 인터넷과 통신하지 않습니다.
 
+## Linux
+
+호스트와 클라이언트 앱은 Linux의 **X11 세션**에서도 동작합니다(Ubuntu 22.04에서 시험).
+
+- **Wayland 세션은 지원하지 않습니다.** 로그인 화면의 톱니바퀴에서 "Ubuntu on Xorg" 같은 X11 세션을 고르세요.
+- **macOS는 아직 지원하지 않습니다.** 입력 처리가 없어 호스트가 보기 전용으로만 뜨며, 그마저 시험해 보지 않았습니다.
+
+Node.js 20 이상과 npm이 필요합니다. 없으면 `setup.sh`가 무엇을 설치해야 하는지 알려 주고 멈춥니다(스스로 내려받지 않습니다. Ubuntu 22.04 기본 패키지의 Node는 너무 오래됐으니 https://nodejs.org 의 LTS를 쓰세요).
+
+```bash
+./setup.sh            # npm install과 자체 테스트. 클라이언트로만 쓸 PC에서는 ./setup.sh --skip-selftest
+./start-host.sh       # 호스트. 백그라운드로 뜨고, 출력은 $XDG_RUNTIME_DIR/my-remote-host.log
+./start-client.sh     # 클라이언트 앱
+./local-test.sh       # 이 PC에서만 체험 (보기 전용 클라이언트가 클라이언트 앱으로 열림)
+```
+
+Windows와 다른 점:
+
+| 항목 | Linux에서는 |
+|---|---|
+| 호스트 커서 | 영상에 호스트의 커서가 그대로 들어갑니다. X11에는 Windows처럼 시스템 커서를 투명하게 바꾸는 방법이 없어서, 클라이언트에서는 내 커서 뒤로 호스트 커서가 살짝 늦게 따라오는 것이 보입니다 |
+| 화면 캡처 | 브라우저 엔진의 캡처만 씁니다(네이티브 캡처 모듈은 Windows 전용) |
+| 호스트에서 끌어내기 | 끌고 있는 프로그램에게서 끌던 것을 직접 받아옵니다. Ctrl+C를 누르지 않으므로 호스트의 클립보드가 바뀌지 않습니다 |
+| 클라이언트 앱에 놓기 | 바탕화면에 놓은 파일은 바탕화면 폴더에 저장됩니다. 그 밖의 곳에 놓은 것은 클립보드에 올려 두므로, 넣을 곳(파일은 파일 관리자의 폴더)에서 Ctrl+V를 누르세요. 대신 클릭하거나 붙여 넣어 주지 않습니다 |
+| 접속 키 | `~/.config/my-remote-host/config.json`. GNOME 키링이나 KWallet이 있으면 그것으로 암호화하고, 없으면 암호화하지 못해 알아보기 어렵게만 저장합니다(이 사용자만 읽을 수 있는 파일. 시작할 때 경고가 나옵니다) |
+| 샌드박스 | Ubuntu 23.10 이후는 Chromium 샌드박스에 필요한 기능을 막아 두어, 스크립트가 멈추고 두 가지 방법(sudo로 샌드박스 도우미 설치, 또는 `MY_REMOTE_NO_SANDBOX=1`을 붙여 샌드박스 없이 실행)을 알려 줍니다 |
+| 트레이 | 데스크톱에 따라 트레이 아이콘이 안 보일 수 있습니다. 호스트 창을 닫았다면 `./start-host.sh`를 다시 실행하면 창이 다시 나옵니다 |
+| 없는 기능 | HDR 모니터 감지, Chrome 원격 데스크톱 동시 접속 경고 |
+
+검증된 범위: 가상 디스플레이(Xvfb, 모니터 1개, 창 관리자 없음) 위에서 자체 테스트 전체와 실제 입력 시험(포인터 위치, 키 133개, 마우스 버튼 5개와 휠, 다른 프로그램에서 글자와 파일 끌어내기, 클라이언트 앱의 놓기)을 통과했습니다. 실제 데스크톱(GNOME, KDE 등), 모니터 여러 개, 화면 배율, 실제 파일 관리자와의 끌어 놓기·붙여넣기, 한글 입력기, 서로 다른 PC 사이의 실사용은 검증되지 않았습니다.
+
 ## 동작 원리
 
 ```
@@ -171,12 +202,12 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 ## 보안
 
 - **접속 키가 유일한 인증 수단입니다.** 키를 가진 사람은 그 PC를 조작할 수 있습니다. 2단계 인증은 없습니다.
-- 키는 호스트 PC의 `%APPDATA%\my-remote-host\config.json`에 Windows 계정으로 암호화(DPAPI)되어 저장됩니다. 저장소에는 들어가지 않습니다.
+- 키는 호스트 PC의 `%APPDATA%\my-remote-host\config.json`에 Windows 계정으로 암호화(DPAPI)되어 저장됩니다. 저장소에는 들어가지 않습니다. Linux는 [Linux](#linux)의 "접속 키" 참고.
 - 키가 노출됐다고 의심되면 호스트 창의 `새 키 발급`을 누르세요. 기존 키는 즉시 무효가 됩니다.
 - 클라이언트 브라우저는 호스트가 보내 준 화면(코드)을 실행합니다. 따라서 키를 가진 사람은 호스트를 조작할 수 있을 뿐 아니라, 호스트인 척하며 클라이언트 브라우저에 코드를 보낼 수도 있습니다. 키 관리가 양쪽 모두의 보안입니다.
 - 호스트가 켜져 있는 동안 PC는 중개 서버(기본값 `https://ntfy.sh`, 제3자가 운영하는 공개 서비스)에 연결을 유지합니다. 이 서버는 PC의 공인 IP를 볼 수 있습니다.
 - 접속이 시작되면 호스트 PC에 알림이 뜨고 트레이 아이콘이 빨간색으로 바뀝니다.
-- 접속 중의 측정값(fps, 지연, 손실, 해상도 같은 숫자만)이 호스트 PC의 `%APPDATA%\my-remote-host\diag.log`에 기록됩니다. 화면 내용이나 입력, 키는 기록하지 않으며 외부로 보내지 않습니다.
+- 접속 중의 측정값(fps, 지연, 손실, 해상도 같은 숫자만)이 호스트 PC의 `%APPDATA%\my-remote-host\diag.log`(Linux: `~/.config/my-remote-host/diag.log`)에 기록됩니다. 화면 내용이나 입력, 키는 기록하지 않으며 외부로 보내지 않습니다.
 
 ## 한계
 
@@ -212,7 +243,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 
 ## 설정
 
-`%APPDATA%\my-remote-host\config.json`을 호스트 종료 후 편집합니다.
+`%APPDATA%\my-remote-host\config.json`(Linux: `~/.config/my-remote-host/config.json`)을 호스트 종료 후 편집합니다.
 
 | 항목 | 기본값 | 설명 |
 |---|---|---|

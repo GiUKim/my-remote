@@ -17,6 +17,12 @@ const CURSOR_CHECK = process.argv.includes('--cursor-check');
 // --shell-check: additionally run the client app's one-click layout on the real screens.
 // Fullscreen windows cover every monitor of this PC for a few seconds.
 const SHELL_CHECK = process.argv.includes('--shell-check');
+// --input-check (Linux): real input through XTest into windows and a program the check opens itself
+// (inputcheck.js). Meant for a virtual display (Xvfb): it moves the pointer, clicks and types.
+const INPUT_CHECK = process.argv.includes('--input-check');
+// --client-app-check: at the end, start the client app (client/main.js) as a program of its own on a
+// loader that talks to this test's relay only, and wait until it shows the host's picture.
+const CLIENT_APP_CHECK = process.argv.includes('--client-app-check');
 
 // Minimal ntfy-compatible pub/sub: POST /topic, GET /topic/sse
 exports.startRelay = () => new Promise((resolve) => {
@@ -54,6 +60,10 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
   // It injects input on this PC for about ten seconds, so it is opt-in and the user must agree first.
   if (process.argv.includes('--dragout-check') || process.argv.includes('--dropin-check')) {
     await sleep(2500); // let the host subscribe before a client window connects
+    if (process.platform !== 'win32') {
+      info('--dragout-check and --dropin-check are Windows-only (they drive real Explorer windows); on Linux see --input-check');
+      return app.exit(0);
+    }
     const dc = require('./dragcheck');
     if (process.argv.includes('--dragout-check')) await dc.run({ check, info, dragOut, closeDragFiles, cfg, buildClientHtml });
     if (process.argv.includes('--dropin-check')) await dc.runIn({ check, info, cfg, buildClientHtml });
@@ -64,6 +74,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
 
   // The DLLs in host/bin are built files that are committed: each must be the one built from its
   // source in native/ as it is now (native/build.js records both). Not there in a packaged copy.
+  // Only Windows loads them, but the check is about the repository and runs everywhere.
   for (const name of ['capture', 'shellops']) {
     const dll = path.join(__dirname, 'bin', name + '.dll'), src = path.join(__dirname, '..', 'native', name + '.cpp');
     if (!fs.existsSync(dll) || !fs.existsSync(src)) continue;
@@ -104,7 +115,15 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
   }
 
   // Picture of an app-specific cursor (read-only; uses the standard arrow as a stand-in).
-  {
+  if (process.platform === 'linux') {
+    // X11: the picture of the cursor shown right now, through XFixes (named or not).
+    const st = input.cursorState(), b = input.cursorBitmap(st.handle != null ? st.handle : Number(st.key));
+    const url = b ? nativeImage.createFromBitmap(b.bgra, { width: b.width, height: b.height }).toDataURL() : '';
+    check('cursor picture extraction (X11, XFixes)', b && b.width > 0 && b.height > 0 && b.hx < b.width && b.hy < b.height && url.startsWith('data:image/png;base64,'),
+      b ? `${b.width}x${b.height}, hotspot ${b.hx},${b.hy}, ${st.name ? 'named "' + st.name + '"' : 'no standard name (sent as a picture)'}` : `none (${input.viewOnlyReason() || 'no XFixes cursor image'})`);
+  } else if (process.platform !== 'win32') {
+    info('cursor picture extraction skipped: Windows and Linux only');
+  } else {
     const koffi = require('koffi');
     const user32 = koffi.load('user32.dll');
     // 32x32, opaque white, hotspot (3,4)
@@ -177,7 +196,8 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     }
 
     [ok, s] = await until((x) => !!x.cursor, 5);
-    check('cursor shape sync', ok && s.cursorCss === s.cursor, `host cursor = ${s.cursor}`);
+    // A standard cursor arrives as its CSS name, any other as a picture (e.g. X11's own cursor under Xvfb).
+    check('cursor shape sync', ok && (s.cursor === 'image' ? s.cursorCss.startsWith('url(') : s.cursorCss === s.cursor), `host cursor = ${s.cursor}`);
 
     // The browser must not be able to take a drag over (its own drag-and-drop or text selection),
     // and when it does end the pointer's events, the button held on the host is let go.
@@ -381,11 +401,13 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       const stage = (name, from) => { const d = fs.mkdtempSync(path.join(src, 's')), f = path.join(d, name); fs.copyFileSync(from, f); return f; };
       fs.writeFileSync(path.join(dst, 'note.txt'), 'already here');
       const placed = await drop.placeFiles([stage('note.txt', small), stage(path.basename(big), big)], { at: Date.now(), own: false, cls: 'CabinetWClass', folder: Promise.resolve(dst) });
-      const buf = input.dropFilesBuffer(['C:\\a.txt', 'D:\\b c.txt']);
+      // Windows' clipboard file list (CF_HDROP); other platforms have their own format (see --clip-check).
+      const buf = input.dropFilesBuffer(['C:\\a.txt', 'D:\\b c.txt']), hdrop = process.platform !== 'win32' ||
+        (buf.readUInt32LE(0) === 20 && buf.readUInt32LE(16) === 1 && buf.toString('utf16le', 20) === 'C:\\a.txt\0D:\\b c.txt\0\0');
+      if (process.platform !== 'win32') info('CF_HDROP buffer check skipped: that clipboard format is Windows-only (the Linux formats are in --clip-check)');
       check('drop into a folder: files are saved there under a free name',
         placed.how === 'saved' && fs.readFileSync(path.join(dst, 'note.txt'), 'utf8') === 'already here' && fs.readFileSync(path.join(dst, 'note (2).txt'), 'utf8') === 'hello drag\n'
-        && sha(path.join(dst, path.basename(big))) === sha(big) && drop.safeName('..\\..\\evil:na|me?.txt') === '.._.._evil_na_me_.txt' && drop.safeName('CON') === 'file'
-        && buf.readUInt32LE(0) === 20 && buf.readUInt32LE(16) === 1 && buf.toString('utf16le', 20) === 'C:\\a.txt\0D:\\b c.txt\0\0',
+        && sha(path.join(dst, path.basename(big))) === sha(big) && drop.safeName('..\\..\\evil:na|me?.txt') === '.._.._evil_na_me_.txt' && drop.safeName('CON') === 'file' && hdrop,
         `${fs.readdirSync(dst).length} files in the folder`);
       // A received folder: names from the other side can never climb out of the staging folder, and
       // the folder (with an empty sub-folder) lands in the target under a free name.
@@ -410,8 +432,15 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         if (clipboard.availableFormats().every((f) => f === 'text/plain')) {
           const keep = clipboard.readText();
           const set = input.setClipboardFiles([big, small]), back = input.clipboardFiles();
+          // Linux: what a file manager that writes text/uri-list (KDE's Dolphin) puts there is read as well.
+          let uriList = [big, small];
+          if (process.platform === 'linux') {
+            clipboard.writeBuffer('text/uri-list', Buffer.from([big, small].map((f) => require('url').pathToFileURL(f).href).join('\r\n') + '\r\n'));
+            uriList = input.clipboardFiles();
+          }
           if (keep) clipboard.writeText(keep); else clipboard.clear();
-          check('files can be put on the clipboard', set && JSON.stringify(back) === JSON.stringify([big, small]) && clipboard.readText() === keep, `${back.length} read back`);
+          check('files can be put on the clipboard', set && JSON.stringify(back) === JSON.stringify([big, small]) && JSON.stringify(uriList) === JSON.stringify([big, small]) && clipboard.readText() === keep,
+            `${back.length} read back${process.platform === 'linux' ? `, ${uriList.length} from text/uri-list` : ''}`);
         } else info('clipboard check skipped: the clipboard holds more than plain text');
       }
       for (const d of [src, dst]) try { fs.rmSync(d, { recursive: true, force: true }); } catch {}
@@ -479,7 +508,14 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     [ok, s] = await until((x) => x.connects > before && x.state === 'connected' && x.frames > 20, 40);
     check('renegotiates when the host monitors change', ok, ok ? `still showing monitor ${typeof s.sel === 'number' ? s.sel + 1 : s.sel}` : JSON.stringify(s));
 
-    if (CURSOR_CHECK) {
+    if (INPUT_CHECK) {
+      if (process.platform === 'linux') await require('./inputcheck').run({ check, info, js, until, dragOut });
+      else info('--input-check is for Linux (X11); on Windows input injection was verified separately');
+      s = await state();
+    }
+
+    if (CURSOR_CHECK && !input.hidesCursors) info('--cursor-check skipped: hiding the host cursor is Windows-only');
+    else if (CURSOR_CHECK) {
       // Compare the pixels under the cursor with the cursor shown and hidden.
       const pt = screen.getCursorScreenPoint();
       const displays = screen.getAllDisplays().sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
@@ -569,6 +605,34 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
           `${wins.length} window(s) on displays ${JSON.stringify(placed.map((x) => x.display))}, fullscreen ${JSON.stringify(placed.map((x) => x.fullscreen))}, host monitors left to right ${JSON.stringify(sels)}`);
         for (const x of wins) if (!x.isDestroyed()) x.destroy();
       }
+    }
+
+    if (CLIENT_APP_CHECK) {
+      // The client app as a program of its own, on a loader that knows this test's relay and key (view-only).
+      // It counts as working when its measurements (sent to the host every 2 s, kept in the diagnostics
+      // log) say it runs in the app's shell and shows the host's picture.
+      const loader = path.join(dir, 'client-app-loader.html'), diag = path.join(app.getPath('userData'), 'diag.log');
+      fs.writeFileSync(loader, buildLoaderHtml('k=' + cfg.key + '&auto&ro'));
+      const from = fs.existsSync(diag) ? fs.statSync(diag).size : 0;
+      const env = { ...process.env };
+      delete env.ELECTRON_RUN_AS_NODE;
+      const args = [path.join(__dirname, '..', 'client'), '--loader=' + loader, ...process.argv.filter((a) => a === '--no-sandbox' || a === '--disable-gpu')];
+      const child = require('child_process').spawn(process.execPath, args, { env, stdio: 'ignore' });
+      let seen = null;
+      for (let i = 0; i < 60 && !seen; i++) {
+        await sleep(1000);
+        let text = '';
+        try { text = fs.readFileSync(diag, 'utf8').slice(from); } catch {}
+        for (const line of text.split('\n')) {
+          let e = null;
+          try { e = JSON.parse(line); } catch {}
+          if (e && e.client && e.client.shell === true && Object.values(e.client.fps || {}).some((f) => f > 0)) seen = e.client;
+        }
+      }
+      check('client app (client/main.js, a program of its own) connects and shows the host\'s picture', !!seen,
+        seen ? `fps ${JSON.stringify(seen.fps)}, decoder ${seen.dec}, windows ${JSON.stringify(seen.views)}` : 'no measurements from the app arrived');
+      try { child.kill(); } catch {}
+      await sleep(1500); // let it go before its profile (inside `dir`) is removed
     }
   } catch (e) {
     console.log('[selftest] aborted:', e.message);

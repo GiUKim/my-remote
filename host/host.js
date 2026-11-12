@@ -552,6 +552,7 @@ async function onMessage(m) {
   });
   log('시그널링 서버: ' + cfg.server);
   log('호스트 시작: ' + new Date().toLocaleString());
+  if (cfg.viewOnly) log('주의: 이 PC에서는 원격 입력을 넣을 수 없어 보기 전용으로 동작합니다 (' + cfg.viewOnly + ')');
 
   let shown = false;
   $('show').onclick = () => { shown = !shown; $('key').textContent = shown ? cfg.key : '••••••••••••••••••••••••'; $('show').textContent = shown ? '숨기기' : '표시'; };

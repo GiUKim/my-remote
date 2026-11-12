@@ -1,6 +1,7 @@
 # CLAUDE.md
 
-Personal P2P remote desktop for Windows. `host/` is an Electron app that captures every monitor and
+Personal P2P remote desktop for Windows, and for Linux with an X11 session (see "Linux (X11)" under
+Gotchas). `host/` is an Electron app that captures every monitor and
 injects input; the client is a single HTML file opened in Chrome/Edge on another PC. Media and input
 flow peer-to-peer over WebRTC; a public ntfy server is used only to exchange encrypted handshake
 messages. User-facing docs are in [README.md](README.md) (Korean). Reply to the user in Korean.
@@ -18,10 +19,13 @@ When the user asks you to set this up, do the following in order.
    ```
    It needs no admin rights. It downloads portable Node 22 LTS into `tools\node` if Node >= 20 is
    missing (SHA-256 verified), runs `npm install` in `host`, then runs the self-test.
+   On Linux (X11 session) run `./setup.sh` instead. It downloads no Node: without Node >= 20 and npm
+   on PATH it says what to install and stops. Then `npm install` in `host` and the self-test, as above.
 3. **Check the result.** Success is `[selftest] ALL PASS` and exit code 0. `INFO` lines are not
    failures. The self-test is local only (relay on 127.0.0.1, no STUN, throwaway key and profile,
    view-only client), so it is safe to run without asking. It does capture the screen for about a minute.
-4. **Do not start the real host yourself.** Tell the user to double-click `start-host.bat`. Starting the
+4. **Do not start the real host yourself.** Tell the user to double-click `start-host.bat` (Linux: run
+   `./start-host.sh`). Starting the
    host connects the PC to an external server and makes it reachable with the key, so that step is the
    user's decision and action. Tell them a Windows Firewall prompt may appear on first run.
 5. **Hand over the usage steps** from README.md "사용 방법": copy the key from the host window into a
@@ -29,12 +33,15 @@ When the user asks you to set this up, do the following in order.
    disabled.
 
 If the user only wants to see it working, run or point them to `local-test.bat` (same isolation as the
-self-test, opens a view-only client in their default browser).
+self-test, opens a view-only client in their default browser; `./local-test.sh` on Linux opens it in
+the client app instead).
 
 ## Rules for agents
 
 - **Never read, print, log, or commit the access key.** It lives DPAPI-encrypted in
-  `%APPDATA%\my-remote-host\config.json` (`keyEnc`). Do not decrypt it, do not ask the user to paste it
+  `%APPDATA%\my-remote-host\config.json` (`keyEnc`); on Linux in `~/.config/my-remote-host/config.json`,
+  encrypted with the desktop's keyring or, without one, only obscured (reading that file is reading
+  the key). Do not decrypt it, do not ask the user to paste it
   into the chat, and do not put it in a URL, file, or commit. The user copies it with the host window's
   `키 복사` button.
 - **Never bake a key into `my-remote-client.html`.** The committed client contains no key by design.
@@ -45,8 +52,8 @@ self-test, opens a view-only client in their default browser).
 - **Do not weaken the handshake.** Every signaling message must stay encrypted and authenticated with
   keys derived from the shared secret (`host/signal.js`); the DTLS fingerprints inside the SDP are what
   make the media channel trustworthy.
-- **Do not run the non-isolated host** (`start-host.bat`, `npm start`) or kill a running host without
-  the user asking. Use `--selftest` or `--localtest` for verification.
+- **Do not run the non-isolated host** (`start-host.bat`, `start-host.sh` without `--selftest`, `npm start`)
+  or kill a running host without the user asking. Use `--selftest` or `--localtest` for verification.
 - **RustDesk is AGPL-3.0.** Its source may be read for ideas (see "Performance"), but do not copy code from
   it, or from any other copyleft project, into this repository.
 - **Native code is built from the sources in `native/`** with the distribution's own cross-compiler on a
@@ -60,7 +67,9 @@ self-test, opens a view-only client in their default browser).
   `--dropin-check` do inject (into Explorer windows they open themselves), so run them only after the
   user agreed. Their press points are verified with UI Automation and the drop point with the window
   handle before anything is pressed or let go: once, an unverified point fell on Explorer's navigation
-  pane and a real folder of the user's was dragged (nothing was changed; see Gotchas).
+  pane and a real folder of the user's was dragged (nothing was changed; see Gotchas). So does
+  `--input-check` (Linux: moves the pointer, clicks, scrolls and types into windows and a second
+  program it opens itself): on a virtual display (Xvfb) only, or after the user agreed.
 - Do not commit `node_modules/`, `tools/`, `dist/`, or any `config.json` (see `.gitignore`).
 
 ## Gotchas
@@ -154,6 +163,61 @@ self-test, opens a view-only client in their default browser).
   logs a warning, the offer marks the monitor `hdr`, the client shows it. The fix is the user's: turn HDR
   off for that display. The bench avoids HDR displays, because the quality comparison is meaningless there.
 
+- **Linux (X11).** `host/input.js` is the platform-neutral half (mapping to the desktop, held keys and
+  buttons, the dry run); `host/platform/win32.js` holds all the Win32 code and `host/platform/linux.js`
+  talks to X11 through koffi (libX11, libXtst, libXfixes) on a connection of its own, opened at first
+  use. Callers use `input.*` without platform checks; where a platform has no equivalent the function
+  returns a neutral value (`displayColor()` -> `[]`, `captureClass()` -> `''`, `hideCursors()` -> 0, ...).
+  Things that bit or matter:
+  - Only X11 sessions. On Wayland (`XDG_SESSION_TYPE=wayland`) and on macOS (no backend at all) the host
+    runs view-only and says why (`input.viewOnlyReason()`: a `[host] WARNING` line and a line in the
+    host window). Untested on macOS.
+  - Xlib's default error handler ends the process. Only calls that name another program's window can
+    fail; they run in `guarded()` (our handler, `XSync`, the old handler back). Everything sent through
+    XTest is checked first (key codes against `XDisplayKeycodes`, buttons against `XGetPointerMapping`):
+    a `BadValue` would end the host.
+  - Keys: `KeyboardEvent.code` -> Linux evdev code, X key code = evdev + 8 (the evdev keymap of every
+    current X server, Xvfb included); `HangulMode`/`HanjaMode` by meaning, like on Windows. Pointer:
+    physical pixels are X root coordinates (`XTestFakeMotionEvent`), wheel = buttons 4-7, one click per
+    120 with the rest kept, back/forward = buttons 8/9.
+  - `screen.dipToScreenRect` exists only on Windows in Electron 33: `physicalRect()` in `main.js` scales
+    the bounds by `scaleFactor` elsewhere. Electron fills `display_id` on X11, so sources still match
+    displays by id.
+  - The engine's capturer on X11 paints the pointer into every frame (measured with `--input-check`:
+    the pixels under it change when it moves away), and X11 has no `SetSystemCursor`: `hideHostCursor`
+    does nothing there (`input.hidesCursors` false, offer `cursorHidden: false`), so the client sees its
+    own pointer and, slightly behind, the host's in the video. Fixing that needs a capturer that leaves
+    the pointer out (reading the screen through XShm does); not done.
+  - Cursor shape: `XFixesGetCursorImage` gives the picture and, for cursors loaded from a theme by name
+    (GTK, Qt, libXcursor), the name. Chromium's own cursors and the X server's default cursor have none
+    and go as pictures. `pixels` holds one `unsigned long` per pixel (8 bytes on x64).
+  - Drag-out: an XDND drag is under way when its source took `XdndSelection` (an XFixes selection event)
+    while a button pressed through us is held (sources keep that selection after the drag). What is
+    dragged is then read from that selection (`input.dragData()`: `TARGETS`, then `text/uri-list` or
+    `UTF8_STRING`), and the drag is ended with Escape and the release: no Ctrl+C, the host's clipboard
+    stays as it was. Escape + Ctrl+C (still the fallback) does not work with Chromium-based sources:
+    Chromium clears its text selection 3 ms after a cancelled drag, so Ctrl+C copies nothing. Whether
+    Chrome or VS Code on a Windows host behave the same way was not checked.
+  - The clipboard's change counter (`clipSeq`) counts XFixes owner changes of `CLIPBOARD`. Electron's
+    `clipboard.writeBuffer` replaces the whole clipboard on each call, so a file list goes on in one
+    format: `x-special/gnome-copied-files` (GNOME Files, Nemo, Caja, Thunar), `text/uri-list` when
+    `XDG_CURRENT_DESKTOP` says KDE. Reading takes either.
+  - The client app on Linux never clicks or types: files let go over the bare desktop (no window there,
+    a `_NET_WM_WINDOW_TYPE_DESKTOP` window, or GNOME's desktop-icons window) go into
+    `app.getPath('desktop')`, anything else onto the clipboard and the page says to paste. Received
+    files wait in `~/.cache/my-remote-drop` (on Linux `/tmp` is shared by all users).
+  - No keyring (`safeStorage` backend `basic_text`, usual outside a GNOME/KDE session): the host calls
+    `setUsePlainTextEncryption(true)`, prints a warning and keeps `config.json` at mode 0600.
+  - Chromium's sandbox needs its setuid helper (npm does not install it so) or unprivileged user
+    namespaces: Ubuntu 22.04 has them (the self-test ran with the sandbox on), 23.10 and later restrict
+    them through AppArmor. `host/linux-launch.sh` then stops and names the two ways out (the helper,
+    with sudo, or `MY_REMOTE_NO_SANDBOX=1`).
+  - `--localtest` opens the client app, not the default browser (often Firefox, which the page is not
+    made for). The launchers start Electron in the background like the `.bat` files; its output goes to
+    `$XDG_RUNTIME_DIR/my-remote-*.log`.
+  - Windows-only: native capture, cursor hiding, HDR detection, the Chrome Remote Desktop and outline
+    checks (`others` is `{crd: false, outline: false}`), `--dragout-check`, `--cursor-check`.
+
 - **`ELECTRON_RUN_AS_NODE`**: terminals inside VS Code / Cursor set it, and Electron then runs as plain
   Node and crashes with `Cannot read properties of undefined (reading 'requestSingleInstanceLock')` or
   similar. Clear it before launching Electron (`Remove-Item Env:ELECTRON_RUN_AS_NODE` or `unset`). The
@@ -177,6 +241,7 @@ self-test, opens a view-only client in their default browser).
   paste shortcut is not `preventDefault`ed and its key-down is held until the event has delivered the text.
 - **Console output encoding**: Korean text printed by the host is garbled in a PowerShell 5.1 pipe, so
   self-test output is English. Keep it that way. Keep `setup.ps1` ASCII-only for the same reason.
+  The `.sh` files must keep LF line endings (`.gitattributes` says so for every checkout).
 - **Same-PC control is unusable** (the injected cursor jumps under the viewer window). That is why
   `--localtest` is view-only.
 
@@ -194,7 +259,11 @@ Run from `host/` with Electron's env var cleared.
 | `electron . --selftest --dragout-check` | Only real drags out of a real Explorer window this check opens on a temp folder (`dragcheck.js`): A straight on the host, B and C through a client window running the real page in the client app's shell (held outside; let go at once, before Explorer started its drag). INJECTS INPUT for about half a minute, so only with the user's agreement; skipped when the clipboard holds more than text, which is put back |
 | `electron . --selftest --dropin-check` | Only real drags IN (`dragcheck.js runIn`): from an Explorer window on the second display onto a client window's picture of the first, dropped by the host into another Explorer window (empty space; a folder icon; a whole folder). Needs two displays. INJECTS INPUT for about half a minute: only with the user's agreement |
 | `electron . --selftest --clip-check` | Same, plus putting two files on this PC's clipboard and reading them back. Only runs when the clipboard holds nothing or plain text, which is put back |
-| `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first |
+| `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first. Windows only |
+| `electron . --selftest --input-check` | Linux (X11) only (`inputcheck.js`): the pointer read back after an XTest move, whether the engine's video has the pointer in it (INFO), all 133 keys of the table, five buttons and the wheel into a test window, window-or-desktop under the pointer, text and a file dragged out of a second program it starts, and the client app's drop placement. INJECTS INPUT: on a virtual display only, or with the user's agreement |
+| `electron . --selftest --client-app-check` | Same, plus at the end the client app (`client/main.js`, a process of its own, with a profile of its own) on a loader that talks to the test's relay only; passes when its measurements say it shows the host's picture. Opens a window for about 20 s |
+| `xvfb-run -a -s "-screen 0 1920x1080x24" <electron> . --selftest --input-check --clip-check --client-app-check` | How the Linux side was verified on a server (Ubuntu 22.04, Xvfb). Add `--no-sandbox` where Chromium's sandbox cannot run (see Gotchas) |
+| `./setup.sh [--skip-selftest]`, `./start-host.sh`, `./start-client.sh`, `./local-test.sh` | Linux counterparts of `setup.ps1` and the `.bat` files (shared code in `host/linux-launch.sh`). Extra arguments go to Electron, e.g. `./start-host.sh --selftest` |
 | `npm run bench -- --net=direct,home,narrow,wifi --try=old,base` | Measures delay and smoothness on this PC for the given link conditions and settings, prints a table (see "Performance"). `--picture-test=quality` measures picture quality instead (a window opening, a window being dragged, scrolling); `--snapshot` saves what the client showed next to what was drawn. About 45 s per run. Shows a test picture on one display and a small window on another for that time; they never take focus and no input is injected, but tell the user before a long series |
 | `npm run bench -- --remote=user@host --net=direct --try=base` | The same bench with the client page on another machine, reached over ssh: a real second machine and a real network instead of one PC. That machine needs `~/my-remote-dev/electron/` (an unpacked Electron release for its platform) and `xvfb-run`; signaling goes through an ssh tunnel, only the WebRTC traffic crosses the network directly. Add `--capture-probe` to split the delay into its parts. This sends the picture of one of this PC's displays to that machine, so the user must have agreed |
 | `npm run localtest` | Local trial: host window plus view-only client in the default browser |
@@ -215,7 +284,9 @@ must then be given the new file). Run `npm run selftest` after either.
 | `start-host.bat`, `local-test.bat` | Launchers for the real host and the local trial |
 | `my-remote-client.html` | Built loader: the one file a client PC keeps (generated, committed for convenience) |
 | `start-client.bat` | Launcher for the client app (uses the Electron installed under `host/node_modules`) |
-| `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js` for Win32). Exposes `window.mrShell`. These files are not updated through the loader: the page must feature-detect what an installed app offers |
+| `setup.sh`, `start-host.sh`, `start-client.sh`, `local-test.sh` | The same for Linux (bash, executable in git, LF line endings) |
+| `host/linux-launch.sh` | Sourced by those: Electron's path, X11 session and sandbox checks, starting Electron in the background |
+| `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js`: Win32 or X11). Exposes `window.mrShell`. `main.js --loader=<file>` shows another loader with a profile of its own (self-test, local trial on Linux). These files are not updated through the loader: the page must feature-detect what an installed app offers |
 | `host/main.js` | Electron main: config and key storage, monitor enumeration, tray, IPC, isolated modes |
 | `host/preload.js` | The only bridge between the renderer and main (`window.hostApi`). Also runs the native capturer's loops and hands their frames to the page over a message port |
 | `host/host.html`, `host/host.js` | Host UI and the WebRTC side: capture, encoding control, data-channel routing |
@@ -226,13 +297,17 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/dragcheck.js` | The opt-in real-input checks `--dragout-check` and `--dropin-check` |
 | `native/capprobe.cpp` | Bench only: watches a display natively and reports when each bench frame was presented and handed over |
 | `native/build.js` | Sends the sources in `native/` to a Linux machine, builds them there with mingw-w64 and brings the DLLs back: `capture.dll` (and its record) into `host/bin`, the rest into `tools/native` |
-| `host/input.js` | Win32 through koffi FFI: `SendInput`, cursor shape and picture, hiding/restoring the system cursors |
-| `host/cursor-guard.js` | Separate small process that restores the cursors if the host process dies |
+| `host/input.js` | Input injection, platform-neutral half: the client's messages mapped to the desktop, held keys and buttons, the self-test's dry run; picks the platform module and exports one interface |
+| `host/platform/win32.js` | Win32 through koffi FFI: `SendInput`, cursor shape and picture, hiding/restoring the system cursors, HDR displays, drag detection, the clipboard's file list, the client app's drop helpers |
+| `host/platform/linux.js` | X11 through koffi FFI: XTest input, XFixes cursor and selection events, the dragged data read from `XdndSelection`, the window under the pointer, the clipboard's file list |
+| `host/inputcheck.js` | `--input-check` (Linux): real input into windows and a second program it opens itself |
+| `host/cursor-guard.js` | Separate small process that restores the cursors if the host process dies (Windows) |
 | `host/signal.js` | Shared by host and client: key derivation, encrypted signaling channel |
 | `host/loader.template.html` | Loader source: asks for the key, fetches the client page from the host, runs it |
 | `host/client.template.html` | The client page itself. Built in memory at host start and sent to loaders; never shipped as a file |
 | `host/build-client.js` | Builds both pages (`build`, `buildLoader`); the CLI writes the loader file |
 | `host/selftest.js` | Local ntfy-compatible relay and the self-test scenario |
+| `host/dragcheck.js` | `--dragout-check` (Windows): real drags out of a real Explorer window |
 | `host/bench.js`, `host/bench-peer.js`, `host/bench-pattern.html` | The bench: host side, client side (its own Electron process) and the test picture |
 | `host/bench-remote.js` | The client side of a two-machine bench run; copied to the other machine and driven over ssh |
 | `host/netem.js` | UDP link emulator for the bench: delay, jitter, loss, rate limit with a bounded queue |
@@ -280,7 +355,7 @@ Data channel `input` (JSON text):
 | host -> client | `hs` | Host-side statistics every 2 s (codec, encoder, bitrate, per-monitor capture/encode fps and limiting factor) for the client's diagnostics report |
 | host -> client | `drag` | `on`: whether a drag-and-drop is under way on the host |
 | host -> client | `dragdata` | Answer to `dragout`: `kind` `text` (`s`, `cut`), `files` (`files:[{id,name,size,dir?}]`, `skipped`; the bytes follow on the `file` channel; `name` may be a path 'folder/sub/file') or `none` with `why`: `nodrag`, `nocopy`, `empty`, `toobig` |
-| host -> client | `others` | `crd`: a Chrome Remote Desktop session is connected to the host as well (`remoting_desktop.exe` runs); `outline`: the host drags windows as an outline only. Checked every 10 s, sent when it changes; the client shows a warning |
+| host -> client | `others` | `crd`: a Chrome Remote Desktop session is connected to the host as well (`remoting_desktop.exe` runs); `outline`: the host drags windows as an outline only. Checked every 10 s, sent when it changes; the client shows a warning. Both are checked on Windows only (elsewhere always false) |
 | host -> client | `bye` | Deliberate close; the client must not auto-reconnect |
 | host -> client | `renew` | Host monitors changed; the client reconnects at once and keeps its windows |
 
@@ -302,7 +377,9 @@ by part, never leaving the staging folder) and moves its top-level files and fol
 
 Monitor coordinates are physical pixels (`screen.dipToScreenRect`), mapped to the 0..65535 virtual
 desktop range for `SendInput`. Keys are sent as set-1 scancodes so the host's keyboard layout applies;
-`HangulMode`/`HanjaMode` and a few others go by virtual-key code.
+`HangulMode`/`HanjaMode` and a few others go by virtual-key code. On X11 the physical pixels are the
+root window's coordinates as they are, and keys go as X key codes (Linux evdev code + 8), which the
+host's keyboard layout applies to in the same way.
 
 ## Client layout model
 
@@ -424,7 +501,8 @@ Findings so far (i9-9900K, RTX 3060, three 1080p displays at 75 Hz, 1280x720 pic
 ## Diagnostics log
 
 The client sends its measurements every 2 s (`cs` message) and the host appends them, with its own
-encoder statistics, to `%APPDATA%\my-remote-host\diag.log` (JSON lines, numbers only, rotated at 3 MB).
+encoder statistics, to `%APPDATA%\my-remote-host\diag.log` (Linux: `~/.config/my-remote-host/diag.log`;
+JSON lines, numbers only, rotated at 3 MB).
 Read this file when the user reports stutter or lag instead of guessing: compare host capture fps,
 encode fps and the limiting factor (`cpu`, `bandwidth`, `none`) with the client's received fps, freeze
 count, packet loss, round-trip time and jitter-buffer delay. An entry may carry `slow`: main-process
@@ -481,6 +559,23 @@ Verified by the self-test: the arrangement rules, applying an arrangement (two m
 empty screen), the panel showing every monitor live, and a drag and a click done with synthetic pointer
 events. Not verified: the arrangement panel opening windows on a real second client screen (browser or
 client app), HDR detection on any PC but this one, `H264HQ` on a real link.
+
+Verified on Linux (2026-11-13, a server with Ubuntu 22.04, Electron 33.4.11, Xvfb 1920x1080, no window
+manager, one monitor): the whole self-test with the host on Linux (ALL PASS, with Chromium's sandbox
+on; capture by the engine, AV1 by libaom, about 60 fps), `--clip-check` (both file-list formats),
+`--input-check` (the pointer to the pixel, all 133 keys with the codes sent, five buttons, the wheel
+both ways, text and a file dragged out of a second program in about 100 ms with nothing left held,
+the client app's drop placement), `--client-app-check` (the client app as a process of its own shows
+the Linux host's picture), and the launchers (`setup.sh` with a stand-in for `npm install`,
+`start-host.sh --selftest`, `start-client.sh`, `local-test.sh`). Also seen there: system sound was
+captured once from PulseAudio (the track arrived; audibility not checked). Not verified on Linux: a
+real desktop session (GNOME, KDE, Xfce) with a window manager, a real file manager as the drag source
+or drop target (Nautilus, Dolphin; the clipboard formats were only read back by this program), the
+desktop-icons detection on a real desktop, several monitors (Xvfb's RandR here kept no extra monitor),
+HiDPI scaling, Xwayland, a Korean input method receiving the Hangul key, a Linux client against a
+Windows host or the reverse over a real network, the tray icon, the keyring path (the server had none;
+the fallback warning was seen), `npm install` itself, Ubuntu 23.10+ (the sandbox message). macOS: no
+input backend; the view-only path was not run anywhere.
 
 Verified between two machines on one LAN (see "Performance"): connecting across subnets without STUN,
 AV1 and H.264 decoding on a second machine, the delay and quality figures. Not verified: anything in

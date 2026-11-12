@@ -46,6 +46,7 @@ let lib = null;
 function capturer() {
   if (lib !== null) return lib;
   lib = false;
+  if (process.platform !== 'win32') return lib; // a Windows DLL (DXGI Desktop Duplication); elsewhere the engine's capturer is used
   try {
     const file = path.join(__dirname, 'bin', 'capture.dll'); // built by native/build.js, committed
     if (fs.existsSync(file)) {
