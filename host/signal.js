@@ -5,7 +5,7 @@
 // The WebRTC DTLS fingerprints travel inside these encrypted messages, which
 // is what makes the media/input channel end-to-end authenticated.
 const RD = (() => {
-  const te = new TextEncoder(), td = new TextDecoder();
+  const te = new TextEncoder();
   const CHUNK = 3000; // ntfy message limit is 4096 bytes
 
   function b64u(buf) {
@@ -57,29 +57,100 @@ const RD = (() => {
     out.set(ct, 12);
     return b64u(out);
   }
+  // A message can be 40 chunks, about 90 KB of deflate data, and that could inflate to some 90 MB.
+  // Real ones are far smaller (the largest, the client page, about 110 KB), so the data goes in a
+  // kilobyte at a time (deflate makes at most about a megabyte of that) and inflating stops past
+  // MAX_PLAIN.
+  const MAX_PLAIN = 1 << 20;
+  async function inflate(bytes) {
+    let at = 0;
+    const input = new ReadableStream({
+      pull(c) {
+        if (at >= bytes.length) { c.close(); return; }
+        c.enqueue(bytes.slice(at, at + 1024));
+        at += 1024;
+      },
+    });
+    const reader = input.pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+    const dec = new TextDecoder();
+    let text = '', size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return text + dec.decode();
+      size += value.length;
+      if (size > MAX_PLAIN) { reader.cancel().catch(() => {}); throw new Error('message too large'); }
+      text += dec.decode(value, { stream: true });
+    }
+  }
   async function open(key, text) {
     const raw = unb64u(text);
     const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: raw.slice(0, 12) }, key, raw.slice(12));
-    return JSON.parse(td.decode(await pipe(new Uint8Array(plain), new DecompressionStream('deflate-raw'))));
+    return JSON.parse(await inflate(new Uint8Array(plain)));
   }
 
   // opts: { server, subTopic, pubTopic, rxKey, txKey, onMessage, onState }
   function channel(opts) {
     const parts = new Map();
-    let es = null, closed = false;
+    let es = null, closed = false, timer = null, quiet = null, wait = 2000;
     let readyResolve;
     const ready = new Promise((r) => (readyResolve = r));
 
+    // A new subscription in `ms`, unless the current one has opened by then.
+    function resubscribe(ms) {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        if (closed || es.readyState === EventSource.OPEN) return;
+        es.close();
+        connect();
+      }, ms);
+    }
+    // After a network error the EventSource reconnects by itself. An answer other than 200
+    // text/event-stream (the relay restarting behind its proxy, a rate limit, a proxy's error page)
+    // makes it give up for good (CLOSED), and a connection attempt can also hang. A host left like
+    // that is unreachable until someone restarts it, so a new subscription is made here: after 2 s,
+    // doubling up to a minute, once it gave up; after two minutes when it does not open.
     function connect() {
-      es = new EventSource(`${opts.server}/${opts.subTopic}/sse`);
-      es.onopen = () => { readyResolve(); opts.onState && opts.onState('open'); };
-      es.onerror = () => { opts.onState && opts.onState('retry'); }; // EventSource reconnects by itself
-      es.onmessage = async (ev) => {
+      const src = (es = new EventSource(`${opts.server}/${opts.subTopic}/sse`));
+      clearTimeout(quiet); quiet = null;
+      resubscribe(120000);
+      // ntfy sends a keepalive event every 45 s (its default). A connection lost along the way
+      // (behind a proxy, after a network change) can look open for a long time without an error,
+      // so a stream that brought keepalives and then stays silent for three minutes is replaced
+      // too. Armed by the first keepalive after each open: a relay that sends none is never
+      // replaced for silence.
+      const alive = () => {
+        clearTimeout(quiet);
+        quiet = setTimeout(() => {
+          quiet = null;
+          if (closed || src !== es) return;
+          opts.onState && opts.onState('retry');
+          es.close();
+          connect();
+        }, 180000);
+      };
+      src.addEventListener('keepalive', () => { if (!closed && src === es) alive(); });
+      src.onopen = () => {
+        if (src !== es) return;
+        clearTimeout(timer); timer = null; wait = 2000;
+        clearTimeout(quiet); quiet = null;
+        readyResolve(); opts.onState && opts.onState('open');
+      };
+      src.onerror = () => {
+        if (closed || src !== es) return;
+        opts.onState && opts.onState('retry');
+        if (src.readyState === EventSource.CLOSED) { resubscribe(wait); wait = Math.min(wait * 2, 60000); }
+        else if (!timer) resubscribe(120000);
+      };
+      src.onmessage = async (ev) => {
+        if (quiet && src === es) alive();
         try {
           const m = JSON.parse(ev.data);
           const f = String(m.message || '').split('.');
           if (f.length !== 5 || f[0] !== 'mr1') return;
           const id = f[1], i = +f[2], n = +f[3];
+          // Every loader handed out drops a message of more than 40 chunks (120000 characters), so
+          // the client page the host sends in one 'app' reply has to stay within that.
           if (!(n >= 1 && n <= 40 && i >= 0 && i < n)) return;
           if (!parts.has(id)) {
             if (parts.size > 30) parts.clear();
@@ -93,7 +164,7 @@ const RD = (() => {
           const obj = await open(opts.rxKey, arr.join(''));
           opts.onMessage(obj);
         } catch (e) {
-          // Not decryptable with our key: noise or forgery. Ignore.
+          // Not decryptable with our key (noise or forgery), or too large: ignore.
         }
       };
     }
@@ -111,6 +182,8 @@ const RD = (() => {
     }
     function close() {
       closed = true;
+      clearTimeout(timer);
+      clearTimeout(quiet);
       if (es) es.close();
     }
     return { send, close, ready, get closed() { return closed; } };

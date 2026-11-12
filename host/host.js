@@ -518,6 +518,7 @@ function hintBitrate(sdp, startKbps, minKbps, maxKbps) {
 async function onMessage(m) {
   try {
     if (!m || typeof m.sid !== 'string' || Math.abs(Date.now() - m.ts) > 5 * 60 * 1000) return;
+    if (m.sid.length > 64) return; // a sid is 22 characters; a long one would only fill `seen`
     if (m.t === 'ver') {
       // A loader asking for the current client page. Only someone holding the key can have sent
       // this, and the reply is encrypted to the key. The page is skipped when the loader has it.
