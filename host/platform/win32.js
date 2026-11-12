@@ -339,6 +339,17 @@ function underPointer() {
   const leaf = WindowFromPoint(pt), root = leaf ? GetAncestor(leaf, 2) || leaf : 0; // 2 = GA_ROOT
   return { x: pt.x, y: pt.y, hwnd: Number(root), cls: root ? classOf(root) : '' };
 }
+// The mouse buttons held right now, numbered as the client numbers them: bit 0 primary (left),
+// 1 middle, 2 secondary (right), 3 back, 4 forward. Read-only. GetAsyncKeyState reads the physical
+// buttons, so with the buttons swapped for the left hand the primary one is VK_RBUTTON.
+const GetAsyncKeyState = user32.func('GetAsyncKeyState', 'int16', ['int']);
+function buttonsHeld() {
+  const swap = GetSystemMetrics(23) !== 0; // SM_SWAPBUTTON
+  const vks = [swap ? 0x02 : 0x01, 0x04, swap ? 0x01 : 0x02, 0x05, 0x06]; // VK_LBUTTON, VK_MBUTTON, VK_RBUTTON, VK_XBUTTON1, VK_XBUTTON2
+  let held = 0;
+  for (let b = 0; b < vks.length; b++) if (GetAsyncKeyState(vks[b]) & 0x8000) held |= 1 << b;
+  return held;
+}
 // A left click at a point of the desktop; the pointer then goes back to where it was.
 function clickAt(px, py) {
   const v = { x: GetSystemMetrics(76), y: GetSystemMetrics(77), w: GetSystemMetrics(78), h: GetSystemMetrics(79) };
@@ -384,6 +395,6 @@ module.exports = {
   hidesCursors: true,
   virtualDesktop, move, button, wheel, keyOf, sendKey,
   cursorState, cursorBitmap, hideCursors, restoreCursors, dragFullWindows, displayColor,
-  captureClass, dragging, clipboardFiles, underPointer, clickAt, dropFilesBuffer, setClipboardFiles,
+  captureClass, dragging, clipboardFiles, underPointer, buttonsHeld, clickAt, dropFilesBuffer, setClipboardFiles,
   clipSeq: () => GetClipboardSequenceNumber(),
 };

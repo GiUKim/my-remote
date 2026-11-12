@@ -20,6 +20,7 @@ const NEUTRAL = {
   dragData: async () => null, // what the drag under way carries, where the platform can ask the dragging program
   clipboardFiles: () => [],
   underPointer: () => null,
+  buttonsHeld: () => null, // the mouse buttons held right now (bit b = button b of md/mu); null: cannot tell here
   clickAt: () => false,
   dropFilesBuffer: () => null,
   setClipboardFiles: () => false,
@@ -193,6 +194,7 @@ module.exports = {
   dragData: backend.dragData,
   clipboardFiles: backend.clipboardFiles,
   underPointer: backend.underPointer,
+  buttonsHeld: backend.buttonsHeld,
   clickAt: backend.clickAt,
   dropFilesBuffer: backend.dropFilesBuffer,
   setClipboardFiles: backend.setClipboardFiles,
