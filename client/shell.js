@@ -9,9 +9,12 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
+const { safeName, freePath, stagedPath, sweep } = require('../host/files');
 
 const PRELOAD = path.join(__dirname, 'preload.js');
-const ALLOWED = new Set(['window-management', 'fullscreen', 'keyboardLock', 'pointerLock', 'clipboard-read', 'clipboard-sanitized-write']);
+// Not 'clipboard-read': pasted text and files reach the page through the paste event, and the page
+// (sent by the host) has no business reading this PC's clipboard at any other time.
+const ALLOWED = new Set(['window-management', 'fullscreen', 'keyboardLock', 'pointerLock', 'clipboard-sanitized-write']);
 const FULLSCREEN_JS = `document.documentElement.requestFullscreen()
   .then(() => (navigator.keyboard && navigator.keyboard.lock ? navigator.keyboard.lock() : null))
   .then(() => true, () => false)`;
@@ -31,35 +34,69 @@ function shellOf(sender) {
 //   files, let go over a folder window or the desktop  -> written into that folder; nothing is clicked or typed
 //   anything else, while the drop is still recent      -> onto the clipboard, one click at that spot, Ctrl+V
 //   otherwise                                          -> onto the clipboard; the page asks for Ctrl+V
-// Clicking and typing on this PC happen only here, only on Windows, only right after the person's
-// own drop, and only at the spot they chose. On Linux (X11) only the desktop counts as a folder and
-// nothing is ever clicked or typed: everything else goes onto the clipboard. The window under the
-// pointer and the clipboard's file list come from the host's module (host/input.js: Win32 or X11
-// through koffi); without it things only reach the clipboard as text.
+//   files that cannot go onto the clipboard either     -> into the Downloads folder, as a browser saves them
+// Clicking and typing on this PC happen only here, only on Windows, and only for a drop this process
+// saw the person make: a mouse button pressed over one of this app's windows and let go elsewhere
+// just before the page asked where (personsDrop). The page comes from the host, so its word is not
+// enough for that. Never on the taskbar, the Start menu or a console (NO_CLICK). On Linux (X11) only
+// the desktop counts as a folder and nothing is ever clicked or typed: everything else goes onto the
+// clipboard. The window under the pointer and the clipboard's file list come from the host's module
+// (host/input.js: Win32 or X11 through koffi); without it (macOS) files go into Downloads and text
+// onto the clipboard.
 const FRESH_MS = 8000;
+const REAL_MS = 400; // from letting go of the button to the page asking where that was
 const FOLDERISH = new Set(['Progman', 'WorkerW', 'CabinetWClass', 'ExploreWClass']); // the desktop, Explorer windows
-const drops = new Map();  // id -> { at, x, y, hwnd, cls, desktop, own, folder: Promise<path | null> }
-const staged = new Map(); // id -> { path, fd, done }: files being received
+// Where a click does something else than put the cursor there: the taskbar and its pop-ups (it would
+// minimise a window, open a menu or bring another program forward), the Start menu, and consoles,
+// where pasted lines run as commands. What is let go there only goes onto the clipboard.
+const NO_CLICK = new Set(['Shell_TrayWnd', 'Shell_SecondaryTrayWnd', 'NotifyIconOverflowWindow', 'TopLevelWindowForOverflowXamlIsland',
+  'TaskListThumbnailWnd', 'Windows.UI.Core.CoreWindow', 'ConsoleWindowClass', 'CASCADIA_HOSTING_WINDOW_CLASS']);
+const drops = new Map();  // id -> { at, x, y, hwnd, cls, desktop, own, real, folder: Promise<path | null> }
+const staged = new Map(); // id -> { path, fd, done, group }: files being received
+// Forgets a received file, closing it if it is still being written.
+function unstage(id) {
+  const f = staged.get(id);
+  if (!f) return;
+  staged.delete(id);
+  if (f.fd != null) { try { fs.closeSync(f.fd); } catch {} f.fd = null; }
+}
 let dropSeq = 0, native;
 function win32() { // Win32 on Windows, X11 on Linux
   if (native === undefined) { try { native = require('../host/input'); } catch (e) { console.error('the input module is not available:', e.message); native = null; } }
   return native;
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const hwndOf = (win) => { const b = win.getNativeWindowHandle(); return b.length >= 8 ? Number(b.readBigUInt64LE(0)) : b.readUInt32LE(0); };
+// Whether a top-level window is one of this app's: of the client `s`, or of any client.
+const ownWindow = (hwnd, s) => (s ? [s] : [...shells.values()]).some((x) => [x.win, ...x.children].some((w) => !w.isDestroyed() && hwndOf(w) === hwnd));
+// The mouse buttons as last read (Windows): when they were all let go, and whether that press began
+// over one of our windows. A drag out of the remote picture always does.
+const press = { held: 0, own: false, fromOwn: false, upAt: 0 };
+// Reads the buttons and notes a press or a release. False where they cannot be read (not Windows).
+function trackButtons() {
+  const w = process.platform === 'win32' ? win32() : null;
+  let held = null;
+  try { held = w ? w.buttonsHeld() : null; } catch {}
+  if (typeof held !== 'number') return false;
+  if (held && !press.held) {
+    let at = null;
+    try { at = w.underPointer(); } catch {}
+    press.own = !!at && ownWindow(at.hwnd);
+  } else if (!held && press.held) { press.upAt = Date.now(); press.fromOwn = press.own; }
+  press.held = held;
+  return true;
+}
+// Whether the person has just let go of something dragged out of one of our windows: the buttons
+// are up, they went up at most REAL_MS ago, and the press began over our window. One release counts
+// for one drop only, so asking again gets false.
+function personsDrop() {
+  if (!trackButtons() || press.held || !press.fromOwn || Date.now() - press.upAt > REAL_MS) return false;
+  press.fromOwn = false;
+  return true;
+}
 // Received files wait here until they are placed: this user's own folder (on Linux the temp folder is shared by all users).
 const stageDir = () => (process.platform === 'win32' ? path.join(os.tmpdir(), 'my-remote-drop')
   : path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'my-remote-drop'));
-// A file name that is safe to create here, whatever the other side called the file.
-function safeName(name) {
-  const n = String(name).replace(/[\\/]/g, '_').replace(/[<>:"|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(0, 200);
-  return n && !/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(n) ? n : 'file';
-}
-// "name.ext", or "name (2).ext", "name (3).ext", ... when that is taken.
-function freePath(dir, name) {
-  const ext = path.extname(name), base = name.slice(0, name.length - ext.length);
-  for (let i = 1; i < 10000; i++) { const f = path.join(dir, i === 1 ? name : `${base} (${i})${ext}`); if (!fs.existsSync(f)) return f; }
-  throw new Error('no free file name');
-}
 // Moves a received file or folder into `dir` under a free name; across drives it is copied.
 function moveInto(dir, file) {
   const to = freePath(dir, path.basename(file));
@@ -69,11 +106,9 @@ function moveInto(dir, file) {
   }
   return to;
 }
-// A path inside `base` for a name from the other side ('folder/sub/file.txt'): every part made safe,
-// nothing that could climb out of `base`.
-function stagedPath(base, name) {
-  const parts = String(name).split(/[\\/]+/).filter((p) => p && p !== '.' && p !== '..').map(safeName).slice(0, 64);
-  return path.join(base, ...(parts.length ? parts : ['file']));
+// Moves received files into `dir`; the staging folders they leave empty go too.
+function saveInto(dir, files) {
+  for (const f of files) { moveInto(dir, f); try { fs.rmdirSync(path.dirname(f)); } catch {} }
 }
 // The folder an Explorer window shows (asked of the shell, read-only). Null when it is not a real
 // folder (This PC, a library, ...) or when the window has several tabs and it is unclear which one is in front.
@@ -93,12 +128,14 @@ function targetFolder(p) {
   if (p.cls === 'CabinetWClass' || p.cls === 'ExploreWClass') return explorerFolder(p.hwnd);
   return Promise.resolve(null);
 }
-const hwndOf = (win) => { const b = win.getNativeWindowHandle(); return b.length >= 8 ? Number(b.readBigUInt64LE(0)) : b.readUInt32LE(0); };
-// One click where the thing was let go, then Ctrl+V. Not when the drop is old (the person has moved on),
-// and never other than on Windows.
+// Whether a drop may be clicked on: the person's own (personsDrop), not over our own windows or
+// something a click would set off, not long ago (the person has moved on), and not clicked on before.
+const mayClick = (d, now = Date.now()) => !!d && d.real === true && !d.own && !d.clicked && !NO_CLICK.has(d.cls) && now - d.at <= FRESH_MS;
+// One click where the thing was let go, then Ctrl+V. Only on Windows.
 async function pasteAt(d) {
   const w = win32();
-  if (process.platform !== 'win32' || !w || !d || d.own || Date.now() - d.at > FRESH_MS) return false;
+  if (process.platform !== 'win32' || !w || !mayClick(d)) return false;
+  d.clicked = true;
   try { w.clickAt(d.x, d.y); await sleep(160); w.tap(['ControlLeft', 'KeyV']); return true; } catch (e) { console.error('paste at the drop point', e); return false; }
 }
 // Received files (in the staging folder) go to where they were dropped. Returns { how, where }.
@@ -106,15 +143,26 @@ async function placeFiles(files, d) {
   const folder = d ? await d.folder : null;
   if (folder) {
     try {
-      for (const f of files) { moveInto(folder, f); try { fs.rmdirSync(path.dirname(f)); } catch {} }
+      saveInto(folder, files);
       return { how: 'saved', where: path.basename(folder) || folder };
     } catch (e) { console.error('saving into the folder', e); }
   }
   const left = files.filter((f) => fs.existsSync(f)), w = win32();
   let ok = false;
   try { ok = !!w && left.length > 0 && w.setClipboardFiles(left); } catch (e) { console.error('files onto the clipboard', e); }
-  if (!ok) return { how: '', where: left.length ? path.dirname(left[0]) : '' };
-  return { how: (await pasteAt(d)) ? 'pasted' : 'clipboard' };
+  if (ok) return { how: (await pasteAt(d)) ? 'pasted' : 'clipboard' };
+  // Neither a folder nor the clipboard (no way to put files there on this system, as on macOS, or
+  // another program holds the clipboard): into Downloads, else onto the desktop, where they are
+  // found again, rather than staying in the staging folder. `where` is the whole path.
+  for (const name of left.length ? ['downloads', 'desktop'] : []) {
+    try {
+      const dir = app.getPath(name);
+      fs.mkdirSync(dir, { recursive: true });
+      saveInto(dir, left.filter((f) => fs.existsSync(f)));
+      return { how: 'saved', where: dir };
+    } catch (e) { console.error(`saving into ${name}`, e); }
+  }
+  return { how: '', where: left.length ? path.dirname(left[0]) : '' };
 }
 
 let ipcReady = false;
@@ -122,18 +170,36 @@ function setupIpc() {
   if (ipcReady) return;
   ipcReady = true;
   // Received files that were never placed are thrown away after two days.
-  try { for (const n of fs.readdirSync(stageDir())) { const f = path.join(stageDir(), n); if (Date.now() - fs.statSync(f).mtimeMs > 2 * 86400000) fs.rmSync(f, { recursive: true, force: true }); } } catch {}
+  sweep(stageDir(), 2 * 86400000);
+  // The buttons are read every 25 ms while one of our windows has the focus (a drag out of the
+  // picture begins with a press in one, which gives it the focus) or a button is held. Windows only.
+  if (process.platform === 'win32') {
+    const poll = setInterval(() => {
+      if ((press.held || BrowserWindow.getFocusedWindow()) && !trackButtons()) clearInterval(poll);
+    }, 25);
+  }
   ipcMain.handle('shell:dropPoint', (e) => {
     const s = shellOf(e.sender), w = win32();
     if (!s || !w) return null;
+    const real = personsDrop();
     let at = null;
     try { at = w.underPointer(); } catch (err) { console.error('drop point', err); }
     if (!at) return null;
-    const own = [s.win, ...s.children].some((x) => !x.isDestroyed() && hwndOf(x) === at.hwnd);
+    const own = ownWindow(at.hwnd, s);
     const id = ++dropSeq;
-    drops.set(id, { at: Date.now(), ...at, own, folder: own ? Promise.resolve(null) : targetFolder(at) });
+    drops.set(id, { at: Date.now(), ...at, own, real, folder: own ? Promise.resolve(null) : targetFolder(at) });
     if (drops.size > 20) drops.delete(drops.keys().next().value);
     return id;
+  });
+  // Whether the real pointer is over one of this client's windows (true) or another program (false)
+  // right now: the page's own reckoning from window rectangles cannot see a window lying over ours.
+  // Null where it cannot be told (only Windows says).
+  ipcMain.handle('shell:pointerOwn', (e) => {
+    const s = shellOf(e.sender), w = process.platform === 'win32' ? win32() : null;
+    if (!s || !w) return null;
+    let at = null;
+    try { at = w.underPointer(); } catch {}
+    return at && at.hwnd ? ownWindow(at.hwnd, s) : null;
   });
   ipcMain.handle('shell:dropText', async (e, id, text) => {
     if (!shellOf(e.sender) || typeof text !== 'string' || text.length > 200000) return '';
@@ -174,10 +240,25 @@ function setupIpc() {
     f.fd = null; f.done = true;
     return true;
   });
+  // A transfer that was cut off (the connection dropped, the host gave up): the file being written is
+  // closed and thrown away together with the rest of its transfer, instead of staying open until the
+  // app quits and lying in the staging folder for two days.
+  ipcMain.handle('shell:fileAbort', (e, id) => {
+    const f = shellOf(e.sender) ? staged.get(id) : null;
+    if (!f) return false;
+    if (f.group) {
+      for (const [k, x] of staged) if (x.group === f.group) unstage(k);
+      try { fs.rmSync(f.group, { recursive: true, force: true }); } catch (err) { console.error('removing a cut-off transfer', err); }
+    } else {
+      unstage(id);
+      try { fs.rmSync(f.path, { force: true }); fs.rmdirSync(path.dirname(f.path)); } catch {}
+    }
+    return true;
+  });
   ipcMain.handle('shell:dropFiles', async (e, id, ids, group) => {
     if (!shellOf(e.sender) || !Array.isArray(ids)) return { how: '' };
     const got = ids.map((x) => staged.get(x)).filter((f) => f && f.done);
-    for (const x of ids) staged.delete(x);
+    for (const x of ids) unstage(x);
     // What goes to the drop target: the top-level files and folders of the transfer.
     const g = groupDir(group);
     let items = got.map((f) => f.path);
@@ -206,6 +287,23 @@ function setupIpc() {
   });
 }
 
+// An empty address: window.open('') may arrive as '', 'about:blank' or 'about:blank#blocked'.
+const blank = (url) => !url || /^about:blank([?#]|$)/.test(url);
+// Every window gets mrShell, so none may go anywhere else than the page it shows (a file let go
+// beside the picture would otherwise replace the page). A reload, which the page does to fetch its
+// new version from the host, stays possible.
+function stayOnPage(wc) {
+  wc.on('will-navigate', (e, url) => {
+    const to = String((e && e.url) || url || '');
+    if (blank(to)) return;
+    try {
+      const a = new URL(to), b = new URL(wc.getURL());
+      if (a.protocol === b.protocol && a.host === b.host && a.pathname === b.pathname && a.search === b.search) return;
+    } catch {}
+    e.preventDefault();
+  });
+}
+
 function attach(win) {
   setupIpc();
   const wc = win.webContents;
@@ -216,8 +314,10 @@ function attach(win) {
   wc.session.setPermissionRequestHandler((_wc, permission, cb) => cb(ALLOWED.has(permission)));
   wc.session.setPermissionCheckHandler((_wc, permission) => ALLOWED.has(permission));
 
-  // A window the page opens with a position goes, borderless, onto the screen at that position.
-  wc.setWindowOpenHandler(({ features }) => {
+  // A window the page opens with a position goes, borderless, onto the screen at that position. The
+  // page opens empty windows and fills them itself; nothing else is opened, since it would get mrShell.
+  wc.setWindowOpenHandler(({ url, features }) => {
+    if (!blank(url)) return { action: 'deny' };
     const num = (k) => { const r = new RegExp('(?:^|,)\\s*' + k + '=(-?\\d+)').exec(features || ''); return r ? Number(r[1]) : null; };
     const left = num('left'), top = num('top');
     const opts = { autoHideMenuBar: true, backgroundColor: '#000000', webPreferences: { preload: PRELOAD, backgroundThrottling: false } };
@@ -227,12 +327,15 @@ function attach(win) {
     }
     return { action: 'allow', overrideBrowserWindowOptions: opts };
   });
+  stayOnPage(wc);
   wc.on('did-create-window', (child) => {
     state.children.add(child);
     child.setMenuBarVisibility(false);
+    child.webContents.setWindowOpenHandler(() => ({ action: 'deny' })); // the page opens its windows from the main one
+    stayOnPage(child.webContents);
     child.on('closed', () => state.children.delete(child));
   });
   return state;
 }
 
-module.exports = { attach, PRELOAD, _drop: { safeName, freePath, placeFiles, explorerFolder, stagedPath, moveInto } };
+module.exports = { attach, PRELOAD, _drop: { safeName, freePath, placeFiles, explorerFolder, stagedPath, moveInto, mayClick, NO_CLICK } };

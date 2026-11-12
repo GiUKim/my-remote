@@ -1,12 +1,25 @@
-// File names and places for things that come from the other side (files dragged or pasted in).
-// Names are made safe part by part and can never leave the folder they are put under.
+// File names and places for things that come from the other side: files dragged or pasted in
+// (host/main.js) and files dragged out to the client app (client/shell.js). Names are made safe
+// part by part and can never leave the folder they are put under.
 const fs = require('fs');
 const path = require('path');
 
-// A file name that is safe to create on Windows, whatever the other side called the file.
+// Names Windows keeps for devices, also with an extension or spaces after them ('CON.txt', 'nul .',
+// 'COM¹.txt'). Node can create such a file, but other programs open the device instead and
+// Explorer cannot delete it.
+const DEVICE = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$) *(\.|$)/i;
+const MAX_NAME = 200;
+// Windows drops dots and spaces at the end of a name, so a file named that way could not be opened
+// or deleted by Explorer and other programs. A half emoji left by shortening goes too.
+const trimEnd = (s) => s.replace(/[\ud800-\udbff]$/, '').replace(/[. ]+$/, '');
+// A file name that is safe to create on Windows, whatever the other side called the file. A long
+// name is shortened before its extension, so the file still opens with the same program.
 function safeName(name) {
-  const n = String(name).replace(/[\\/]/g, '_').replace(/[<>:"|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(0, 200);
-  return n && !/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(n) ? n : 'file';
+  let n = trimEnd(String(name).replace(/[\\/]/g, '_').replace(/[<>:"|?*\x00-\x1f]/g, '_'));
+  const ext = path.extname(n).length <= 20 ? path.extname(n) : '';
+  if (n.length > MAX_NAME) n = trimEnd(n.slice(0, MAX_NAME - ext.length)) + ext;
+  if (DEVICE.test(n)) n = 'file' + ext;
+  return n || 'file';
 }
 // "name.ext", or "name (2).ext", "name (3).ext", ... when that is taken.
 function freePath(dir, name) {
