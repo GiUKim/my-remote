@@ -52,28 +52,29 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
 
   // --dragout-check: only a real drag out of a real Explorer window (dragcheck.js), then exit.
   // It injects input on this PC for about ten seconds, so it is opt-in and the user must agree first.
-  if (process.argv.includes('--dragout-check')) {
-    await sleep(2500); // let the host subscribe before the client window of parts B and C connects
-    await require('./dragcheck').run({ check, info, dragOut, closeDragFiles, cfg, buildClientHtml });
+  if (process.argv.includes('--dragout-check') || process.argv.includes('--dropin-check')) {
+    await sleep(2500); // let the host subscribe before a client window connects
+    const dc = require('./dragcheck');
+    if (process.argv.includes('--dragout-check')) await dc.run({ check, info, dragOut, closeDragFiles, cfg, buildClientHtml });
+    if (process.argv.includes('--dropin-check')) await dc.runIn({ check, info, cfg, buildClientHtml });
     const pass = results.length > 0 && results.every(Boolean);
     console.log(pass ? '[selftest] ALL PASS' : '[selftest] SOME FAILED');
     return app.exit(pass ? 0 : 1);
   }
 
-  // host/bin/capture.dll is a built file that is committed: it must be the one built from the
+  // The DLLs in host/bin are built files that are committed: each must be the one built from its
   // source in native/ as it is now (native/build.js records both). Not there in a packaged copy.
-  {
-    const dll = path.join(__dirname, 'bin', 'capture.dll'), src = path.join(__dirname, '..', 'native', 'capture.cpp');
-    if (fs.existsSync(dll) && fs.existsSync(src)) {
-      const sha = (data) => require('crypto').createHash('sha256').update(data).digest('hex');
-      let rec = {};
-      try { rec = JSON.parse(fs.readFileSync(dll + '.json', 'utf8')); } catch {}
-      const sameSrc = rec.sourceSha256 === sha(fs.readFileSync(src, 'utf8').replace(/\r\n/g, '\n'));
-      const sameDll = rec.dllSha256 === sha(fs.readFileSync(dll));
-      check('the capture module is the one built from native/capture.cpp', sameSrc && sameDll,
-        !sameSrc ? 'native/capture.cpp differs from what host/bin/capture.dll was built from: run native/build.js'
-          : !sameDll ? 'host/bin/capture.dll is not the file native/build.js recorded' : '');
-    }
+  for (const name of ['capture', 'shellops']) {
+    const dll = path.join(__dirname, 'bin', name + '.dll'), src = path.join(__dirname, '..', 'native', name + '.cpp');
+    if (!fs.existsSync(dll) || !fs.existsSync(src)) continue;
+    const sha = (data) => require('crypto').createHash('sha256').update(data).digest('hex');
+    let rec = {};
+    try { rec = JSON.parse(fs.readFileSync(dll + '.json', 'utf8')); } catch {}
+    const sameSrc = rec.sourceSha256 === sha(fs.readFileSync(src, 'utf8').replace(/\r\n/g, '\n'));
+    const sameDll = rec.dllSha256 === sha(fs.readFileSync(dll));
+    check(`host/bin/${name}.dll is the one built from native/${name}.cpp`, sameSrc && sameDll,
+      !sameSrc ? `native/${name}.cpp differs from what host/bin/${name}.dll was built from: run native/build.js`
+        : !sameDll ? `host/bin/${name}.dll is not the file native/build.js recorded` : '');
   }
 
   // Pure coordinate mapping (no input is injected): two monitors side by side, 1080p then 1440p.
@@ -414,6 +415,50 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         } else info('clipboard check skipped: the clipboard holds more than plain text');
       }
       for (const d of [src, dst]) try { fs.rmSync(d, { recursive: true, force: true }); } catch {}
+    }
+
+    // Files dragged or pasted in, onto the host: they travel over an 'upload' channel and are written
+    // under the host's inbox (a local trial never drops or pastes them). Names from the client can
+    // never leave the transfer's folder, a file that sends more than it announced is refused.
+    {
+      const inbox = path.join(os.tmpdir(), 'my-remote-in');
+      const shaOf = (file) => require('crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+      const before = new Set(fs.existsSync(inbox) ? fs.readdirSync(inbox) : []);
+      const r = await js(`(async () => {
+        const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+        const bytes = new Uint8Array(1500000); for (let i = 0; i < bytes.length; i += 4096) crypto.getRandomValues(bytes.subarray(i, Math.min(bytes.length, i + 4096)));
+        const hex = async (b) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', b))].map((x) => x.toString(16).padStart(2, '0')).join('');
+        const a = new File([bytes], 'a.bin'), b = new File(['hello in\\n'], 'b.txt'), evil = new File(['x'], 'evil.txt');
+        const x0 = { ...window.__rd.xfer };
+        READONLY = false;
+        try {
+          await upload(mainView, 'drop', null, { files: [{ file: a, rel: 'a.bin' }, { file: b, rel: 'proj/sub/b.txt' }, { file: evil, rel: '../../evil.txt' }], dirs: ['proj/empty'] });
+          for (let i = 0; i < 60 && window.__rd.xfer.inDone === x0.inDone && window.__rd.xfer.inFailed === x0.inFailed; i++) await sleep(250);
+          const dropped = { how: window.__rd.xfer.inHow, done: window.__rd.xfer.inDone - x0.inDone };
+          // paste with files on the clipboard: a synthetic paste event carrying them
+          const dt = new DataTransfer(); dt.items.add(new File(['pasted'], 'p.txt'));
+          document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+          for (let i = 0; i < 40 && window.__rd.xfer.inDone === x0.inDone + 1; i++) await sleep(250);
+          const pasted = { how: window.__rd.xfer.inHow, done: window.__rd.xfer.inDone - x0.inDone };
+          // a file that sends more than it announced
+          const ch = pc.createDataChannel('upload', { ordered: true }); ch.binaryType = 'arraybuffer';
+          await new Promise((res) => { ch.onopen = res; setTimeout(res, 5000); });
+          const failed0 = window.__rd.xfer.inFailed;
+          ch.send(JSON.stringify({ t: 'begin', mode: 'drop', at: null })); ch.send(JSON.stringify({ t: 'file', name: 'liar.bin', size: 3 })); ch.send(new Uint8Array(10).buffer);
+          for (let i = 0; i < 40 && window.__rd.xfer.inFailed === failed0; i++) await sleep(100);
+          return { dropped, pasted, liarRefused: window.__rd.xfer.inFailed > failed0, sha: await hex(bytes) };
+        } finally { READONLY = true; }
+      })()`);
+      const fresh = (fs.existsSync(inbox) ? fs.readdirSync(inbox) : []).filter((n) => !before.has(n)).map((n) => path.join(inbox, n));
+      const withA = fresh.find((d) => fs.existsSync(path.join(d, 'a.bin')));
+      const withP = fresh.find((d) => fs.existsSync(path.join(d, 'p.txt')));
+      const ok = r.dropped.how === 'staged' && r.dropped.done === 1 && r.pasted.done === 2 && r.liarRefused && withA && withP
+        && shaOf(path.join(withA, 'a.bin')) === r.sha && fs.readFileSync(path.join(withA, 'proj', 'sub', 'b.txt'), 'utf8') === 'hello in\n'
+        && fs.statSync(path.join(withA, 'proj', 'empty')).isDirectory() && fs.existsSync(path.join(withA, 'evil.txt'))
+        && !fresh.some((d) => fs.existsSync(path.join(d, 'liar.bin')) && fs.statSync(path.join(d, 'liar.bin')).size > 3);
+      check('files dragged or pasted in reach the host intact, inside their folder; a lying file is refused', ok,
+        JSON.stringify({ ...r, sha: undefined, staged: withA ? fs.readdirSync(withA) : null }));
+      for (const d of fresh) try { fs.rmSync(d, { recursive: true, force: true }); } catch {}
     }
 
     // Pasting must reach the page through the browser's paste event (no clipboard-read permission).

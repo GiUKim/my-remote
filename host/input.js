@@ -420,5 +420,7 @@ function simulate(rects, msgs) {
   }
 }
 function takeReleased() { const n = released; released = 0; return n; }
+// Whether the client holds this key down here right now (KeyboardEvent.code).
+const isDown = (code) => down.has(code);
 
-module.exports = { handle, reset, setMonitors, target, simulate, takeReleased, dragFullWindows, MF, cursorState, cursorBitmap, hideCursors, restoreCursors, displayColor, captureClass, dragging, clipboardFiles, buttonUp, tap, underPointer, clickAt, dropFilesBuffer, setClipboardFiles, clipSeq: () => GetClipboardSequenceNumber() };
+module.exports = { handle, reset, setMonitors, target, simulate, takeReleased, isDown, dragFullWindows, MF, cursorState, cursorBitmap, hideCursors, restoreCursors, displayColor, captureClass, dragging, clipboardFiles, buttonUp, tap, underPointer, clickAt, dropFilesBuffer, setClipboardFiles, clipSeq: () => GetClipboardSequenceNumber() };

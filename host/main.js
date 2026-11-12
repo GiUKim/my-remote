@@ -170,6 +170,106 @@ async function dragOut(button) {
   const text = clipboard.readText();
   return text ? { kind: 'text', s: text.slice(0, CLIP_MAX), cut: text.length > CLIP_MAX } : { kind: 'none', why: 'empty' };
 }
+
+// ---- files dragged or pasted in from the client ------------------------------------------
+// They come over a data channel of their own (receiveUpload in host.js) and are written here under
+// a staging folder, one per transfer, with names made safe part by part (files.js). Complete, they
+// go to the program under the host's pointer by a real drag-and-drop (so_drop in shellops.dll: a
+// folder window, a folder icon in it, the desktop, a mail or chat window each do what they do with
+// a local drop), or onto the clipboard: for a paste (then Ctrl+V is pressed), or when nothing under
+// the pointer took them. Writing is asynchronous: the client's input shares this thread.
+// Local trials never drop or paste, except the opt-in --dropin-check.
+const fileNames = require('./files');
+const PUT_MAX_BYTES = 2 * 1024 * 1024 * 1024, PUT_MAX_FILES = 5000;
+const inbox = () => path.join(os.tmpdir(), 'my-remote-in');
+const puts = new Map();    // gid -> { dir, files, bytes }
+const putOpen = new Map(); // fid -> { gid, fh, left }
+let shellops; // undefined: not looked for yet; null: not there
+function shellOps() {
+  if (shellops !== undefined) return shellops;
+  shellops = null;
+  try {
+    const file = path.join(__dirname, 'bin', 'shellops.dll');
+    if (process.platform === 'win32' && fs.existsSync(file)) {
+      const lib = require('koffi').load(file);
+      shellops = { drop: lib.func('int so_drop(const char16_t *paths, int effects, int timeoutMs)'), error: lib.func('const char *so_error()'), debug: lib.func('const char *so_debug()') };
+    }
+  } catch (e) { console.error('shell operations are not available:', e.message); }
+  return shellops;
+}
+function putBegin() {
+  fileNames.sweep(inbox(), 24 * 3600e3);
+  const gid = crypto.randomBytes(8).toString('hex'), dir = path.join(inbox(), gid);
+  fs.mkdirSync(dir, { recursive: true });
+  puts.set(gid, { dir, files: 0, bytes: 0 });
+  return gid;
+}
+function putDir(gid, name) {
+  const p = puts.get(String(gid));
+  if (!p) return false;
+  fs.mkdirSync(fileNames.stagedPath(p.dir, name), { recursive: true });
+  return true;
+}
+async function putFile(gid, name, size) {
+  const p = puts.get(String(gid));
+  size = Number(size);
+  if (!p || !Number.isSafeInteger(size) || size < 0 || p.files >= PUT_MAX_FILES || p.bytes + size > PUT_MAX_BYTES) return null;
+  let file = fileNames.stagedPath(p.dir, name);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (fs.existsSync(file)) file = fileNames.freePath(path.dirname(file), path.basename(file));
+  const fid = crypto.randomBytes(8).toString('hex');
+  putOpen.set(fid, { gid: String(gid), fh: await fs.promises.open(file, 'wx'), left: size });
+  p.files++;
+  p.bytes += size;
+  return fid;
+}
+async function putChunk(fid, bytes) {
+  const f = putOpen.get(String(fid));
+  if (!f || !bytes || bytes.byteLength > f.left) return false;
+  await f.fh.write(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+  f.left -= bytes.byteLength;
+  return true;
+}
+async function putEnd(fid) {
+  const f = putOpen.get(String(fid));
+  if (!f) return false;
+  putOpen.delete(String(fid));
+  await f.fh.close();
+  return f.left === 0;
+}
+async function putClose(gid) {
+  for (const [fid, f] of [...putOpen]) if (f.gid === String(gid)) { putOpen.delete(fid); try { await f.fh.close(); } catch {} }
+}
+async function putAbort(gid) {
+  const p = puts.get(String(gid));
+  puts.delete(String(gid));
+  await putClose(gid);
+  if (p) fs.rm(p.dir, { recursive: true, force: true }, () => {});
+  return true;
+}
+// `at`: where to drop ({d, x, y} as in 'mm'), or null: onto the clipboard. `mode`: 'drop' or 'paste'.
+async function putDone(gid, at, mode) {
+  const p = puts.get(String(gid));
+  if (!p) return { how: 'none', why: 'unknown' };
+  puts.delete(String(gid));
+  await putClose(gid);
+  const items = fs.readdirSync(p.dir).map((n) => path.join(p.dir, n)), n = p.files;
+  if (!items.length) return { how: 'none', why: 'empty' };
+  if (ISOLATED && !process.argv.includes('--dropin-check')) return { how: 'staged', n };
+  const later = () => setTimeout(() => fs.rm(p.dir, { recursive: true, force: true }, () => {}), 10 * 60e3); // the target may still be reading
+  const so = shellOps();
+  if (mode === 'drop' && at && so) {
+    input.handle(JSON.stringify({ t: 'mm', d: at.d | 0, x: +at.x, y: +at.y }));
+    await new Promise((r) => setTimeout(r, 60));
+    const effect = await new Promise((res) => so.drop.async(items.join('\n'), 1, 4000, (err, r) => res(err ? -3 : r)));
+    if (effect > 0) { later(); return { how: 'dropped', n }; }
+    console.log(`drop not taken (${effect}): ${so.error()} ${so.debug()}`);
+  }
+  // A paste, or nothing under the pointer took them: onto the clipboard, and for a paste Ctrl+V.
+  if (!input.setClipboardFiles(items)) return { how: 'none', why: 'clipboard' };
+  if (mode === 'paste') { input.tap(input.isDown('ControlLeft') || input.isDown('ControlRight') ? ['KeyV'] : ['ControlLeft', 'KeyV']); return { how: 'pasted', n }; }
+  return { how: 'clipboard', n };
+}
 let cfg = null;
 let savedCfg = {}; // only what the user set; defaults are not frozen into the file
 
@@ -367,6 +467,14 @@ else {
       } catch (e) { console.error('drag file read', e); return null; }
     });
     ipcMain.on('drag-file-done', (_e, id) => closeDragFiles(id == null ? null : String(id)));
+    const guard = (what, fn, none) => async (...a) => { try { return await fn(...a); } catch (e) { console.error(what, e.message); return none; } };
+    ipcMain.handle('put-begin', guard('put begin', () => putBegin(), null));
+    ipcMain.handle('put-dir', guard('put dir', (_e, gid, name) => putDir(gid, name), false));
+    ipcMain.handle('put-file', guard('put file', (_e, gid, name, size) => putFile(gid, name, size), null));
+    ipcMain.handle('put-chunk', guard('put chunk', (_e, fid, bytes) => putChunk(fid, bytes), false));
+    ipcMain.handle('put-end', guard('put end', (_e, fid) => putEnd(fid), false));
+    ipcMain.handle('put-done', guard('put done', (_e, gid, at, mode) => putDone(gid, at, mode), { how: 'none', why: 'error' }));
+    ipcMain.handle('put-abort', guard('put abort', (_e, gid) => putAbort(gid), false));
     ipcMain.handle('cursor-hide', (_e, on) => timed('cursor-hide', () => { try { setCursorsHidden(!!on && !!cfg.hideHostCursor); } catch (e) { console.error('cursor hide', e); } return cursorsHidden; }));
     // Only touch the clipboard when its content actually changed.
     ipcMain.handle('clip-read', (_e, lastSeq) => {

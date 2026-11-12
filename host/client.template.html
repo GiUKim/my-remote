@@ -195,7 +195,8 @@ $('hk').checked = hotkeysOn;
 
 window.__rd = { state: 'idle', monitors: 0, frames: 0, fps: {}, res: {}, cursor: '', clipRx: false, audio: false, connects: 0, pastes: 0, host: null, dragouts: 0, files: [], keepFiles: false,  // files/keepFiles: the self-test looks at received files instead of saving them
   ptr: { cancel: 0, lost: 0, drag: 0, released: 0 }, others: null, // ptr: pointer streams the browser broke off, and what was done about it
-  xfer: { out: 0, late: 0, files: 0, placed: 0, text: 0, none: 0, failed: 0, why: '', how: '' }, trace: null }; // xfer: things dragged out; trace: the self-test sees what would be sent
+  xfer: { out: 0, late: 0, files: 0, placed: 0, text: 0, none: 0, failed: 0, why: '', how: '', inStart: 0, inDone: 0, inFailed: 0, inHow: '' }, trace: null,
+  stillOver: false }; // stillOver: files dragged over the picture do not move the host's pointer (a test on one PC, where both pointers are one) // xfer: things dragged out; trace: the self-test sees what would be sent
 let hostDrag = false; // the host says a drag-and-drop is under way there (a file, selected text, ...)
 let drop = null;      // the last thing dragged out to this PC: where it was let go, what has arrived
 
@@ -585,6 +586,126 @@ function receiveFiles(ch) {
   ch.onmessage = (e) => { queue = queue.then(() => step(e.data)).catch(fail); };
 }
 
+// ---- files dragged or pasted in, onto the host -----------------------------------------
+// Dropped on a picture of the host, files and folders go to the host, which hands them to the
+// program under its pointer with a real drop, as if dropped there by hand (a folder window, a folder
+// icon, the desktop, a mail or chat window). Pasted (Ctrl+V) with files on this PC's clipboard, they
+// go onto the host's clipboard and the host pastes them. Works in a browser and in the app.
+const PUT_MAX_FILES = 5000, PUT_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+let putting = false, putView = null;
+// What a drop brought: files with their path ('folder/sub/name') and empty folders. The entries
+// must be taken from the event at once (before the first await), the browser forgets them after.
+function dropEntries(dt) {
+  const items = [...(dt.items || [])].filter((i) => i.kind === 'file');
+  // The File System Access handles first: with them a dropped folder is read as it is. (The older
+  // entries API showed, in Electron 33 on Windows, a dropped folder as an unrelated '/202' tree.)
+  const handles = items.map((i) => { try { return i.getAsFileSystemHandle ? i.getAsFileSystemHandle() : null; } catch { return null; } });
+  const entries = items.map((i) => (i.webkitGetAsEntry ? i.webkitGetAsEntry() : null));
+  const plain = [...(dt.files || [])];
+  const last = (window.__rd.lastDrop = { items: items.length, entries: entries.filter(Boolean).length, plain: plain.length, files: 0, dirs: 0, error: '',
+    names: window.__rd.keepFiles ? entries.map((e) => e && e.name + (e.isDirectory ? '/' : '') + ' ' + e.fullPath) : null,
+    plainNames: window.__rd.keepFiles ? plain.map((f) => f.name + ' ' + f.size + (shell && shell.pathFor ? ' ' + shell.pathFor(f) : '')) : null });
+  return (async () => {
+    const flat = () => ({ files: plain.filter((f) => f.size > 0 || f.type).map((f) => ({ file: f, rel: f.name })), dirs: [] });
+    if (handles.length && handles.every(Boolean)) {
+      try {
+        // The handles may never come (seen for folders in the client app, which grants no file-system permission).
+        const hs = await Promise.race([Promise.all(handles), sleep(1500).then(() => { throw new Error('no answer'); })]), files = [], dirs = [];
+        // Each dropped item must be the one the browser listed for the drop: never send something else.
+        if (hs.some((h, i) => !h || (plain[i] && h.name !== plain[i].name))) throw new Error('names differ');
+        const walkH = async (h, rel) => {
+          if (files.length > PUT_MAX_FILES) return;
+          if (h.kind === 'file') { last.stage = 'file ' + rel; files.push({ file: await h.getFile(), rel }); return; }
+          last.stage = 'list ' + rel;
+          let any = false;
+          for await (const k of h.values()) { any = true; await walkH(k, rel + '/' + k.name); }
+          if (!any) dirs.push(rel);
+        };
+        for (const h of hs) await walkH(h, h.name);
+        last.how = 'handles'; last.files = files.length; last.dirs = dirs.length;
+        return { files, dirs };
+      } catch (e) { last.error = 'handles: ' + String(e && (e.name || e.message) || 'error').slice(0, 40); }
+    }
+    if (!entries.length || entries.some((e) => !e)) return flat();
+    // The older entries API, only when it shows the items the browser listed for the drop.
+    if (entries.some((e, i) => plain[i] && e.name !== plain[i].name)) { last.error += ' entries: names differ'; return flat(); }
+    const files = [], dirs = [];
+    const walk = async (entry, rel) => {
+      if (files.length > PUT_MAX_FILES) return;
+      if (entry.isFile) { last.stage = 'file ' + rel; files.push({ file: await new Promise((res, rej) => entry.file(res, rej)), rel }); }
+      else if (entry.isDirectory) {
+        const reader = entry.createReader(), kids = [];
+        last.stage = 'list ' + rel;
+        for (;;) { const batch = await new Promise((res, rej) => reader.readEntries(res, rej)); if (!batch.length) break; kids.push(...batch); }
+        if (!kids.length) dirs.push(rel);
+        for (const k of kids) await walk(k, rel + '/' + k.name);
+      }
+    };
+    try {
+      for (const e of entries) await walk(e, e.name);
+    } catch (e) {
+      // The entries could not be read (seen with some folders): take the plain files, if there are any.
+      last.error = String(e && (e.name || e.message) || 'error').slice(0, 40);
+      if (flat().files.length) return flat();
+      throw e;
+    }
+    last.files = files.length; last.dirs = dirs.length;
+    return { files, dirs };
+  })();
+}
+async function upload(view, mode, at, got) {
+  if (READONLY || !pc || !got) return false;
+  const list = got.files, bytes = list.reduce((a, f) => a + f.file.size, 0);
+  if (!list.length && !got.dirs.length) return false;
+  if (putting) { toast(view, '앞의 파일을 아직 보내는 중입니다', 3000); return false; }
+  if (list.length > PUT_MAX_FILES || bytes > PUT_MAX_BYTES) { toast(view, '파일이 너무 많거나 큽니다 (최대 5000개, 2 GB)', 5000); return false; }
+  putting = true;
+  putView = view;
+  window.__rd.xfer.inStart++;
+  const ch = pc.createDataChannel('upload', { ordered: true }), CHUNK = 60000;
+  ch.binaryType = 'arraybuffer';
+  let sent = 0, shownAt = 0;
+  try {
+    await new Promise((res, rej) => { ch.onopen = res; ch.onerror = () => rej(new Error('channel')); setTimeout(() => rej(new Error('channel did not open')), 8000); });
+    ch.send(JSON.stringify({ t: 'begin', mode, at, files: list.length, bytes }));
+    for (const d of got.dirs) ch.send(JSON.stringify({ t: 'dir', name: d }));
+    for (const { file, rel } of list) {
+      ch.send(JSON.stringify({ t: 'file', name: rel, size: file.size }));
+      for (let off = 0; off < file.size; off += CHUNK) {
+        if (ch.readyState !== 'open') throw new Error('closed');
+        ch.send(await file.slice(off, off + CHUNK).arrayBuffer());
+        sent += Math.min(CHUNK, file.size - off);
+        while (ch.bufferedAmount > 4 * 1024 * 1024) await sleep(15);
+        if (performance.now() - shownAt > 400) { shownAt = performance.now(); toast(view, `호스트로 보내는 중… ${(sent / 1048576).toFixed(1)} / ${(bytes / 1048576).toFixed(1)} MB`, 600000); }
+      }
+      ch.send(JSON.stringify({ t: 'fileend' }));
+    }
+    ch.send(JSON.stringify({ t: 'done' }));
+    if (bytes > 2e6) toast(view, '호스트로 보냈습니다', 4000);
+    return true;
+  } catch (e) {
+    window.__rd.xfer.inFailed++;
+    toast(view, '호스트로 보내지 못했습니다', 5000);
+    try { ch.close(); } catch {}
+    return false;
+  } finally { putting = false; }
+}
+// The host's answer once it has handed the files over.
+function gotPut(m) {
+  const v = putView && !putView.win.closed ? putView : mainView;
+  if (m.state === 'done') {
+    window.__rd.xfer.inDone++;
+    window.__rd.xfer.inHow = String(m.how || '');
+    const n = Number(m.n) || 0;
+    toast(v, m.how === 'dropped' ? `파일 ${n}개를 놓았습니다` : m.how === 'pasted' ? `파일 ${n}개를 붙여 넣었습니다`
+      : m.how === 'clipboard' ? `파일 ${n}개를 호스트의 클립보드에 올렸습니다. 넣을 곳에서 Ctrl+V를 누르세요`
+      : m.how === 'staged' ? `파일 ${n}개를 받았습니다 (시험 모드라 놓지 않음)` : '호스트에서 파일을 놓지 못했습니다', m.how === 'clipboard' ? 8000 : 4000);
+  } else if (m.state === 'error') {
+    window.__rd.xfer.inFailed++;
+    toast(v, '호스트에서 파일을 받지 못했습니다' + (m.why === 'toobig' ? ' — 너무 많거나 큽니다' : ''), 5000);
+  }
+}
+
 // 1:1 mode larger than the window: pushing the pointer against an edge pans the picture.
 function edgePan(view, ev) {
   if (typeof view.sel !== 'number' || view.fit !== '1:1' || !view.panes[0]) { view.panDir = null; return; }
@@ -685,6 +806,29 @@ function attachPointer(view, pane) {
     const k = ev.deltaMode === 1 ? 33 : ev.deltaMode === 2 ? 400 : 1;
     send({ t: 'mw', dx: ev.deltaX * k, dy: ev.deltaY * k });
   }, { passive: false });
+  // Files dragged over the picture from this PC: the host's pointer follows; letting go drops them there.
+  let overAt = 0;
+  const filesIn = (ev) => !READONLY && ev.dataTransfer && [...ev.dataTransfer.types].includes('Files');
+  const over = (ev) => {
+    if (!filesIn(ev)) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'copy';
+    if (performance.now() - overAt > 30 && !window.__rd.stillOver) { overAt = performance.now(); const p = here(ev); if (p) queueMove(view, p, 0); }
+  };
+  v.addEventListener('dragenter', over);
+  v.addEventListener('dragover', over);
+  v.addEventListener('drop', (ev) => {
+    if (!filesIn(ev)) return;
+    ev.preventDefault();
+    const p = here(ev);
+    if (!p) return;
+    if (!window.__rd.stillOver) queueMove(view, p, 0);
+    dropEntries(ev.dataTransfer).then((got) => upload(view, 'drop', p, got)).catch((e) => {
+      window.__rd.xfer.inFailed++;
+      window.__rd.xfer.inWhy = String(e && (e.name || e.message) || 'error').slice(0, 40);
+      toast(view, '놓은 파일을 읽지 못했습니다', 5000);
+    });
+  });
   for (const t of ['contextmenu', 'auxclick', 'dragstart']) v.addEventListener(t, (ev) => ev.preventDefault());
 }
 
@@ -741,6 +885,15 @@ function attachKeys(view) {
     if (local()) return;
     ev.preventDefault();
     window.__rd.pastes++;
+    const pasted = ev.clipboardData ? [...ev.clipboardData.files] : [];
+    if (pasted.length && !READONLY) {
+      // Files on this PC's clipboard: they go onto the host's clipboard and the host presses Ctrl+V
+      // itself once they are there, so the held paste key is not sent.
+      clearTimeout(view.pasteTimer);
+      view.pasteKey = null;
+      upload(view, 'paste', null, { files: pasted.map((f) => ({ file: f, rel: f.name })), dirs: [] });
+      return;
+    }
     const text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
     if (text && text.length <= CLIP_MAX && text !== lastClip) { lastClip = text; pendingClip = null; send({ t: 'clip', s: text }); }
     flushPaste();
@@ -1280,6 +1433,7 @@ function onHostMessage(data) {
     if (say) for (const v of liveViews()) toast(v, say, 10000);
   }
   else if (m.t === 'dragdata') gotDragData(m);
+  else if (m.t === 'put') gotPut(m);
   else if (m.t === 'clip' && typeof m.s === 'string' && m.s.length <= CLIP_MAX) gotClip(m.s);
   else if (m.t === 'bye') disconnect('호스트에서 연결을 종료했습니다.');
   else if (m.t === 'renew') {

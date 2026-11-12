@@ -56,8 +56,11 @@ self-test, opens a view-only client in their default browser).
   it only as `native/build.js` wrote it, in the same commit as the `capture.cpp` it was built from.
   The self-test fails when the two do not match. Never commit a DLL from anywhere else.
 - **Do not inject input on the user's machine as a test** beyond what `--selftest` does (it injects
-  none). Stray clicks and keystrokes land in whatever the user has open. `--dragout-check` does
-  inject (into an Explorer window it opens itself), so run it only after the user agreed.
+  none). Stray clicks and keystrokes land in whatever the user has open. `--dragout-check` and
+  `--dropin-check` do inject (into Explorer windows they open themselves), so run them only after the
+  user agreed. Their press points are verified with UI Automation and the drop point with the window
+  handle before anything is pressed or let go: once, an unverified point fell on Explorer's navigation
+  pane and a real folder of the user's was dragged (nothing was changed; see Gotchas).
 - Do not commit `node_modules/`, `tools/`, `dist/`, or any `config.json` (see `.gitignore`).
 
 ## Gotchas
@@ -116,6 +119,33 @@ self-test, opens a view-only client in their default browser).
   the drop, clicks once at the drop point and presses Ctrl+V. That click and key press are the only
   input the client app ever injects.
 
+- **Files dragged or pasted in (client -> host).** The page uploads them on an `upload` channel;
+  `main.js` writes them under `%TEMP%\my-remote-in\<id>` (asynchronously: input shares that thread)
+  and then drops them for real where they were let go: `so_drop` in `host/bin/shellops.dll`
+  (`native/shellops.cpp`) runs an OLE drag of the shell's own data object for the items, so a folder
+  window, a folder icon, the desktop, a mail or chat window each react as to a local drop. Things
+  that had to be found out (with `--dropin-check` and a scratch drop test): targets take nothing
+  from a drag without a button held, and the drag loop reads the REAL button state (not the thread's
+  key state, not the posted message), so the left button is pressed onto an 8x8, alpha-1 window of
+  ours under the pointer (which then becomes click-through) - the program under the pointer never
+  gets a click; Explorer's item view answers only after the pointer moves, so the pointer goes one
+  pixel right and back every 20 ms while the loop holds the mouse (posted fake moves carry no
+  position and made targets answer for the wrong point); the button is let go after the target
+  accepted twice (or after 0.6 s: refused) and the drop follows. A name clash makes Explorer ask
+  Replace/Skip, and `so_drop` waits for that like a local drop would. When nothing takes the files
+  (or the person clicked or typed since the drop), they go onto the host's clipboard instead; a paste
+  (Ctrl+V with files on the client's clipboard; Chromium hands them over in the paste event) puts them
+  on the host's clipboard and presses Ctrl+V. Folders: `DataTransferItem.getAsFileSystemHandle()`
+  never answered for a folder in the client app (no file-system permission is granted), so after
+  1.5 s the older entries API is used; in one case that threw `InvalidStateError` (a real folder with
+  a `.cache` inside), then only plain files go and the page says so.
+- **The drop-in check once dragged a real folder of the user's.** Explorer scrolls its list sideways
+  while something is dragged past its edge; a press point computed as "item left + 40 px" then lay on
+  the navigation pane, which showed the user's `서버` folders, and that folder was dragged (the read
+  failed before anything was sent; nothing was changed). A second time the drop point was not the
+  client window and a file was dropped onto an empty Notepad, which said "file not found". Hence the
+  verified press points and the window-handle check before letting go (`dragcheck.js`).
+
 - **A display with Windows HDR on is captured wrong.** Desktop Duplication hands over the desktop after
   Windows raised SDR content to HDR brightness and clipped it at SDR white, so the picture is brighter
   and the light tones are plain white (measured: linear gain 3, everything above ~170/255 clipped). The
@@ -162,6 +192,7 @@ Run from `host/` with Electron's env var cleared.
 | `node native/build.js user@host[:folder]` | Builds the native modules on a Linux machine with mingw-w64: `host/bin/capture.dll` + `capture.dll.json` (commit them with the source), `tools/native/capprobe.dll`. After a change in `native/` |
 | `npm run bench -- --native-probe --capture-probe ...` | Bench with a native observer of the same display: reports when the picture was on the host's own screen and how long after that the capturer in use had it. Needs `tools/native/capprobe.dll` |
 | `electron . --selftest --dragout-check` | Only real drags out of a real Explorer window this check opens on a temp folder (`dragcheck.js`): A straight on the host, B and C through a client window running the real page in the client app's shell (held outside; let go at once, before Explorer started its drag). INJECTS INPUT for about half a minute, so only with the user's agreement; skipped when the clipboard holds more than text, which is put back |
+| `electron . --selftest --dropin-check` | Only real drags IN (`dragcheck.js runIn`): from an Explorer window on the second display onto a client window's picture of the first, dropped by the host into another Explorer window (empty space; a folder icon; a whole folder). Needs two displays. INJECTS INPUT for about half a minute: only with the user's agreement |
 | `electron . --selftest --clip-check` | Same, plus putting two files on this PC's clipboard and reading them back. Only runs when the clipboard holds nothing or plain text, which is put back |
 | `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first |
 | `npm run bench -- --net=direct,home,narrow,wifi --try=old,base` | Measures delay and smoothness on this PC for the given link conditions and settings, prints a table (see "Performance"). `--picture-test=quality` measures picture quality instead (a window opening, a window being dragged, scrolling); `--snapshot` saves what the client showed next to what was drawn. About 45 s per run. Shows a test picture on one display and a small window on another for that time; they never take focus and no input is injected, but tell the user before a long series |
@@ -190,6 +221,9 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/host.html`, `host/host.js` | Host UI and the WebRTC side: capture, encoding control, data-channel routing |
 | `native/capture.cpp` | The native screen capturer (DXGI Desktop Duplication) |
 | `host/bin/capture.dll`, `capture.dll.json` | That capturer built by `native/build.js` (stripped, no time stamp: the same source and compiler give the same file), and the record of the source hash, DLL hash, compiler and command. Committed. The host loads it when it is there; without it the engine's capturer is used |
+| `native/shellops.cpp`, `host/bin/shellops.dll` (+ `.json`) | `so_drop`: drops files onto whatever is under the pointer as a real drag-and-drop (see Gotchas). Committed like `capture.dll` |
+| `host/files.js` | Safe names and paths for files from the other side (`stagedPath` never leaves its folder), sweeping old transfers |
+| `host/dragcheck.js` | The opt-in real-input checks `--dragout-check` and `--dropin-check` |
 | `native/capprobe.cpp` | Bench only: watches a display natively and reports when each bench frame was presented and handed over |
 | `native/build.js` | Sends the sources in `native/` to a Linux machine, builds them there with mingw-w64 and brings the DLLs back: `capture.dll` (and its record) into `host/bin`, the rest into `tools/native` |
 | `host/input.js` | Win32 through koffi FFI: `SendInput`, cursor shape and picture, hiding/restoring the system cursors |
@@ -249,6 +283,15 @@ Data channel `input` (JSON text):
 | host -> client | `others` | `crd`: a Chrome Remote Desktop session is connected to the host as well (`remoting_desktop.exe` runs); `outline`: the host drags windows as an outline only. Checked every 10 s, sent when it changes; the client shows a warning |
 | host -> client | `bye` | Deliberate close; the client must not auto-reconnect |
 | host -> client | `renew` | Host monitors changed; the client reconnects at once and keeps its windows |
+
+Data channel `upload` (client -> host, opened by the client per transfer, ordered): text
+`{t:'begin', mode:'drop'|'paste', at:{d,x,y}|null}`, `{t:'dir', name}` for empty folders, per file
+`{t:'file', name, size}` + binary pieces of at most 60000 + `{t:'fileend'}`, then `{t:'done'}`. Names
+may be paths ('folder/sub/file'); the host makes every part safe and keeps them inside the transfer's
+folder, refuses more than announced, 5000 files or 2 GB. The host answers on `input` with
+`{t:'put', state:'done', how:'dropped'|'pasted'|'clipboard'|'staged'|'none', n, why}` or
+`{t:'put', state:'error', why}`. A drop goes where it was let go unless the person clicked or typed
+since (`md`/`kd` after `begin`): then onto the clipboard.
 
 Data channel `file` (host -> client, opened by the host per transfer, ordered): text `{t:'file', id, name, size}`,
 then the bytes in binary messages of at most 60000, text `{t:'fileend', id}`; an empty folder of a
@@ -424,6 +467,15 @@ way through a client window in the app's shell, held outside and let go at once,
 in the Explorer folder it was let go over (the folder resolved through the shell). Not verified:
 text dragged out of an editor, the client app's click-and-paste into another program, a real second
 PC as the client, Windows 11 tabbed Explorer.
+
+Verified for files dragged or pasted in: the upload channel with folders, hostile names and a file
+that sends more than announced (self-test); `so_drop` into an Explorer folder, onto a folder icon and
+onto the window frame, with a name clash raising Explorer's own Replace/Skip (scratch test, real
+Explorer); the whole way with real drags from Explorer onto a client window in the app's shell,
+dropped by the host into another Explorer window, its folder icon, and a whole folder (`--dropin-check`);
+Chromium handing over files copied in Explorer in a paste event. Not verified: dropping into other
+programs (mail, chat, browser upload fields), the desktop, an elevated target (Windows blocks it),
+a paste into Explorer through the host, a real second PC, folders whose reading throws.
 
 Verified by the self-test: the arrangement rules, applying an arrangement (two monitors together, an
 empty screen), the panel showing every monitor live, and a drag and a click done with synthetic pointer

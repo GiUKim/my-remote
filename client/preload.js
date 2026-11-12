@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 // Seen by the client page as window.mrShell; its presence tells the page it runs in the app.
 contextBridge.exposeInMainWorld('mrShell', {
@@ -12,4 +12,6 @@ contextBridge.exposeInMainWorld('mrShell', {
   fileChunk: (id, bytes) => ipcRenderer.invoke('shell:fileChunk', id, bytes),
   fileEnd: (id) => ipcRenderer.invoke('shell:fileEnd', id),
   dropFiles: (id, ids, group) => ipcRenderer.invoke('shell:dropFiles', id, ids, group),
+  // Where a file or folder dropped on the page is on this PC (for reading a dropped folder here).
+  pathFor: (file) => { try { return webUtils.getPathForFile(file) || ''; } catch { return ''; } },
 });

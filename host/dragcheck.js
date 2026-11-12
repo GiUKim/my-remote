@@ -88,12 +88,135 @@ async function explorerWindow(dir) {
   const out = await ps(`$t=[DateTime]::Now.AddSeconds(12); do { foreach($w in (New-Object -ComObject Shell.Application).Windows()){ try { if($w.Document.Folder.Self.Path -eq '${dir.replace(/'/g, "''")}'){ [int64]$w.HWND; exit } } catch {} }; Start-Sleep -Milliseconds 300 } while([DateTime]::Now -lt $t)`);
   return Number(out) || 0;
 }
-// Where an item whose name starts with `prefix` is on the screen in that window (UI Automation, read-only).
+// Where to press on an item whose name starts with `prefix` in that window's file list (UI
+// Automation, read-only). The point lies in the VISIBLE part of the list (Explorer scrolls the list
+// sideways when something is dragged past its edge, and a point computed from the item alone then
+// fell on the navigation pane, which shows the user's own folders), and the item found at that
+// point is checked to be this item. Null when that cannot be made sure of: then nothing is pressed.
 async function itemRect(hwnd, prefix) {
-  const out = await ps(`Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes; $A=[System.Windows.Automation.AutomationElement]; $root=$A::FromHandle([IntPtr]${hwnd}); $c=New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty,[System.Windows.Automation.ControlType]::ListItem); $t=[DateTime]::Now.AddSeconds(8); do { foreach($e in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$c)){ $n=$e.Current.Name; if($n -like '${prefix}*' -and $n -notlike '*(*'){ $r=$e.Current.BoundingRectangle; if($r.Width -gt 0){ '{0},{1},{2},{3}' -f [int]$r.X,[int]$r.Y,[int]$r.Width,[int]$r.Height; exit } } }; Start-Sleep -Milliseconds 300 } while([DateTime]::Now -lt $t)`);
-  const m = /^(-?\d+),(-?\d+),(\d+),(\d+)/.exec(out);
-  return m ? { x: +m[1], y: +m[2], w: +m[3], h: +m[4] } : null;
+  const out = await ps(`Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes,WindowsBase; $A=[System.Windows.Automation.AutomationElement]; $root=$A::FromHandle([IntPtr]${hwnd});
+    $c=New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty,[System.Windows.Automation.ControlType]::ListItem); $v=New-Object System.Windows.Automation.PropertyCondition($A::ClassNameProperty,'UIItemsView');
+    $t=[DateTime]::Now.AddSeconds(8); do { $list=$root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$v); if($list){ $lr=$list.Current.BoundingRectangle;
+      foreach($e in $list.FindAll([System.Windows.Automation.TreeScope]::Descendants,$c)){ $n=$e.Current.Name; if($n -like '${prefix}*' -and $n -notlike '*(*'){ $r=$e.Current.BoundingRectangle;
+        if($r.Width -gt 0){ $x=[Math]::Max($r.X + 40, $lr.X + 12); $x=[Math]::Min($x, $r.X + $r.Width - 8, $lr.X + $lr.Width - 24); $y=$r.Y + $r.Height/2;
+          if($y -gt $lr.Y + 4 -and $y -lt $lr.Y + $lr.Height - 20){ $hit=$A::FromPoint((New-Object System.Windows.Point($x,$y))); $w=[System.Windows.Automation.TreeWalker]::ControlViewWalker;
+            while($hit -and $hit.Current.ControlType -ne [System.Windows.Automation.ControlType]::ListItem){ $hit=$w.GetParent($hit) }
+            if($hit -and $hit.Current.Name -eq $n){ '{0},{1},{2},{3},{4},{5}' -f [int]$r.X,[int]$r.Y,[int]$r.Width,[int]$r.Height,[int]$x,[int]$y; exit } } } } } }; Start-Sleep -Milliseconds 300 } while([DateTime]::Now -lt $t)`);
+  const m = /^(-?\d+),(-?\d+),(\d+),(\d+),(-?\d+),(-?\d+)/.exec(out);
+  return m ? { x: +m[1], y: +m[2], w: +m[3], h: +m[4], px: +m[5], py: +m[6] } : null;
 }
+
+// `electron . --selftest --dropin-check`: files dragged IN, for real. A real drag (injected input)
+// from an Explorer window on the second display onto a client window's picture of the first one;
+// the page uploads the files and the host drops them where they were let go in the picture:
+//   D. onto the empty space of another Explorer window (a file),
+//   E. onto a folder icon in that window (a file: it must land inside that folder),
+//   F. a whole folder onto the empty space.
+// The client window does not move the host's pointer while files are dragged over it (both
+// pointers are the same one on one PC). INJECTS INPUT for about half a minute: ask first.
+exports.runIn = async ({ check, info, cfg, buildClientHtml }) => {
+  const displays = screen.getAllDisplays(), prim = screen.getPrimaryDisplay(), other = displays.find((d) => d.id !== prim.id);
+  if (!other) { info('drop-in check skipped: it needs a second display'); return; }
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-dropin-')), src = path.join(base, 'src'), dst = path.join(base, 'dst');
+  fs.mkdirSync(path.join(src, 'in-dir', 'deeper'), { recursive: true });
+  fs.mkdirSync(path.join(dst, 'sub'), { recursive: true });
+  const content = { 'in-a.txt': crypto.randomBytes(30000).toString('hex'), 'in-b.txt': crypto.randomBytes(20000).toString('hex'), x: crypto.randomBytes(9000).toString('hex') };
+  fs.writeFileSync(path.join(src, 'in-a.txt'), content['in-a.txt']);
+  fs.writeFileSync(path.join(src, 'in-b.txt'), content['in-b.txt']);
+  fs.writeFileSync(path.join(src, 'in-dir', 'deeper', 'x.txt'), content.x);
+  const rects = displays.map((d) => screen.dipToScreenRect(null, d.bounds));
+  input.setMonitors(rects);
+  const at = (px, py) => {
+    const i = rects.findIndex((r) => px >= r.x && px < r.x + r.width && py >= r.y && py < r.y + r.height);
+    return i < 0 ? null : { d: i, x: (px - rects[i].x) / (rects[i].width - 1), y: (py - rects[i].y) / (rects[i].height - 1) };
+  };
+  const send = (o) => input.handle(JSON.stringify(o));
+  const home = { x: 0, y: 0 }, hadHome = GetCursorPos(home);
+  const RECTS = koffi.struct('DC_RECT2', { left: 'long', top: 'long', right: 'long', bottom: 'long' });
+  const GetWindowRect = user32.func('GetWindowRect', 'bool', ['uintptr_t', koffi.out(koffi.pointer(RECTS))]);
+  let hwndT = 0, hwndS = 0, cw = null, pressed = false;
+  try {
+    execFile('explorer.exe', [dst], () => {});
+    hwndT = await explorerWindow(dst);
+    execFile('explorer.exe', [src], () => {});
+    hwndS = await explorerWindow(src);
+    if (!hwndT || !hwndS) { check('drop-in check: the Explorer windows open', false, `${hwndT} ${hwndS}`); return; }
+    const p = rects[displays.findIndex((d) => d.id === prim.id)], o = rects[displays.findIndex((d) => d.id === other.id)];
+    ShowWindow(hwndT, 9); SetWindowPos(hwndT, -1, p.x + 160, p.y + 140, 960, 640, 0x0040);
+    ShowWindow(hwndS, 9); SetWindowPos(hwndS, -1, o.x + 20, o.y + 120, 640, 520, 0x0040);
+    const shell = require('../client/shell');
+    const page = path.join(os.tmpdir(), `myremote-dropin-client-${process.pid}.html`);
+    fs.writeFileSync(page, buildClientHtml());
+    cw = new BrowserWindow({ show: false, focusable: false, x: other.bounds.x + 700, y: other.bounds.y + 120, width: 900, height: 600, alwaysOnTop: true, webPreferences: { preload: shell.PRELOAD, backgroundThrottling: false } });
+    shell.attach(cw);
+    await cw.loadFile(page, { hash: `k=${cfg.key}&auto` });
+    cw.showInactive();
+    const cj = (code) => cw.webContents.executeJavaScript(code);
+    let st = null;
+    for (let i = 0; i < 40; i++) { await sleep(500); st = await cj(`({ s: window.__rd.state, f: window.__rd.frames })`); if (st.s === 'connected' && st.f > 20) break; }
+    if (!st || st.s !== 'connected') { check('drop-in check: the client window connects', false, JSON.stringify(st)); return; }
+    const tr = { left: 0, top: 0, right: 0, bottom: 0 };
+    GetWindowRect(hwndT, tr);
+    const mi = await cj(`monitors.findIndex((m) => ${(tr.left + tr.right) >> 1} >= m.x && ${(tr.left + tr.right) >> 1} < m.x + m.width && ${(tr.top + tr.bottom) >> 1} >= m.y && ${(tr.top + tr.bottom) >> 1} < m.y + m.height)`);
+    await cj(`window.__rd.stillOver = true; window.__rd.keepFiles = true; setSel(mainView, ${mi}); window.__dropLog = [];
+      for (const t of ['dragenter', 'drop']) window.addEventListener(t, (e) => window.__dropLog.push(t + ' ' + e.target.tagName + (e.target.id ? '#' + e.target.id : '') + ' ' + Math.round(e.clientX) + ',' + Math.round(e.clientY)), true); 1`);
+    await sleep(1500);
+    const g = await cj(`(() => { const r = mainView.panes[0].video.getBoundingClientRect(), m = monitors[${mi}]; return { left: r.left, top: r.top, w: r.width, h: r.height, mx: m.x, my: m.y, mw: m.width, mh: m.height }; })()`);
+    const cb = cw.getContentBounds(), cbp = screen.dipToScreenRect(cw, cb);
+    // Where a point of the host's screen is shown in the client window, on this PC's screen.
+    const shown = (px, py) => ({ x: Math.round(cbp.x + (g.left + ((px - g.mx) / (g.mw - 1)) * g.w) * (cbp.width / cb.width)), y: Math.round(cbp.y + (g.top + ((py - g.my) / (g.mh - 1)) * g.h) * (cbp.height / cb.height)) });
+    // A real drag with the mouse: press on the item in the source window, carry it onto the picture, let go.
+    const nh = cw.getNativeWindowHandle(), cwHwnd = nh.length >= 8 ? Number(nh.readBigUInt64LE(0)) : nh.readUInt32LE(0);
+    const rootAt = (pt) => { const leaf = WindowFromPoint(pt); return leaf ? Number(GetAncestor(leaf, 2)) : 0; };
+    const dragOnto = async (label, prefix, hostX, hostY, expect) => {
+      const r = await itemRect(hwndS, prefix);
+      if (!r) { check(`${label}: ${prefix} is found in the visible list`, false, 'nothing was pressed'); return; }
+      const s = { x: r.px, y: r.py }, c = shown(hostX, hostY);
+      cw.moveTop();
+      await sleep(150);
+      if (rootAt(s) !== Number(hwndS)) { check(`${label}: nothing covers the source item`, false, classOf(rootAt(s)) + '; nothing was pressed'); return; }
+      // The drop point must be this test's client window, or a real drop would land in whatever program is there.
+      if (rootAt(c) !== cwHwnd) { check(`${label}: the client window is where the file is to be let go`, false, `${classOf(rootAt(c))} is there; nothing was pressed`); return; }
+      const x0 = await cj(`({ ...window.__rd.xfer })`);
+      send({ t: 'mm', ...at(s.x, s.y), h: 0 }); await sleep(200);
+      send({ t: 'md', b: 0, ...at(s.x, s.y) }); pressed = true; await sleep(120);
+      for (let k = 1; k <= 24; k++) { const q = at(Math.round(s.x + ((c.x - s.x) * k) / 24), Math.round(s.y + ((c.y - s.y) * k) / 24)); if (q) send({ t: 'mm', ...q, h: 1 }); await sleep(35); }
+      for (let k = 0; k < 6; k++) { send({ t: 'mm', ...at(c.x + (k & 1), c.y), h: 1 }); await sleep(40); }
+      const underRoot = rootAt(c), drag = input.dragging();
+      if (underRoot !== cwHwnd) {
+        input.tap(['Escape']); // end the drag without a drop, then let go
+        await sleep(150);
+        send({ t: 'mu', b: 0, ...at(c.x, c.y) }); pressed = false;
+        check(`${label}: the client window is under the pointer when letting go`, false, `${classOf(underRoot)} was there; the drag was cancelled`);
+        return;
+      }
+      send({ t: 'mu', b: 0, ...at(c.x, c.y) }); pressed = false;
+      info(`${label}: source ${s.x},${s.y} -> picture ${c.x},${c.y}; Explorer dragging before letting go: ${drag}`);
+      let x = null;
+      for (let i = 0; i < 60; i++) { await sleep(250); x = await cj(`({ ...window.__rd.xfer })`); if (x.inDone > x0.inDone || x.inFailed > x0.inFailed) break; }
+      await sleep(1200);
+      info(`${label}: page saw ${JSON.stringify(await cj(`window.__dropLog.splice(0)`))}; read ${JSON.stringify(await cj(`window.__rd.lastDrop || null`))}; why ${await cj(`window.__rd.xfer.inWhy || ''`)}`);
+      const ok = x && x.inDone > x0.inDone && x.inHow === 'dropped' && expect();
+      check(`${label}: the dragged-in file lands where it was let go on the host`, ok, JSON.stringify({ how: x && x.inHow, inStart: x && x.inStart - x0.inStart, done: x && x.inDone - x0.inDone, failed: x && x.inFailed - x0.inFailed }));
+    };
+    await dragOnto('D (empty space)', 'in-a', tr.right - 140, tr.bottom - 100, () => fs.existsSync(path.join(dst, 'in-a.txt')) && fs.readFileSync(path.join(dst, 'in-a.txt'), 'utf8') === content['in-a.txt']);
+    const sub = await itemRect(hwndT, 'sub');
+    if (sub) await dragOnto('E (onto a folder icon)', 'in-b', sub.px, sub.py, () => fs.existsSync(path.join(dst, 'sub', 'in-b.txt')) && fs.readFileSync(path.join(dst, 'sub', 'in-b.txt'), 'utf8') === content['in-b.txt']);
+    else check('E: the folder icon is found', false, '');
+    await dragOnto('F (a folder)', 'in-dir', tr.right - 140, tr.bottom - 100, () => fs.existsSync(path.join(dst, 'in-dir', 'deeper', 'x.txt')) && fs.readFileSync(path.join(dst, 'in-dir', 'deeper', 'x.txt'), 'utf8') === content.x);
+  } catch (e) {
+    check('drop-in check ran', false, e.stack || e.message);
+  } finally {
+    if (pressed) input.buttonUp(0);
+    input.reset();
+    if (cw && !cw.isDestroyed()) cw.destroy();
+    if (hadHome && at(home.x, home.y)) send({ t: 'mm', ...at(home.x, home.y) });
+    for (const h of [hwndT, hwndS]) if (h && IsWindow(h)) { SetWindowPos(h, -2, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); PostMessageW(h, 0x0010, 0, 0); }
+    try { fs.rmSync(path.join(os.tmpdir(), `myremote-dropin-client-${process.pid}.html`), { force: true }); } catch {}
+    await sleep(800);
+    for (let i = 0; i < 20; i++) { try { fs.rmSync(base, { recursive: true, force: true }); break; } catch { await sleep(250); } }
+  }
+};
 
 exports.run = async ({ check, info, dragOut, closeDragFiles, cfg, buildClientHtml }) => {
   // The clipboard is put back afterwards; that is only possible for text (plain, HTML, RTF).
@@ -115,8 +238,8 @@ exports.run = async ({ check, info, dragOut, closeDragFiles, cfg, buildClientHtm
   // Finds a test file in the Explorer window and makes sure nothing covers it.
   const target = async (prefix) => {
     const r = await itemRect(hwnd, prefix);
-    if (!r) { check(`drag-out check: ${prefix} is found in the Explorer window`, false, 'UI Automation did not find it'); return null; }
-    const cx = r.x + Math.min(Math.round(r.w / 2), 40), cy = r.y + Math.round(r.h / 2);
+    if (!r) { check(`drag-out check: ${prefix} is found in the Explorer window`, false, 'UI Automation did not find it in the visible list'); return null; }
+    const cx = r.px, cy = r.py;
     const leaf = WindowFromPoint({ x: cx, y: cy }), root = leaf ? GetAncestor(leaf, 2) : 0;
     if (Number(root) !== Number(hwnd) || !at(cx, cy)) {
       check('drag-out check: nothing covers the test file', false, `the window at ${cx},${cy} is ${classOf(root) || 'none'}; nothing was pressed`);

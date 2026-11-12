@@ -205,8 +205,61 @@ function onClientMessage(s, dc, data) {
     // Client-side measurements: keep them with ours in the local diagnostics log.
     if (data.length < 6000 && m.s && typeof m.s === 'object') api.diag({ client: m.s, host: s.lastHs || null });
   } else if (data.length < 500) {
+    if (m.t === 'md' || m.t === 'kd') s.putTouched = true; // see receiveUpload: no drop at an old place after this
     api.input(data);
   }
+}
+
+// Files dragged in (dropped on the picture) or pasted (Ctrl+V with files on the client's clipboard)
+// come on a channel of their own: {t:'begin', mode, at}, then {t:'dir', name} for empty folders,
+// {t:'file', name, size} + the bytes + {t:'fileend'} for each file, and {t:'done'}. main.js writes
+// them (put-*) and, when complete, hands them to the program under the pointer with a real drop,
+// or puts them on the clipboard (see putDone there). The answer goes back as {t:'put', state, ...}.
+function receiveUpload(s, ch) {
+  ch.binaryType = 'arraybuffer';
+  let gid = null, fid = null, mode = 'drop', at = null, failed = false, n = 0;
+  let queue = Promise.resolve();
+  const fail = (why) => {
+    if (failed) return;
+    failed = true;
+    txTo(s, { t: 'put', state: 'error', why });
+    if (gid) api.putAbort(gid);
+    log('받기 실패: ' + why);
+    try { ch.close(); } catch {}
+  };
+  const step = async (data) => {
+    if (failed) return;
+    if (typeof data !== 'string') {
+      if (!fid || !(await api.putChunk(fid, new Uint8Array(data)))) fail('write');
+      return;
+    }
+    const m = JSON.parse(data);
+    if (m.t === 'begin') {
+      gid = await api.putBegin();
+      if (!gid) return fail('begin');
+      mode = m.mode === 'paste' ? 'paste' : 'drop';
+      at = m.at && Number.isInteger(m.at.d) ? { d: m.at.d, x: +m.at.x, y: +m.at.y } : null;
+      s.putTouched = false;
+    } else if (m.t === 'dir') {
+      if (!gid || !(await api.putDir(gid, String(m.name)))) fail('dir');
+    } else if (m.t === 'file') {
+      fid = gid ? await api.putFile(gid, String(m.name), Number(m.size)) : null;
+      if (!fid) return fail('toobig');
+      n++;
+    } else if (m.t === 'fileend') {
+      if (!fid || !(await api.putEnd(fid))) return fail('size');
+      fid = null;
+    } else if (m.t === 'done') {
+      // A drop goes where it was let go - unless the person has clicked or typed since, then onto the clipboard.
+      const r = await api.putDone(gid, mode === 'drop' && !s.putTouched ? at : null, mode);
+      gid = null;
+      log(`받기: 파일 ${n}개 — ${r.how}${r.why ? ' (' + r.why + ')' : ''}`);
+      txTo(s, { t: 'put', state: 'done', how: r.how, n: r.n || n, why: r.why || '' });
+      try { ch.close(); } catch {}
+    }
+  };
+  ch.onmessage = (e) => { queue = queue.then(() => step(e.data)).catch((err) => fail(err && err.message ? err.message : 'error')); };
+  ch.onclose = () => { if (gid && !failed) { failed = true; api.putAbort(gid); } };
 }
 
 // The client let go of something it had dragged out of the picture: fetch it from this PC
@@ -326,6 +379,8 @@ async function startSession(hello) {
   const dc = (s.dc = pc.createDataChannel('input', { ordered: true }));
   dc.onmessage = (e) => onClientMessage(s, dc, e.data);
   dc.onopen = () => { if (session === s) startChannelTasks(s, dc); };
+  // Files the client drags or pastes in come on channels it opens (see receiveUpload).
+  pc.ondatachannel = (e) => { if (e.channel.label === 'upload' && session === s) receiveUpload(s, e.channel); else try { e.channel.close(); } catch {} };
 
   // The native capturer when it is there: its images carry no pointer, so nothing has to be hidden
   // on this PC. Otherwise the engine's capturer, with this PC's pointer hidden before capture
