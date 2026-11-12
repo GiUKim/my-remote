@@ -45,7 +45,7 @@ const DEFAULTS = {
   startBitrateMbps: 8,  // where the bandwidth estimate starts (it adapts from there)
   minBitrateMbps: 1,    // it never goes below this
   maxFps: 60,
-  refine: true,         // keep sending a still screen until it is fully sharp (AV1 only); costs about a frame of delay while things move
+  refine: true,         // true: send a still screen until it is fully sharp (AV1 only; adds about 15 ms of delay) | 'always': no added delay, but a still screen is sent continuously | false
   audio: true,          // send system sound
   clipboard: true,      // two-way text clipboard
   hideHostCursor: true, // while connected, hide the cursor on this PC so the video has no trailing cursor

@@ -145,10 +145,11 @@ const PROBE = `(() => {
 
 const CLIENT_STATS = `(async () => {
   const rep = await pc.getStats(), mid = monitors[__MON__].mid;
-  let o = null, pair = null;
+  let o = null, pair = null, audio = 0;
   rep.forEach((r) => {
+    if (r.type === 'inbound-rtp' && r.kind === 'audio') audio += r.packetsReceived || 0;
     if (r.type === 'inbound-rtp' && r.kind === 'video' && r.mid === mid) o = r;
-    if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') pair = r;
+    if (r.type === 'transport' && r.selectedCandidatePairId) pair = rep.get(r.selectedCandidatePairId) || pair;
   });
   return o && {
     framesReceived: o.framesReceived, framesDecoded: o.framesDecoded, framesDropped: o.framesDropped, keyFramesDecoded: o.keyFramesDecoded,
@@ -156,7 +157,7 @@ const CLIENT_STATS = `(async () => {
     totalDecodeTime: o.totalDecodeTime, totalProcessingDelay: o.totalProcessingDelay, totalAssemblyTime: o.totalAssemblyTime,
     freezeCount: o.freezeCount, totalFreezesDuration: o.totalFreezesDuration, packetsLost: o.packetsLost, packetsReceived: o.packetsReceived,
     nackCount: o.nackCount, pliCount: o.pliCount, bytesReceived: o.bytesReceived, decoder: o.decoderImplementation, w: o.frameWidth, h: o.frameHeight,
-    rtt: pair ? pair.currentRoundTripTime : null,
+    rtt: pair ? pair.currentRoundTripTime : null, audioPackets: audio,
   };
 })()`;
 
@@ -164,7 +165,7 @@ const quant = (a, p) => { if (!a.length) return null; const s = [...a].sort((x, 
 const r1 = (x) => (x == null || !isFinite(x) ? null : Math.round(x * 10) / 10);
 const dist = (a) => ({ n: a.length, p50: r1(quant(a, 0.5)), p95: r1(quant(a, 0.95)), max: r1(a.length ? Math.max(...a) : null) });
 
-function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon }) {
+function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon, cap, offH }) {
   // `drawn` is on the picture renderer's clock, `rows` on the client renderer's; bring both to this process's clock.
   const info = new Map(), burstStart = new Map();
   for (const [t, ph, cyc] of drawn) {
@@ -230,6 +231,25 @@ function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon }
     }
     out.sparse = { events: events.length, missed: events.length - lat.length, lat: dist(lat), toRecv: dist(toRecv), clientSide: dist(clientSide) };
   }
+  // capture: when each picture frame reached the encoder on the host (config captureProbe)
+  if (cap && cap.rows && offH) {
+    const first = new Map();
+    for (const [at, t] of cap.rows) if (!first.has(t)) first.set(t, at - offH.off);
+    const lat = [[], []];
+    let n = 0;
+    for (const [t, ph] of drawn) {
+      const e = info.get(t);
+      if (ph > 1 || !inWin(e.at) || !first.has(t)) continue;
+      lat[ph].push(first.get(t) - e.at);
+      n++;
+    }
+    const sp = dist(lat[0]), sc = dist(lat[1]);
+    out.capture = {
+      sparse: sp, scroll: sc, fmt: cap.fmt, frames: cap.n, unreadable: cap.bad, err: cap.err, fps: r1(cap.rows.length > 1 ? (cap.rows.length - 1) / ((cap.rows[cap.rows.length - 1][0] - cap.rows[0][0]) / 1000) : 0),
+      restScroll: r1(out.scroll.toRecv.p50 != null && sc.p50 != null ? out.scroll.toRecv.p50 - sc.p50 : null),
+      restSparse: r1(out.sparse.toRecv.p50 != null && sp.p50 != null ? out.sparse.toRecv.p50 - sp.p50 : null),
+    };
+  }
   // host: what the encoder and the bandwidth estimate did, overall and during scrolling only
   {
     const list = hs.filter((h) => h && h.mons && h.mons[mon]);
@@ -277,7 +297,7 @@ function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon }
       jitterTargetMs: r1(d('jitterBufferEmittedCount') ? d('jitterBufferTargetDelay') / d('jitterBufferEmittedCount') * 1000 : null),
       decodeMs: r1(fr ? d('totalDecodeTime') / fr * 1000 : null), processingMs: r1(fr ? d('totalProcessingDelay') / fr * 1000 : null),
       decoded: fr, dropped: d('framesDropped'), freezes: d('freezeCount'), freezeSecs: r1(d('totalFreezesDuration')), lost: d('packetsLost'), packets: d('packetsReceived'),
-      nack: d('nackCount'), pli: d('pliCount'), keyFrames: d('keyFramesDecoded'), decoder: cs1.decoder, res: cs1.w + 'x' + cs1.h, rttMs: cs1.rtt != null ? r1(cs1.rtt * 1000) : null,
+      audioPackets: d('audioPackets'), nack: d('nackCount'), pli: d('pliCount'), keyFrames: d('keyFramesDecoded'), decoder: cs1.decoder, res: cs1.w + 'x' + cs1.h, rttMs: cs1.rtt != null ? r1(cs1.rtt * 1000) : null,
     };
   }
   return out;
@@ -377,6 +397,51 @@ async function quality({ crops, drawn, pat, offP, offC, rect, snapshot }) {
   return out;
 }
 
+// The client on another machine (config `remote: { ssh: 'user@host', dir }`): bench-remote.js is
+// copied there and started over ssh under a virtual display, and this side drives it through the
+// ssh session's stdin/stdout. Signaling reaches this PC's relay through an ssh tunnel, so the only
+// thing that crosses the network between the two machines directly is the WebRTC traffic itself.
+// The other machine needs `<dir>/electron/electron` (an unpacked Electron release) and xvfb-run.
+function remoteClient() {
+  const { spawn, spawnSync } = require('child_process');
+  const R = B.remote, dir = R.dir || 'my-remote-dev', ssh = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10'];
+  const cp = spawnSync('scp', [...ssh, path.join(__dirname, 'bench-remote.js'), `${R.ssh}:${dir}/run/bench-remote.js`], { encoding: 'utf8', windowsHide: true });
+  if (cp.status !== 0) throw new Error('could not copy the client script to the other machine: ' + String(cp.stderr || cp.error).trim());
+  const port = new URL(C.server).port;
+  const opts = Buffer.from(JSON.stringify({ disableFeatures: B.peerDisableFeatures || [], trials: B.peerTrials || '', switches: B.peerSwitches || {} })).toString('base64');
+  const cmd = `cd ${dir} && exec xvfb-run -a -s '-screen 0 1920x1080x24' ./electron/electron run/bench-remote.js ${opts}`;
+  const child = spawn('ssh', [...ssh, '-o', 'ExitOnForwardFailure=yes', '-R', `${port}:127.0.0.1:${port}`, R.ssh, cmd], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const waiting = new Map();
+  let seq = 0, buf = '', errTail = '', dead = null, ready;
+  const readyP = new Promise((res, rej) => { ready = { res, rej }; });
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (s) => {
+    buf += s;
+    for (let i; (i = buf.indexOf('\n')) >= 0;) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!line.startsWith('@@RPC ')) continue;
+      let m;
+      try { m = JSON.parse(line.slice(6)); } catch { continue; }
+      if (m.ready) ready.res(true);
+      else if (m.event === 'target') ctl('/target', m.value).catch(() => {});
+      else { const w = waiting.get(m.id); if (w) { waiting.delete(m.id); if (m.ok) w.res(m.value); else w.rej(new Error(m.error)); } }
+    }
+  });
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (s) => { errTail = (errTail + s).slice(-3000); });
+  const end = (why) => { if (dead) return; dead = new Error(why + ': ' + errTail.trim().split('\n').slice(-4).join(' | ')); ready.rej(dead); for (const w of waiting.values()) w.rej(dead); waiting.clear(); };
+  child.on('error', (e) => end('ssh could not be started (' + e.message + ')'));
+  child.on('exit', (c) => end('the client on the other machine ended (code ' + c + ')'));
+  const call = (op, extra) => new Promise((res, rej) => {
+    if (dead) return rej(dead);
+    const id = ++seq;
+    waiting.set(id, { res, rej });
+    child.stdin.write(JSON.stringify({ id, op, ...extra }) + '\n');
+  });
+  return { ready: readyP, call, js: (code) => call('js', { code }), close: () => { try { child.stdin.end(); } catch {} setTimeout(() => { try { child.kill(); } catch {} }, 1500); } };
+}
+
 async function run() {
   const displays = screen.getAllDisplays().sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
   // Stay out of the way: prefer a display the pointer is not on, and not the primary one.
@@ -402,13 +467,21 @@ async function run() {
   // never be still for the capturer. (With a single display that cannot be avoided.)
   const CW = 320, CH = 200;
   const cd = displays.find((x) => x.id !== d.id && x.id !== cur) || displays.find((x) => x.id !== d.id) || d;
-  const cw = mk({ x: cd.bounds.x + cd.bounds.width - CW, y: cd.bounds.y + cd.bounds.height - CH, width: CW, height: CH });
-  cw.webContents.on('console-message', (_e, _l, m) => {
-    if (String(m).startsWith('BENCH-TARGET ')) ctl('/target', JSON.parse(String(m).slice(13))).catch(() => {});
-  });
-  await cw.loadFile(C.clientFile, { hash: 'k=' + C.key + '&ro' });
-  cw.showInactive();
-  const js = (code) => cw.webContents.executeJavaScript(code);
+  let js, remote = null;
+  if (B.remote) {
+    remote = remoteClient();
+    await remote.ready;
+    await remote.call('open', { html: fs.readFileSync(C.clientFile, 'utf8'), hash: 'k=' + C.key + '&ro', width: CW, height: CH });
+    js = remote.js;
+  } else {
+    const cw = mk({ x: cd.bounds.x + cd.bounds.width - CW, y: cd.bounds.y + cd.bounds.height - CH, width: CW, height: CH });
+    cw.webContents.on('console-message', (_e, _l, m) => {
+      if (String(m).startsWith('BENCH-TARGET ')) ctl('/target', JSON.parse(String(m).slice(13))).catch(() => {});
+    });
+    await cw.loadFile(C.clientFile, { hash: 'k=' + C.key + '&ro' });
+    cw.showInactive();
+    js = (code) => cw.webContents.executeJavaScript(code);
+  }
   if (C.proxyPort) await js(MUNGE.replace('__PORT__', String(C.proxyPort)));
   if (B.clientJs) await js(B.clientJs + '\n;0');
   await js(`mode = ${JSON.stringify(B.mode === 'smooth' ? 'smooth' : 'sharp')}; codec = ${JSON.stringify(B.codec || '')}; connect(); 1`);
@@ -429,16 +502,22 @@ async function run() {
     cell: Math.round(P.cell * d.scaleFactor), cells: 36, monW: phys.width, t0: C.t0, crop: d.scaleFactor === 1 ? CROP : null,
   })));
 
-  const clockOffset = async (wc) => {
+  // How far a page's clock is from this process's clock: the answer that came back fastest is the
+  // most trustworthy one. For a page on another machine the question travels through ssh, so more are asked.
+  const NOW = 'performance.timeOrigin + performance.now()';
+  const clockOffset = async (ask, n) => {
     let best = null;
-    for (let i = 0; i < 25; i++) {
-      const a = epoch(), r = await wc.executeJavaScript('performance.timeOrigin + performance.now()'), b = epoch();
+    for (let i = 0; i < n; i++) {
+      const a = epoch(), r = await ask(NOW), b = epoch();
       if (!best || b - a < best.rt) best = { rt: b - a, off: r - (a + b) / 2 };
     }
     return best;
   };
+  if (B.captureProbe) await ctl('/capprobe', { mon, x: (pat.getBounds().x - d.bounds.x) * d.scaleFactor, y: (pat.getBounds().y - d.bounds.y) * d.scaleFactor, cell: Math.round(P.cell * d.scaleFactor), cells: 36, monW: phys.width, t0: C.t0 });
   await sleep(B.warmup * 1000);
-  const offP = await clockOffset(pat.webContents), offC = await clockOffset(cw.webContents);
+  const offH = B.captureProbe ? await clockOffset(() => ctl('/hostnow'), 25) : null;
+  const offP = await clockOffset((c) => pat.webContents.executeJavaScript(c), 25), offC = await clockOffset(js, remote ? 80 : 25);
+  if (remote) await remote.call('cpu');
   const stats = CLIENT_STATS.replace('__MON__', String(mon));
   const cs0 = await js(stats);
   const hs = [await ctl('/hoststats')];
@@ -450,7 +529,7 @@ async function run() {
   const rows = await js('window.__bench.rows');
   const probe = await js('({ bad: window.__bench.bad, calls: window.__bench.calls, err: window.__bench.err, how: window.__bench.how, dbg: window.__bench.dbg, geo: window.__bench.geo })');
   const cpuOf = (list) => Math.round(list.reduce((a, p) => a + p.cpu.percentCPUUsage, 0) * 10) / 10;
-  const cpu = { host: await ctl('/cpu'), client: cpuOf(app.getAppMetrics()) };
+  const cpu = { host: await ctl('/cpu'), client: remote ? await remote.call('cpu') : cpuOf(app.getAppMetrics()) };
   if (B.snapshot) {
     // What the client actually shows: the picture's top-left part, once mid-scroll and once after 2.5 s of stillness.
     const phase = () => pat.webContents.executeJavaScript('window.__pat.drawn[window.__pat.drawn.length - 1][1]');
@@ -465,7 +544,8 @@ async function run() {
     await sleep(2500); await shot('still');
   }
   const pinfo = await pat.webContents.executeJavaScript('({ drawn: window.__pat.drawn, started: window.__pat.started, raf: window.__pat.raf, w: window.__pat.w, h: window.__pat.h })');
-  const res = analyze({ rows, drawn: pinfo.drawn, started: pinfo.started, hs, cs0, cs1, m0, m1, offP, offC, mon });
+  const cap = B.captureProbe ? await ctl('/caprows') : null;
+  const res = analyze({ rows, drawn: pinfo.drawn, started: pinfo.started, hs, cs0, cs1, m0, m1, offP, offC, mon, cap, offH });
   // The kept pieces of frames come over in batches (they are large), then are compared with what was drawn.
   const crops = [];
   for (const total = await js('window.__bench.crops.length'); crops.length < total;) crops.push(...(await js(`window.__bench.crops.slice(${crops.length}, ${crops.length + 30})`)));
@@ -473,9 +553,11 @@ async function run() {
   Object.assign(res.probe, probe);
   res.cpu = cpu; // percent of the whole machine (all cores), over the measured window, both including the picture window's process share
   res.setup = {
-    display: di + 1, hdr: isHdr(d), monitor: phys.width + 'x' + phys.height, picture: pinfo.w + 'x' + pinfo.h, clientWindowOnDisplay: displays.indexOf(cd) + 1,
+    display: di + 1, hdr: isHdr(d), monitor: phys.width + 'x' + phys.height, picture: pinfo.w + 'x' + pinfo.h, clientWindowOnDisplay: remote ? 0 : displays.indexOf(cd) + 1,
+    remote: remote ? await remote.call('info') : null,
     clockUncertaintyMs: r1((offP.rt + offC.rt) / 2), clockOffsetMs: r1(offC.off - offP.off),
   };
+  if (remote) remote.close();
   return res;
 }
 

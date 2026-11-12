@@ -108,8 +108,9 @@ function applyEncoding(s) {
 // refine: when the screen stops changing, the engine goes on sending the still picture until the
 // encoder reports that it is as good as it gets, then falls silent. Without it a still screen gets
 // a few frames a second, and a picture that changed all at once (a window opening) took 2.5 s to
-// become fully sharp in the bench; with it under a second. The price is about one frame of delay
-// while things move (the engine then releases frames on a fixed beat), hence the `refine` setting.
+// become fully sharp in the bench; with it under a second. The price is 13 to 16 ms of delay on
+// everything (the engine then releases frames on a fixed beat; measured between two machines),
+// hence the `refine` setting.
 // It needs an encoder that reports when it has settled: the AV1 encoder does; with the graphics
 // card's H.264 encoder it is left off.
 function capture(src, withAudio, refine) {
@@ -118,7 +119,10 @@ function capture(src, withAudio, refine) {
     minWidth: src.width, maxWidth: src.width, minHeight: src.height, maxHeight: src.height,
     maxFrameRate: cfg.maxFps,
   } };
-  if (refine) video.mandatory.minFrameRate = 0;
+  // 'always': the capturer hands over every frame it takes, changed or not (about 50 a second).
+  // No added delay and the fastest sharpening, but a still screen then costs about 0.7 Mbps and
+  // 0.4 of a processor core for every monitor on screen, for as long as the client is connected.
+  if (refine) video.mandatory.minFrameRate = refine === 'always' ? 20 : 0;
   return navigator.mediaDevices.getUserMedia({ audio: withAudio ? { mandatory: { chromeMediaSource: 'desktop' } } : false, video });
 }
 
@@ -244,7 +248,7 @@ async function startSession(hello) {
   s.cursorHidden = await api.hideCursor(true);
   if (session !== s) return;
   Object.assign(s, pickCodec(hello));
-  const refine = cfg.refine !== false && s.codec === 'AV1';
+  const refine = s.codec === 'AV1' ? (cfg.refine === 'always' ? 'always' : cfg.refine !== false) : false;
 
   let audio = false;
   for (let i = 0; i < sources.length; i++) {
@@ -257,8 +261,13 @@ async function startSession(hello) {
     if (session !== s) { stream.getTracks().forEach((t) => t.stop()); return; }
     s.streams.push(stream);
     s.videoSenders.push(pc.addTrack(stream.getVideoTracks()[0], stream));
+    // The sound goes out as a stream of its own. Sent in the same stream as the first monitor's
+    // picture, the receiver keeps the two in step (lip sync) by holding the picture back to the
+    // sound's buffering: measured between two machines, that monitor was 130 ms late whenever
+    // any sound was playing, and only that monitor. Working on a remote PC needs the picture at
+    // once more than it needs lip sync.
     const a = stream.getAudioTracks()[0];
-    if (a) pc.addTrack(a, stream);
+    if (a) pc.addTrack(a, new MediaStream([a]));
   }
   preferCodec(pc, s.codec);
 
@@ -307,7 +316,9 @@ async function startSession(hello) {
         impl = r.encoderImplementation || impl; codecId = r.codecId || codecId;
         if (r.qualityLimitationReason && r.qualityLimitationReason !== 'none') limit = r.qualityLimitationReason;
       }
-      if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') { rtt = r.currentRoundTripTime; avail = r.availableOutgoingBitrate || 0; const lc = rep.get(r.localCandidateId); kind = lc ? lc.candidateType : ''; }
+      // The pair in use. (Several pairs can be "nominated" when a machine has several addresses.)
+      const pair = r.type === 'transport' && r.selectedCandidatePairId ? rep.get(r.selectedCandidatePairId) : null;
+      if (pair) { rtt = pair.currentRoundTripTime; avail = pair.availableOutgoingBitrate || 0; const lc = rep.get(pair.localCandidateId); kind = lc ? lc.candidateType : ''; }
     });
     const codec = codecId && rep.get(codecId) ? rep.get(codecId).mimeType.replace('video/', '') : '';
     const now = performance.now();

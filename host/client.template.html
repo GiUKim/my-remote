@@ -1354,9 +1354,10 @@ setInterval(async () => {
       lost += r.packetsLost || 0; recv += r.packetsReceived || 0; freezes += r.freezeCount || 0; freezeDur += r.totalFreezesDuration || 0;
       dropped += r.framesDropped || 0; nack += r.nackCount || 0; pli += r.pliCount || 0; decoder = r.decoderImplementation || decoder;
     }
-    if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') {
-      rtt = r.currentRoundTripTime;
-      const rc = rep.get(r.remoteCandidateId), lc = rep.get(r.localCandidateId);
+    const pair = r.type === 'transport' && r.selectedCandidatePairId ? rep.get(r.selectedCandidatePairId) : null; // the pair in use
+    if (pair) {
+      rtt = pair.currentRoundTripTime;
+      const rc = rep.get(pair.remoteCandidateId), lc = rep.get(pair.localCandidateId);
       relay = (rc && rc.candidateType === 'relay') || (lc && lc.candidateType === 'relay');
     }
   });

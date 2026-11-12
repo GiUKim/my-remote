@@ -2,6 +2,7 @@
 //
 //   node bench-run.js [--net=direct,fiber,...] [--try=base,smooth,...] [--secs=24] [--repeat=1]
 //                     [--picture=1280x720] [--display=N] [--out=<dir>] [--set=<json>]
+//                     [--picture-test=delay|quality] [--snapshot] [--remote=user@host[:folder]]
 //
 // Every run starts its own isolated host (local relay, throwaway key, nothing leaves this PC).
 // --set merges a JSON object into every run's config (see bench.js for the fields).
@@ -27,6 +28,7 @@ const TRIES = {
   h264: { codec: 'H264' },
   h264hq: { codec: 'H264HQ' },              // H.264 on the graphics card with three times the bitrate
   av1: { codec: 'AV1' },
+  always: { cfg: { refine: 'always' } },      // a still screen is sent continuously (lowest delay, constant cost)
   norefine: { hostJs: '{ const c = capture; capture = (src, a) => c(src, a, false); }' }, // a still screen is not sent again and again until sharp
   // How it was before these were tuned: the engine's own transport settings, H.264, no upper probing limit.
   old: { codec: 'H264', trials: '', hostJs: '{ const h = hintBitrate; hintBitrate = (sdp, a, b) => h(sdp, a, b, 0); }' },
@@ -65,6 +67,9 @@ for (const n of nets) for (const t of tries) for (let i = 0; i < repeat; i++) {
   if (test.pattern) config.pattern = { ...test.pattern, ...(config.pattern || {}) };
   if (arg('picture', '')) { const [w, h] = arg('picture', '').split('x').map(Number); config.pattern = { ...(config.pattern || {}), w, h }; }
   if (arg('display', '')) config.display = Number(arg('display', '')) - 1;
+  // --remote=user@host[:folder] runs the client page on another machine, reached over ssh (see bench-peer.js).
+  if (arg('remote', '')) { const [ssh, dir] = arg('remote', '').split(':'); config.remote = { ssh, dir: dir || 'my-remote-dev' }; }
+  if (process.argv.includes('--capture-probe')) config.captureProbe = true; // also time when captured frames reach the encoder
   if (process.argv.includes('--snapshot')) config.snapshot = file; // <file>.scroll.png and <file>.still.png: what the client showed
   fs.writeFileSync(file + '.config.json', JSON.stringify(config));
   const r = spawnSync(electron, [__dirname, '--bench', '--bench-config=' + file + '.config.json'], { env, encoding: 'utf8', timeout: (config.secs + 160) * 1000 });

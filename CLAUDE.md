@@ -113,6 +113,7 @@ Run from `host/` with Electron's env var cleared.
 | `electron . --selftest --clip-check` | Same, plus putting two files on this PC's clipboard and reading them back. Only runs when the clipboard holds nothing or plain text, which is put back |
 | `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first |
 | `npm run bench -- --net=direct,home,narrow,wifi --try=old,base` | Measures delay and smoothness on this PC for the given link conditions and settings, prints a table (see "Performance"). `--picture-test=quality` measures picture quality instead (a window opening, a window being dragged, scrolling); `--snapshot` saves what the client showed next to what was drawn. About 45 s per run. Shows a test picture on one display and a small window on another for that time; they never take focus and no input is injected, but tell the user before a long series |
+| `npm run bench -- --remote=user@host --net=direct --try=base` | The same bench with the client page on another machine, reached over ssh: a real second machine and a real network instead of one PC. That machine needs `~/my-remote-dev/electron/` (an unpacked Electron release for its platform) and `xvfb-run`; signaling goes through an ssh tunnel, only the WebRTC traffic crosses the network directly. Add `--capture-probe` to split the delay into its parts. This sends the picture of one of this PC's displays to that machine, so the user must have agreed |
 | `npm run localtest` | Local trial: host window plus view-only client in the default browser |
 | `npm start` | The real host (connects to the signaling server). User-initiated only |
 | `npm run build-client` | Regenerates `../my-remote-client.html` (the loader) from `loader.template.html` and `signal.js` |
@@ -143,6 +144,7 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/build-client.js` | Builds both pages (`build`, `buildLoader`); the CLI writes the loader file |
 | `host/selftest.js` | Local ntfy-compatible relay and the self-test scenario |
 | `host/bench.js`, `host/bench-peer.js`, `host/bench-pattern.html` | The bench: host side, client side (its own Electron process) and the test picture |
+| `host/bench-remote.js` | The client side of a two-machine bench run; copied to the other machine and driven over ssh |
 | `host/netem.js` | UDP link emulator for the bench: delay, jitter, loss, rate limit with a bounded queue |
 | `host/bench-run.js` | Runs the bench over link conditions (`NETS`) and settings (`TRIES`) and prints one table |
 
@@ -269,6 +271,30 @@ Findings so far (i9-9900K, RTX 3060, three 1080p displays at 75 Hz, 1280x720 pic
   quantizer has a floor). The graphics card's
   H.264 encoder at three times the bitrate (`H264HQ`) gives 52 to 55 dB from the first frame on a link
   with room for it (fine on an emulated 200 Mbps link; on a 40 Mbps one the estimate collapsed and it showed 7 fps), so it is only ever an explicit choice.
+- Between two machines (host on this PC, client on a Linux server on another subnet of the same LAN,
+  1 ms round trip, client drawn in software under Xvfb), AV1, default settings: 50 fps shown, scroll
+  delay about 90 ms, typing delay about 85 ms. Split (`--capture-probe`): drawn on the host until the
+  frame reaches the encoder 35-40 ms (this includes the picture's own way to the host's screen, one
+  to two refresh intervals), from there until received by the client 24-29 ms, from received to the
+  client's screen about 26 ms.
+- Sound held the picture back: the system sound was sent in the same stream as the first monitor's
+  picture, so the receiver kept that monitor in step with the sound's buffering. With any sound
+  playing on the host, the first monitor was 130 ms later than the others (scroll delay 203 ms
+  instead of 87). The sound now goes out as its own stream (`startSession` in `host.js`). Found only
+  in the two-machine run; keep the two streams separate.
+- `refine` (`minFrameRate: 0`) costs 13-16 ms on everything: with it, encoder to client takes
+  24-29 ms, without it 8-12 ms. `minFrameRate` above 0 (config `refine: 'always'`) has no such cost
+  and sharpens fastest (42 dB after 0.5 s, 45 dB after 1 s), but the capturer then hands over every
+  frame, changed or not: about 50 fps, 0.7 Mbps and 0.4 of a core per still monitor, for as long as
+  the client is connected. Not the default for that reason; an idle cut-off (lower `maxFramerate`
+  when no input arrives and nothing moves) would make it one.
+- Frames can be routed through JavaScript without measurable delay: capture track ->
+  `MediaStreamTrackProcessor` -> `MediaStreamTrackGenerator` -> sender gave the same delay and quality
+  as the direct path (and, like `minFrameRate` > 0, delivers every frame). That is the place where
+  frames from a native capturer could be fed to the engine's encoder and transport.
+- Connection figures (round trip, available bitrate, relay or direct) must be read from the
+  transport's `selectedCandidatePairId`; a machine with several addresses has several "nominated"
+  pairs.
 - Not fixed: capture delivers 45-50 fps for 60 requested (the capturer spends at most half of each
   interval capturing); on a 6 Mbps link the estimate still collapses now and then when a scroll
   starts; `minFrameRate: 0`, the WGC capturer, 120 fps capture and turning the frame dropper off
@@ -306,8 +332,9 @@ empty screen), the panel showing every monitor live, and a drag and a click done
 events. Not verified: the arrangement panel opening windows on a real second client screen (browser or
 client app), HDR detection on any PC but this one, `H264HQ` on a real link.
 
-Not verified: anything in "Performance" on a real link between two networks (the bench is one PC with an
-emulated link), AV1 decoding speed on a client other than this PC, AV1 encoding load on a host with fewer cores,
+Verified between two machines on one LAN (see "Performance"): connecting across subnets without STUN,
+AV1 and H.264 decoding on a second machine, the delay and quality figures. Not verified: anything in
+"Performance" on a real link between two networks (home to office), AV1 decoding speed on a client other than this PC, AV1 encoding load on a host with fewer cores,
 the effect of the start/min/max bitrate hints on a real link, whether Keyboard Lock captures
 Alt+Tab and the Windows key inside the client app, dragging between windows on a real multi-monitor
 client, popup and fullscreen behaviour in a plain browser, hosts with mixed resolutions, DPI scales,

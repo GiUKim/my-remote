@@ -208,7 +208,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 | `minBitrateMbps` | `1` | 대역폭 추정의 하한 |
 | `maxTotalMbps` | `60` | 보고 있는 모든 모니터를 합친 상한 |
 | `maxFps` | `60` | 최대 프레임 |
-| `refine` | `true` | 화면이 멈추면 완전히 선명해질 때까지 같은 화면을 계속 보냅니다(AV1일 때). 창을 열거나 바꾼 직후 선명해지는 시간이 2~3초에서 1초 이내로 줄고, 대신 움직이는 동안의 지연이 한 프레임(약 10~20ms) 늘어납니다 |
+| `refine` | `true` | `true`: 화면이 멈추면 완전히 선명해질 때까지 같은 화면을 계속 보냅니다(AV1일 때). 창을 열거나 바꾼 직후 선명해지는 시간이 2~3초에서 1초 이내로 줄고, 대신 모든 반응이 약 15ms 늦어집니다. `"always"`: 지연이 늘지 않고 가장 빨리 선명해지지만, 접속해 있는 동안 멈춘 화면도 계속 보내므로 보이는 모니터 하나당 약 0.7Mbps와 CPU 0.4코어를 계속 씁니다. `false`: 끔 |
 | `audio` | `true` | 시스템 소리 전송 |
 | `clipboard` | `true` | 클립보드 동기화 |
 | `hideHostCursor` | `true` | 접속 중 호스트 PC의 커서를 숨겨 영상에 커서가 들어가지 않게 함 |
