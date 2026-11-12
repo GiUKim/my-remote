@@ -279,4 +279,111 @@ function displayColor() {
   return out;
 }
 
-module.exports = { handle, reset, setMonitors, target, cursorState, cursorBitmap, hideCursors, restoreCursors, displayColor, clipSeq: () => GetClipboardSequenceNumber() };
+// ---- something dragged out of the remote picture ------------------------------------
+// While a program runs a drag-and-drop (a file from Explorer, selected text, ...), it has handed
+// the mouse to a hidden window of OLE's own, of class CLIPBRDWNDCLASS. That tells a real drag from
+// a text selection or a window being moved, which keep the mouse themselves.
+// Returns the class of the window that has the mouse in the foreground program ('' = none).
+const GUITHREADINFO = koffi.struct('GUITHREADINFO', {
+  cbSize: 'uint32', flags: 'uint32', hwndActive: 'uintptr_t', hwndFocus: 'uintptr_t', hwndCapture: 'uintptr_t',
+  hwndMenuOwner: 'uintptr_t', hwndMoveSize: 'uintptr_t', hwndCaret: 'uintptr_t', rcCaret: RECT,
+});
+const GetGUIThreadInfo = user32.func('GetGUIThreadInfo', 'bool', ['uint32', koffi.inout(koffi.pointer(GUITHREADINFO))]);
+const GetClassNameW = user32.func('GetClassNameW', 'int', ['uintptr_t', 'uint8*', 'int']);
+function captureClass() {
+  try {
+    const gi = { cbSize: koffi.sizeof(GUITHREADINFO), flags: 0, hwndActive: 0, hwndFocus: 0, hwndCapture: 0, hwndMenuOwner: 0, hwndMoveSize: 0, hwndCaret: 0, rcCaret: { left: 0, top: 0, right: 0, bottom: 0 } };
+    if (!GetGUIThreadInfo(0, gi) || !gi.hwndCapture) return '';
+    const buf = Buffer.alloc(256), n = GetClassNameW(gi.hwndCapture, buf, 128);
+    return n > 0 ? buf.toString('utf16le', 0, n * 2) : '';
+  } catch { return ''; }
+}
+const dragging = () => captureClass() === 'CLIPBRDWNDCLASS';
+// The files on the clipboard (what Ctrl+C in Explorer puts there), as full paths.
+const shell32 = koffi.load('shell32.dll');
+const OpenClipboard = user32.func('OpenClipboard', 'bool', ['uintptr_t']);
+const CloseClipboard = user32.func('CloseClipboard', 'bool', []);
+const GetClipboardData = user32.func('GetClipboardData', 'uintptr_t', ['uint32']);
+const DragQueryFileW = shell32.func('DragQueryFileW', 'uint32', ['uintptr_t', 'uint32', 'uint8*', 'uint32']);
+function clipboardFiles() {
+  const out = [];
+  try {
+    if (!OpenClipboard(0)) return out;
+    try {
+      const h = GetClipboardData(15); // CF_HDROP
+      const n = h ? DragQueryFileW(h, 0xffffffff, null, 0) : 0;
+      for (let i = 0; i < n && i < 500; i++) {
+        const len = DragQueryFileW(h, i, null, 0), buf = Buffer.alloc((len + 1) * 2);
+        DragQueryFileW(h, i, buf, len + 1);
+        out.push(buf.toString('utf16le', 0, len * 2));
+      }
+    } finally { CloseClipboard(); }
+  } catch (e) { console.error('clipboard files', e); }
+  return out;
+}
+// ---- for the client app (client/shell.js): putting a dropped thing where it was let go ----
+const kernel32 = koffi.load('kernel32.dll');
+const GetCursorPos = user32.func('GetCursorPos', 'bool', [koffi.out(koffi.pointer(POINT))]);
+const WindowFromPoint = user32.func('WindowFromPoint', 'uintptr_t', [POINT]);
+const GetAncestor = user32.func('GetAncestor', 'uintptr_t', ['uintptr_t', 'uint32']);
+const classOf = (hwnd) => { const buf = Buffer.alloc(256), n = GetClassNameW(hwnd, buf, 128); return n > 0 ? buf.toString('utf16le', 0, n * 2) : ''; };
+// What the pointer is over: its position (physical pixels), the top-level window there and that window's class.
+function underPointer() {
+  const pt = { x: 0, y: 0 };
+  if (!GetCursorPos(pt)) return null;
+  const leaf = WindowFromPoint(pt), root = leaf ? GetAncestor(leaf, 2) || leaf : 0; // 2 = GA_ROOT
+  return { x: pt.x, y: pt.y, hwnd: Number(root), cls: root ? classOf(root) : '' };
+}
+// A left click at a point of the desktop; the pointer then goes back to where it was.
+function clickAt(px, py) {
+  const v = { x: GetSystemMetrics(76), y: GetSystemMetrics(77), w: GetSystemMetrics(78), h: GetSystemMetrics(79) };
+  const go = (x, y) => mouse(MF.MOVE | MF.ABS | MF.VDESK, Math.round(((x - v.x) * 65535) / Math.max(1, v.w - 1)), Math.round(((y - v.y) * 65535) / Math.max(1, v.h - 1)));
+  const back = { x: 0, y: 0 }, had = GetCursorPos(back);
+  go(px, py);
+  mouse(MF.LD); mouse(MF.LU);
+  if (had) go(back.x, back.y);
+}
+// Files onto the clipboard, the way Explorer's "Copy" puts them there (CF_HDROP): a DROPFILES
+// header followed by the paths in UTF-16, each ended by a zero and the list by one more.
+function dropFilesBuffer(paths) {
+  const list = Buffer.from(paths.join('\0') + '\0\0', 'utf16le'), buf = Buffer.alloc(20 + list.length);
+  buf.writeUInt32LE(20, 0); // where the list starts
+  buf.writeUInt32LE(1, 16); // wide characters
+  list.copy(buf, 20);
+  return buf;
+}
+const GlobalAlloc = kernel32.func('GlobalAlloc', 'uintptr_t', ['uint32', 'size_t']);
+const GlobalLock = kernel32.func('GlobalLock', 'uintptr_t', ['uintptr_t']);
+const GlobalUnlock = kernel32.func('GlobalUnlock', 'bool', ['uintptr_t']);
+const GlobalFree = kernel32.func('GlobalFree', 'uintptr_t', ['uintptr_t']);
+const RtlMoveMemory = kernel32.func('RtlMoveMemory', 'void', ['uintptr_t', 'uint8*', 'size_t']);
+const EmptyClipboard = user32.func('EmptyClipboard', 'bool', []);
+const SetClipboardData = user32.func('SetClipboardData', 'uintptr_t', ['uint32', 'uintptr_t']);
+function setClipboardFiles(paths) {
+  const buf = dropFilesBuffer(paths);
+  const h = GlobalAlloc(0x42, buf.length); // movable, zeroed
+  if (!h) return false;
+  const mem = GlobalLock(h);
+  if (!mem) { GlobalFree(h); return false; }
+  RtlMoveMemory(mem, buf, buf.length);
+  GlobalUnlock(h);
+  if (!OpenClipboard(0)) { GlobalFree(h); return false; }
+  let ok = false;
+  try { EmptyClipboard(); ok = !!SetClipboardData(15, h); } finally { CloseClipboard(); } // the clipboard owns the memory now
+  if (!ok) GlobalFree(h);
+  return ok;
+}
+
+// A mouse button released where the pointer is, and keys pressed and released in order.
+function buttonUp(b) {
+  const B = BTN[b | 0];
+  if (!B) return;
+  buttonsDown &= ~(1 << (b | 0));
+  mouse(B[1], 0, 0, B[2]);
+}
+function tap(codes) {
+  for (const c of codes) key(c, '', false);
+  for (const c of [...codes].reverse()) key(c, '', true);
+}
+
+module.exports = { handle, reset, setMonitors, target, cursorState, cursorBitmap, hideCursors, restoreCursors, displayColor, captureClass, dragging, clipboardFiles, buttonUp, tap, underPointer, clickAt, dropFilesBuffer, setClipboardFiles, clipSeq: () => GetClipboardSequenceNumber() };

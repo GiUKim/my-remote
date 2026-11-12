@@ -45,7 +45,7 @@ exports.startRelay = () => new Promise((resolve) => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app }) => {
+exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile }) => {
   const results = [];
   const check = (name, ok, detail) => { results.push(!!ok); console.log(`[selftest] ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  - ' + detail : ''}`); };
   const info = (text) => console.log(`[selftest] INFO  ${text}`);
@@ -110,6 +110,10 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app }) => {
         arr.cs = { list: [s, { ...s, left: 2560, availLeft: 2560 }], cur: 0 }; arr.A = monitors.map((_, h) => (h < 2 ? h : null)); arr.prev = arr.A.slice(); arrBuild(); arrPaint(arr.A); })`);
       await sleep(3500);
       await shot('');
+      await js(`document.getElementById('arrHelp').click(); 1`);
+      await sleep(400);
+      await shot('-help');
+      await js(`document.getElementById('arrHelp').click(); 1`);
       const dbg = await js(`(() => { const t = arr.host[1], r = t.lcd.getBoundingClientRect(), b = arr.host[2] || arr.host[0], q = b.lcd.getBoundingClientRect(), el = document.getElementById('arr');
         const fire = (type, target, x, y, ctrl) => target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 7, clientX: x, clientY: y, ctrlKey: !!ctrl }));
         fire('pointerdown', t.lcd, r.left + 30, r.top + 30); fire('pointermove', el, r.left + 60, r.top + 40); fire('pointermove', el, q.left + q.width / 2, q.top + q.height / 2, true);
@@ -218,6 +222,55 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app }) => {
       check('arrangement: back to one monitor', ok, `fps ${JSON.stringify(s.fps)}`);
     } else {
       info('single monitor host: monitor switching, overview and arrangement checks skipped');
+    }
+
+    // Things dragged out of the remote picture. No drag is started here and nothing is clicked or typed:
+    // the file channel is driven directly and the remaining pieces are checked one by one.
+    {
+      const crypto = require('crypto');
+      const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+      const src = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-dragsrc-')), dst = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-dragdst-'));
+      const big = path.join(src, 'big file \ud55c\uae00.bin'), small = path.join(src, 'note.txt');
+      fs.writeFileSync(big, crypto.randomBytes(3 * 1024 * 1024 + 123));
+      fs.writeFileSync(small, 'hello drag\n');
+      const offered = [offerFile(big), offerFile(small)];
+      await js(`window.__rd.keepFiles = true; window.__rd.files = []; 1`);
+      await hostWin.webContents.executeJavaScript(`sendFiles(session, ${JSON.stringify(offered)}); 1`);
+      [ok, s] = await until((x) => x.files.length === 2, 25);
+      check('dragged-out files arrive intact', ok && s.files[0].sha === sha(big) && s.files[1].sha === sha(small) && s.files[0].name === path.basename(big),
+        ok ? s.files.map((f) => `${f.size} bytes`).join(', ') : JSON.stringify(s.files));
+      await js(`window.__rd.keepFiles = false; 1`);
+
+      const out = await js(`(() => { const w = window, at = (x, y) => leftAll({ screenX: x, screenY: y });
+        return [at(w.screenX + 50, w.screenY + 50), at(w.screenX - 200, w.screenY + 50), at(w.screenX + w.outerWidth + 30, w.screenY + 50)]; })()`);
+      const hd = await hostWin.webContents.executeJavaScript(`api.dragOut(0)`);
+      check('drag out: leaving every window is recognised; the host injects nothing in a local trial',
+        JSON.stringify(out) === '[false,true,true]' && typeof input.captureClass() === 'string' && hd.kind === 'none', `outside ${JSON.stringify(out)}, host says "${hd.why}"`);
+
+      // The client app's part: received files end up in the folder they were dropped on, never over an existing file.
+      const drop = require('../client/shell')._drop;
+      const stage = (name, from) => { const d = fs.mkdtempSync(path.join(src, 's')), f = path.join(d, name); fs.copyFileSync(from, f); return f; };
+      fs.writeFileSync(path.join(dst, 'note.txt'), 'already here');
+      const placed = await drop.placeFiles([stage('note.txt', small), stage(path.basename(big), big)], { at: Date.now(), own: false, cls: 'CabinetWClass', folder: Promise.resolve(dst) });
+      const buf = input.dropFilesBuffer(['C:\\a.txt', 'D:\\b c.txt']);
+      check('drop into a folder: files are saved there under a free name',
+        placed.how === 'saved' && fs.readFileSync(path.join(dst, 'note.txt'), 'utf8') === 'already here' && fs.readFileSync(path.join(dst, 'note (2).txt'), 'utf8') === 'hello drag\n'
+        && sha(path.join(dst, path.basename(big))) === sha(big) && drop.safeName('..\\..\\evil:na|me?.txt') === '.._.._evil_na_me_.txt' && drop.safeName('CON') === 'file'
+        && buf.readUInt32LE(0) === 20 && buf.readUInt32LE(16) === 1 && buf.toString('utf16le', 20) === 'C:\\a.txt\0D:\\b c.txt\0\0',
+        `${fs.readdirSync(dst).length} files in the folder`);
+
+      if (process.argv.includes('--clip-check')) {
+        // Opt-in: puts two files on this PC's clipboard and reads them back. Only when the clipboard
+        // holds nothing or plain text, which is put back afterwards.
+        const { clipboard } = require('electron');
+        if (clipboard.availableFormats().every((f) => f === 'text/plain')) {
+          const keep = clipboard.readText();
+          const set = input.setClipboardFiles([big, small]), back = input.clipboardFiles();
+          if (keep) clipboard.writeText(keep); else clipboard.clear();
+          check('files can be put on the clipboard', set && JSON.stringify(back) === JSON.stringify([big, small]) && clipboard.readText() === keep, `${back.length} read back`);
+        } else info('clipboard check skipped: the clipboard holds more than plain text');
+      }
+      for (const d of [src, dst]) try { fs.rmSync(d, { recursive: true, force: true }); } catch {}
     }
 
     // Pasting must reach the page through the browser's paste event (no clipboard-read permission).

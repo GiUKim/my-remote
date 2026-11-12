@@ -51,6 +51,11 @@
   .mon.client .lcd { border-color: #1a1f26; background: #11151a; }
   #arrGhost { position: fixed; z-index: 9; pointer-events: none; transform: translate(-50%, -50%) rotate(-2deg); border-radius: 6px; overflow: hidden; border: 2px solid #fff; box-shadow: 0 10px 28px rgba(0, 0, 0, .65); opacity: .9; background: #11151a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 13px; }
   #arrGhost video { width: 100%; height: 100%; object-fit: fill; }
+  #arrHelp { width: 24px; height: 24px; padding: 0; border-radius: 12px; background: #343c48; font-weight: 700; }
+  #arrHelp.on { background: #2b6cff; }
+  #arrTip { position: absolute; left: 22px; top: 50px; z-index: 3; width: min(520px, 86%); display: none; background: #0e1014; border: 1px solid #3a4350; border-radius: 10px; padding: 12px 16px; box-shadow: 0 12px 32px rgba(0, 0, 0, .6); line-height: 1.75; font-size: 13px; }
+  #arrTip b { color: #fff; }
+  #arrTip i { display: inline-block; min-width: 132px; font-style: normal; color: #9fc0ff; }
   #arrGhost b { position: absolute; right: 4px; bottom: 4px; padding: 0 7px; border-radius: 9px; background: #2b6cff; font-size: 12px; display: none; }
 </style>
 </head>
@@ -111,21 +116,31 @@
 <div id="arr"><div id="arrBox">
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px">
     <h3 style="margin:0">모니터 배치</h3>
+    <button id="arrHelp" title="사용법">?</button>
     <small id="arrMsg"></small>
     <button id="arrClose" style="margin-left:auto">닫기</button>
   </div>
+  <div id="arrTip">
+    <b>위</b>는 호스트 PC(원격으로 조작하는 PC)의 모니터이고 지금 화면이 그대로 보입니다. <b>아래</b>는 이 PC의 모니터입니다. 같은 색과 선으로 이어진 것끼리 짝입니다.<br>
+    <i>끌어다 놓기</i>자리를 바꿉니다. 꺼진 모니터에 놓으면 그쪽으로 옮깁니다.<br>
+    <i>Ctrl + 끌어다 놓기</i>옮기지 않고 같은 화면에 나란히 함께 띄웁니다.<br>
+    <i>호스트 모니터 클릭</i>끕니다. 다시 클릭하면 있던 자리에 켭니다.<br>
+    <i>위 ↔ 아래로 끌기</i>그 화면에 그 모니터를 띄웁니다.<br>
+    <i>기본 배치</i>왼쪽부터 순서대로 짝짓습니다.<br>
+    <i>전체화면으로 시작</i>창을 모두 전체화면으로 바꾸고 닫습니다.<br>
+    바꾼 배치는 바로 적용되고 다음에도 기억됩니다.
+  </div>
   <div id="arrArea">
-    <div class="arrTitle">호스트 PC의 모니터 <small>(원격으로 조작하는 PC)</small></div>
+    <div class="arrTitle">호스트 PC</div>
     <div class="arrRow" id="arrHost"></div>
     <div style="height:58px"></div>
     <div class="arrRow" id="arrClient"></div>
-    <div class="arrTitle">이 PC의 모니터</div>
+    <div class="arrTitle">이 PC</div>
     <svg id="arrWires"></svg>
   </div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
-    <small>끌어다 놓기: 옮기기 (원래 있던 화면과 자리 바꿈) · <kbd>Ctrl</kbd>+끌기: 같은 화면에 함께 표시 · 호스트 모니터 클릭: 끄기/켜기</small>
-    <button id="arrPerm" style="margin-left:auto;display:none;background:#343c48">이 PC의 다른 모니터도 사용</button>
-    <button id="arrReset" style="background:#343c48">기본 배치</button>
+    <button id="arrPerm" style="display:none;background:#343c48">이 PC의 다른 모니터도 사용</button>
+    <button id="arrReset" style="margin-left:auto;background:#343c48">기본 배치</button>
     <button id="arrGo" style="background:#2b6cff">전체화면으로 시작</button>
   </div>
 </div></div>
@@ -156,7 +171,7 @@ const shell = window.mrShell || null;
 const hash = new URLSearchParams(boot ? boot.preset : location.hash.slice(1) || '__PRESET__');
 const READONLY = hash.has('ro');
 if (READONLY) $('ro').style.display = '';
-const BLOCKED_WHEN_RO = new Set(['mm', 'md', 'mu', 'mw', 'kd', 'ku', 'reset', 'clip']);
+const BLOCKED_WHEN_RO = new Set(['mm', 'md', 'mu', 'mw', 'kd', 'ku', 'reset', 'clip', 'dragout']);
 const CURSORS = new Set(['default', 'text', 'wait', 'crosshair', 'nwse-resize', 'nesw-resize', 'ew-resize', 'ns-resize', 'move', 'not-allowed', 'pointer', 'progress', 'help']);
 const HINT = 'Ctrl+Alt+←/→ 모니터 전환 · ↑ 전체 보기 · ↓ 원본 크기 · Enter 전체화면 끝내기';
 
@@ -176,7 +191,9 @@ const samples = []; // rolling measurements for the diagnostics report
 $('mode').value = mode;
 $('hk').checked = hotkeysOn;
 
-window.__rd = { state: 'idle', monitors: 0, frames: 0, fps: {}, res: {}, cursor: '', clipRx: false, audio: false, connects: 0, pastes: 0, host: null };
+window.__rd = { state: 'idle', monitors: 0, frames: 0, fps: {}, res: {}, cursor: '', clipRx: false, audio: false, connects: 0, pastes: 0, host: null, dragouts: 0, files: [], keepFiles: false };  // files/keepFiles: the self-test looks at received files instead of saving them
+let hostDrag = false; // the host says a drag-and-drop is under way there (a file, selected text, ...)
+let drop = null;      // the last thing dragged out to this PC: where it was let go, what has arrived
 
 function msg(s) { $('msg').textContent = s; window.__rd.state = s; }
 function overlay(s) { $('ov').textContent = s; $('ov').style.display = s ? 'flex' : 'none'; }
@@ -303,7 +320,7 @@ function refreshStreams() {
   }
 }
 function applyCursor() {
-  for (const view of liveViews()) for (const p of view.panes) p.video.style.cursor = cursorCss;
+  for (const view of liveViews()) for (const p of view.panes) p.video.style.cursor = view.dragOut ? 'copy' : cursorCss;
 }
 // Tell the host which monitors are on screen and how large each is shown, in
 // device pixels, so it encodes only those and never more pixels than are visible.
@@ -429,6 +446,86 @@ function queueMove(view, p) {
   view.pending = null;
   send({ t: 'mm', d: p.d, x: p.x, y: p.y });
 }
+// ---- dragging something out of the remote picture onto this PC ----------------------
+// While a file or selected text is being dragged on the host and the pointer leaves our windows,
+// the host's pointer waits where it was. Letting go out there ends the host's drag without a drop
+// and brings what was dragged over to this PC (the host does that part, see dragOut in its main.js).
+// True when the pointer is over none of our windows, i.e. over this PC's own desktop and programs.
+function leftAll(ev) {
+  for (const v of liveViews()) {
+    const w = v.win;
+    if (ev.screenX >= w.screenX && ev.screenY >= w.screenY && ev.screenX < w.screenX + w.outerWidth && ev.screenY < w.screenY + w.outerHeight) return false;
+  }
+  return true;
+}
+// The client app can put things where they were let go (client/shell.js); a browser cannot.
+const canDrop = () => !!(shell && shell.dropPoint && shell.dropText && shell.dropFiles && shell.fileBegin);
+function startDrop() {
+  const d = (drop = { id: null, ready: null });
+  // The app notes now, before the pointer moves on, what it was let go over.
+  if (canDrop()) d.ready = shell.dropPoint().then((id) => { d.id = id; }, () => {});
+  window.__rd.dragouts++;
+  toast(mainView, '호스트에서 가져오는 중…', 6000);
+}
+async function gotDragData(m) {
+  const d = drop;
+  if (!d) return;
+  if (m.kind === 'text' && typeof m.s === 'string' && m.s.length <= CLIP_MAX) {
+    drop = null;
+    lastClip = m.s; // it goes onto this PC's clipboard; do not send it back to the host
+    let how = '';
+    if (canDrop()) { await d.ready; how = await shell.dropText(d.id, m.s).catch(() => ''); }
+    if (!how) gotClip(m.s);
+    toast(mainView, how === 'pasted' ? '놓은 곳에 붙여 넣었습니다' + (m.cut ? ' (너무 길어 앞부분만)' : '') : '가져온 글자를 복사해 두었습니다. 붙여 넣을 곳에서 Ctrl+V를 누르세요', how === 'pasted' ? 2500 : 6000);
+  } else if (m.kind === 'files' && Array.isArray(m.files)) {
+    toast(mainView, `파일 ${m.files.length}개를 받는 중…`, 600000);
+  } else {
+    drop = null;
+    toast(mainView, '가져올 수 있는 것이 없습니다. 파일과 선택한 글자만 끌어낼 수 있습니다', 4000);
+  }
+}
+// Files arrive on a channel of their own: a header, the bytes in pieces, an end mark - one file after another.
+function receiveFiles(ch) {
+  ch.binaryType = 'arraybuffer';
+  const d = drop, app = canDrop(), ids = [], names = [];
+  let cur = null, bytes = 0, shownAt = 0, failed = false;
+  let queue = Promise.resolve(); // the app writes to disk asynchronously; keep the pieces in order
+  const fail = () => { failed = true; if (drop === d) drop = null; toast(mainView, '파일을 받지 못했습니다', 5000); };
+  const step = async (data) => {
+    if (failed) return;
+    if (typeof data !== 'string') {
+      if (!cur) return;
+      bytes += data.byteLength;
+      if (app) await shell.fileChunk(cur.id, new Uint8Array(data)); else cur.parts.push(data);
+      if (performance.now() - shownAt > 400) { shownAt = performance.now(); toast(mainView, `파일 받는 중… ${(bytes / 1048576).toFixed(1)} MB`, 600000); }
+      return;
+    }
+    const m = JSON.parse(data);
+    if (m.t === 'file') cur = { name: String(m.name), parts: [], id: app ? await shell.fileBegin(String(m.name)) : null };
+    else if (m.t === 'fileend' && cur) {
+      names.push(cur.name);
+      if (app) { await shell.fileEnd(cur.id); ids.push(cur.id); }
+      else {
+        const blob = new Blob(cur.parts);
+        if (window.__rd.keepFiles) {
+          const h = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+          window.__rd.files.push({ name: cur.name, size: blob.size, sha: [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('') });
+        } else { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = cur.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 60000); }
+      }
+      cur = null;
+    } else if (m.t === 'filesdone') {
+      if (drop === d) drop = null;
+      const n = names.length;
+      if (!app) { toast(mainView, `파일 ${n}개를 이 PC의 다운로드 폴더에 저장했습니다`, 6000); return; }
+      if (d) await d.ready;
+      const r = (await shell.dropFiles(d ? d.id : null, ids)) || {};
+      toast(mainView, r.how === 'saved' ? `파일 ${n}개를 "${r.where}"에 넣었습니다` : r.how === 'pasted' ? `파일 ${n}개를 놓은 곳에 붙여 넣었습니다`
+        : r.how === 'clipboard' ? `파일 ${n}개를 받았습니다. 넣을 폴더에서 Ctrl+V를 누르세요` : '받은 파일을 놓지 못했습니다', r.how === 'clipboard' ? 9000 : 4000);
+    } else if (m.t === 'fileerror') throw new Error('host');
+  };
+  ch.onmessage = (e) => { queue = queue.then(() => step(e.data)).catch(fail); };
+}
+
 // 1:1 mode larger than the window: pushing the pointer against an edge pans the picture.
 function edgePan(view, ev) {
   if (typeof view.sel !== 'number' || view.fit !== '1:1' || !view.panes[0]) { view.panDir = null; return; }
@@ -452,7 +549,12 @@ function edgePan(view, ev) {
 function attachPointer(view, pane) {
   const v = pane.video;
   const here = (ev) => { const q = rel(pane, ev.clientX, ev.clientY); return q && { d: q.d, x: clamp(q.x, 0, 1), y: clamp(q.y, 0, 1) }; };
+  const setOut = (on) => { if (view.dragOut !== on) { view.dragOut = on; v.style.cursor = on ? 'copy' : cursorCss; } };
   v.addEventListener('pointermove', (ev) => {
+    // Something is being dragged on the host and the pointer has left our windows: it is being
+    // carried out to this PC. The host's pointer waits where it was until we know how this ends.
+    if (ev.buttons && hostDrag && !READONLY && leftAll(ev)) { setOut(true); return; }
+    setOut(false);
     const p = ev.buttons ? mapPoint(ev, view, pane) : here(ev);
     if (!p) return;
     view.lastPtr = { pane, cx: ev.clientX, cy: ev.clientY };
@@ -460,6 +562,7 @@ function attachPointer(view, pane) {
     edgePan(view, ev);
   });
   v.addEventListener('pointerleave', () => { view.panDir = null; });
+  v.addEventListener('pointercancel', () => setOut(false));
   v.addEventListener('pointerdown', (ev) => {
     const p = here(ev); if (!p) return;
     ev.preventDefault(); v.focus();
@@ -468,6 +571,15 @@ function attachPointer(view, pane) {
     send({ t: 'md', b: ev.button, d: p.d, x: p.x, y: p.y }); // 0 left, 1 middle, 2 right, 3 back, 4 forward
   });
   v.addEventListener('pointerup', (ev) => {
+    if (view.dragOut) {
+      // Let go outside: the host ends its drag and sends what was being dragged (see gotDragData).
+      setOut(false);
+      ev.preventDefault();
+      view.pending = null;
+      startDrop();
+      send({ t: 'dragout', b: ev.button });
+      return;
+    }
     const p = mapPoint(ev, view, pane); if (!p) return;
     ev.preventDefault();
     view.pending = null;
@@ -816,16 +928,16 @@ function arrBuild() {
   const hs = monitors.map((m) => ({ w: m.width, h: m.height })), ks = fit(hs, 250);
   $('arrHost').textContent = ''; $('arrClient').textContent = '';
   arr.host = monitors.map((m, i) => {
-    const t = monTile('host', i, m.width * ks, m.height * ks, `${m.width}×${m.height}${m.primary ? ' · 주 모니터' : ''}${m.hdr ? ' · HDR 켜짐(색 밝게 보임)' : ''}`);
+    const t = monTile('host', i, m.width * ks, m.height * ks, `${m.width}×${m.height}${m.primary ? ' · 주 모니터' : ''}${m.hdr ? ' · HDR ⚠' : ''}`);
+    if (m.hdr) t.el.title = '호스트에서 이 모니터의 HDR이 켜져 있어 색이 실제보다 밝게 보입니다. 호스트 PC의 디스플레이 설정에서 HDR을 끄면 해결됩니다.';
     tileVideos(t, [i]);
     $('arrHost').appendChild(t.el);
     return t;
   });
   const sc = cs.list.map((s) => ({ w: s.width, h: s.height, px: `${Math.round(s.width * (s.devicePixelRatio || s.scale || 1))}×${Math.round(s.height * (s.devicePixelRatio || s.scale || 1))}` })), kc = fit(sc, 210);
   arr.client = cs.list.map((s, c) => {
-    const t = monTile('client', c, sc[c].w * kc, sc[c].h * kc, sc[c].px + (c === cs.cur ? ' · 이 창이 있는 화면' : ''));
+    const t = monTile('client', c, sc[c].w * kc, sc[c].h * kc, sc[c].px + (c === cs.cur ? ' · 현재 창' : ''));
     t.el.style.setProperty('--c', COLORS[c % COLORS.length]);
-    t.tag.textContent = `내 모니터 ${c + 1}`;
     t.note.textContent = '비어 있음';
     $('arrClient').appendChild(t.el);
     return t;
@@ -839,15 +951,18 @@ function arrPaint(A, aim) {
     const c = A[h];
     t.el.classList.toggle('off', c == null);
     t.el.classList.toggle('aim', !!aim && aim.kind === 'host' && aim.i === h);
-    if (c == null) { t.el.style.removeProperty('--c'); t.tag.textContent = '표시 안 함'; t.note.textContent = '꺼짐'; }
-    else { t.el.style.setProperty('--c', COLORS[c % COLORS.length]); t.tag.textContent = `내 모니터 ${c + 1}에 표시`; }
+    if (c == null) { t.el.style.removeProperty('--c'); t.note.textContent = '꺼짐'; }
+    else t.el.style.setProperty('--c', COLORS[c % COLORS.length]);
+    t.tag.textContent = c == null ? '' : `내 모니터 ${c + 1}`;
+    t.tag.style.visibility = c == null ? 'hidden' : '';
   });
   arr.client.forEach((t, c) => {
     const list = A.map((x, h) => (x === c ? h : -1)).filter((h) => h >= 0);
     tileVideos(t, list);
     t.el.classList.toggle('off', !list.length);
     t.el.classList.toggle('aim', !!aim && aim.kind === 'client' && aim.i === c);
-    t.tag.textContent = `내 모니터 ${c + 1}` + (list.length ? ' ← 호스트 ' + list.map((h) => h + 1).join(' + ') : '');
+    t.tag.textContent = list.length ? '호스트 ' + list.map((h) => h + 1).join(' + ') : '';
+    t.tag.style.visibility = list.length ? '' : 'hidden';
   });
   arr.shown = A;
   if (!arr.raf) arr.raf = requestAnimationFrame(arrWires);
@@ -912,6 +1027,7 @@ async function arrOpen() {
 }
 function arrClose() {
   arrDragEnd(false);
+  arrTip(false);
   arr.open = false;
   $('arr').style.display = 'none';
   for (const t of [...arr.host, ...arr.client]) tileVideos(t, []);
@@ -992,9 +1108,13 @@ $('arr').addEventListener('pointercancel', () => arrDragEnd(false));
 for (const type of ['keydown', 'keyup']) window.addEventListener(type, (ev) => {
   if (!arr.open) return;
   if (ev.key === 'Control' && arr.drag && arr.drag.moved) arrDragMove(arr.drag.x, arr.drag.y, type === 'keydown');
-  if (type === 'keydown' && ev.key === 'Escape') { if (arr.drag) arrDragEnd(false); else arrClose(); }
+  if (type === 'keydown' && ev.key === 'Escape') { if (arr.drag) arrDragEnd(false); else if ($('arrTip').style.display === 'block') arrTip(false); else arrClose(); }
 });
 window.addEventListener('resize', () => { if (arr.open && !arr.drag) { arrBuild(); arrPaint(arr.A); } });
+// The explanations live behind the "?" button: a click shows them, a click anywhere else puts them away.
+function arrTip(on) { $('arrTip').style.display = on ? 'block' : 'none'; $('arrHelp').classList.toggle('on', on); }
+$('arrHelp').onclick = (ev) => { ev.stopPropagation(); arrTip($('arrTip').style.display !== 'block'); };
+$('arr').addEventListener('pointerdown', (ev) => { if (!ev.target.closest('#arrTip') && ev.target !== $('arrHelp')) arrTip(false); }, true);
 $('arrBtn').onclick = arrOpen;
 $('arrClose').onclick = arrClose;
 $('arrReset').onclick = () => {
@@ -1056,6 +1176,8 @@ function onHostMessage(data) {
     applyCursor();
   }
   else if (m.t === 'hs') { hostStat = m; window.__rd.host = m; }
+  else if (m.t === 'drag') hostDrag = !!m.on;
+  else if (m.t === 'dragdata') gotDragData(m);
   else if (m.t === 'clip' && typeof m.s === 'string' && m.s.length <= CLIP_MAX) gotClip(m.s);
   else if (m.t === 'bye') disconnect('호스트에서 연결을 종료했습니다.');
   else if (m.t === 'renew') {
@@ -1116,6 +1238,7 @@ async function onOffer(m) {
     refreshStreams();
   };
   my.ondatachannel = (e) => {
+    if (e.channel.label === 'file') { if (pc === my) receiveFiles(e.channel); return; }
     dc = e.channel;
     const ready = () => { if (pc === my) sendView(true); };
     dc.onopen = ready;

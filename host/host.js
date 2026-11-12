@@ -142,6 +142,8 @@ function onClientMessage(s, dc, data) {
     log('화질 모드: ' + (s.mode === 'smooth' ? '부드러움 우선' : '선명도 우선'));
   } else if (m.t === 'clip') {
     if (cfg.clipboard && typeof m.s === 'string' && m.s.length <= CLIP_MAX) { s.clip = m.s; api.writeClip(m.s); }
+  } else if (m.t === 'dragout') {
+    dragOut(s, m.b | 0);
   } else if (m.t === 'cs') {
     // Client-side measurements: keep them with ours in the local diagnostics log.
     if (data.length < 6000 && m.s && typeof m.s === 'object') api.diag({ client: m.s, host: s.lastHs || null });
@@ -150,12 +152,61 @@ function onClientMessage(s, dc, data) {
   }
 }
 
+// The client let go of something it had dragged out of the picture: fetch it from this PC
+// (see dragOut in main.js) and send it over - text at once, files over a channel of their own
+// so that a large file does not hold up the cursor and input messages.
+async function dragOut(s, button) {
+  const r = await api.dragOut(button);
+  if (session !== s) return;
+  const tx = (o) => { try { if (s.dc.readyState === 'open') s.dc.send(JSON.stringify(o)); } catch {} };
+  if (r.kind === 'files') {
+    log(`끌어내기: 파일 ${r.files.length}개를 보냅니다${r.skipped ? ` (${r.skipped}개는 제외: 폴더이거나 너무 큼)` : ''}`);
+    tx({ t: 'dragdata', kind: 'files', files: r.files, skipped: r.skipped || 0 });
+    sendFiles(s, r.files);
+  } else if (r.kind === 'text') {
+    log(`끌어내기: 글자 ${r.s.length}자를 보냅니다`);
+    tx({ t: 'dragdata', kind: 'text', s: r.s, cut: !!r.cut });
+  } else {
+    log('끌어내기: 가져올 것이 없습니다 — ' + r.why);
+    tx({ t: 'dragdata', kind: 'none' });
+  }
+}
+async function sendFiles(s, files) {
+  const ch = s.pc.createDataChannel('file', { ordered: true });
+  ch.binaryType = 'arraybuffer';
+  const CHUNK = 60000;
+  try {
+    await new Promise((res, rej) => { ch.onopen = res; ch.onerror = rej; setTimeout(() => rej(new Error('channel did not open')), 8000); });
+    for (const f of files) {
+      ch.send(JSON.stringify({ t: 'file', id: f.id, name: f.name, size: f.size }));
+      for (let off = 0; off < f.size; off += CHUNK) {
+        if (session !== s || ch.readyState !== 'open') throw new Error('connection closed');
+        const buf = await api.dragFileRead(f.id, off, Math.min(CHUNK, f.size - off));
+        if (!buf || !buf.byteLength) throw new Error('could not read ' + f.name);
+        ch.send(buf);
+        while (ch.bufferedAmount > 4 * 1024 * 1024) await new Promise((r) => setTimeout(r, 15));
+      }
+      ch.send(JSON.stringify({ t: 'fileend', id: f.id }));
+      api.dragFileDone(f.id);
+    }
+    ch.send(JSON.stringify({ t: 'filesdone' }));
+    log('끌어내기: 파일 전송을 마쳤습니다');
+  } catch (e) {
+    log('끌어내기: 파일 전송 실패 — ' + e.message);
+    try { ch.send(JSON.stringify({ t: 'fileerror' })); } catch {}
+    api.dragFileDone(null);
+  }
+  setTimeout(() => { try { ch.close(); } catch {} }, 5000);
+}
+
 function startChannelTasks(s, dc) {
   const tx = (o) => { if (dc.readyState === 'open') dc.send(JSON.stringify(o)); };
   // Cursor shape (or picture) -> the client draws the cursor itself.
-  let cur = null;
+  // Also whether something is being dragged here, so the client knows what leaving its window means.
+  let cur = null, drag = false;
   s.timers.push(setInterval(async () => {
     const c = await api.cursor();
+    if (!!c.drag !== drag) { drag = !!c.drag; tx({ t: 'drag', on: drag }); }
     if (c.k === cur) return;
     cur = c.k;
     tx(c.img ? { t: 'cur', img: c.img, hx: c.hx, hy: c.hy } : { t: 'cur', c: c.c });

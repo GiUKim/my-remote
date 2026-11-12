@@ -47,11 +47,25 @@ self-test, opens a view-only client in their default browser).
   make the media channel trustworthy.
 - **Do not run the non-isolated host** (`start-host.bat`, `npm start`) or kill a running host without
   the user asking. Use `--selftest` or `--localtest` for verification.
+- **RustDesk is AGPL-3.0.** Its source may be read for ideas (see "Performance"), but do not copy code from
+  it, or from any other copyleft project, into this repository.
 - **Do not inject input on the user's machine as a test** beyond what `--selftest` does (it injects
   none). Stray clicks and keystrokes land in whatever the user has open.
 - Do not commit `node_modules/`, `tools/`, `dist/`, or any `config.json` (see `.gitignore`).
 
 ## Gotchas
+
+- **Dragging out of the remote picture.** A program that runs a drag-and-drop has handed the mouse to
+  OLE's hidden window of class `CLIPBRDWNDCLASS`; `input.dragging()` reads that (`GetGUIThreadInfo`,
+  read-only) and the host tells the client (`drag`). When the client's pointer then leaves every client
+  window, moves are no longer sent (the host's pointer waits); on release outside, the host presses
+  Escape (ends the drag without a drop), Ctrl+C (what was dragged is still selected), releases the
+  button and sends the clipboard's files or text (`dragOut` in `main.js`). This replaces the host's
+  clipboard. Isolated modes never do the key presses. On the client the app (`client/shell.js`) saves
+  files into the folder they were dropped on (desktop, or an Explorer window whose folder it asks the
+  shell for through PowerShell); for other targets it puts the data on the clipboard and, within 8 s of
+  the drop, clicks once at the drop point and presses Ctrl+V. That click and key press are the only
+  input the client app ever injects.
 
 - **A display with Windows HDR on is captured wrong.** Desktop Duplication hands over the desktop after
   Windows raised SDR content to HDR brightness and clipped it at SDR white, so the picture is brighter
@@ -96,6 +110,7 @@ Run from `host/` with Electron's env var cleared.
 | `npm run selftest` | Local end-to-end test, prints `[selftest] PASS/FAIL` lines, exits 0 or 1 |
 | `electron . --selftest --shell-check` | Same, plus the client app's one-click layout on the real screens. Fullscreen windows cover every monitor for a few seconds, so ask the user first |
 | `electron . --selftest --dump-panel=<file.png>` | Quick look at the arrangement panel: connects, draws the panel as if the client had two screens, writes pictures (`<file>.png`, `-ctrl-drag`, `-swap-drag`, `-together`) and exits. About 20 s, opens no window |
+| `electron . --selftest --clip-check` | Same, plus putting two files on this PC's clipboard and reading them back. Only runs when the clipboard holds nothing or plain text, which is put back |
 | `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first |
 | `npm run bench -- --net=direct,home,narrow,wifi --try=old,base` | Measures delay and smoothness on this PC for the given link conditions and settings, prints a table (see "Performance"). `--picture-test=quality` measures picture quality instead (a window opening, a window being dragged, scrolling); `--snapshot` saves what the client showed next to what was drawn. About 45 s per run. Shows a test picture on one display and a small window on another for that time; they never take focus and no input is injected, but tell the user before a long series |
 | `npm run localtest` | Local trial: host window plus view-only client in the default browser |
@@ -116,7 +131,7 @@ must then be given the new file). Run `npm run selftest` after either.
 | `start-host.bat`, `local-test.bat` | Launchers for the real host and the local trial |
 | `my-remote-client.html` | Built loader: the one file a client PC keeps (generated, committed for convenience) |
 | `start-client.bat` | Launcher for the client app (uses the Electron installed under `host/node_modules`) |
-| `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window and grants permissions. Exposes `window.mrShell` |
+| `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js` for Win32). Exposes `window.mrShell`. These files are not updated through the loader: the page must feature-detect what an installed app offers |
 | `host/main.js` | Electron main: config and key storage, monitor enumeration, tray, IPC, isolated modes |
 | `host/preload.js` | The only bridge between the renderer and main (`window.hostApi`) |
 | `host/host.html`, `host/host.js` | Host UI and the WebRTC side: capture, encoding control, data-channel routing |
@@ -166,11 +181,19 @@ Data channel `input` (JSON text):
 | client -> host | `view` | `v` = `[{i, w, h}]`: monitors on screen and the size each is shown at, in device pixels (`0` = full size). The host pauses the rest, scales down to the shown size (never up) and splits bitrate by pixels sent |
 | client -> host | `mode` | `sharp` or `smooth` |
 | client -> host | `cs` | Client measurements for the host's diagnostics log |
+| client -> host | `dragout` | The pointer was let go outside every client window while the host reported a drag; `b` = button. The host ends its drag, copies what was dragged and answers with `dragdata` |
 | both | `clip` | Clipboard text, at most 60000 chars |
 | host -> client | `cur` | Current host cursor: `c` = CSS cursor name, or `img` (PNG data URL) with hotspot `hx`,`hy` for an app-specific cursor |
 | host -> client | `hs` | Host-side statistics every 2 s (codec, encoder, bitrate, per-monitor capture/encode fps and limiting factor) for the client's diagnostics report |
+| host -> client | `drag` | `on`: whether a drag-and-drop is under way on the host |
+| host -> client | `dragdata` | Answer to `dragout`: `kind` `text` (`s`, `cut`), `files` (`files:[{id,name,size}]`, `skipped`; the bytes follow on the `file` channel) or `none` |
 | host -> client | `bye` | Deliberate close; the client must not auto-reconnect |
 | host -> client | `renew` | Host monitors changed; the client reconnects at once and keeps its windows |
+
+Data channel `file` (host -> client, opened by the host per transfer, ordered): text `{t:'file', id, name, size}`,
+then the bytes in binary messages of at most 60000, text `{t:'fileend', id}`; after the last file
+`{t:'filesdone'}`, or `{t:'fileerror'}`. The host only sends files it found on its own clipboard in the
+`dragout` step; the client cannot ask for a path.
 
 Monitor coordinates are physical pixels (`screen.dipToScreenRect`), mapped to the 0..65535 virtual
 desktop range for `SendInput`. Keys are sent as set-1 scancodes so the host's keyboard layout applies;
@@ -270,6 +293,13 @@ dragging across monitors of different sizes. Input injection was verified separa
 `--cursor-check` confirmed on the real screen that hiding the host cursor removes it from the video and
 that it is restored afterwards. With `codec: H264` the hardware encoder is used at window-sized and full resolutions; the
 small overview tiles (480x270) fall back to OpenH264 and the hardware encoder returns afterwards.
+
+Verified by the self-test for dragging out: the file channel end to end (3 MB, hashes compared), the
+"pointer left every window" test, saving into a folder under a free name, the clipboard file format
+(`--clip-check`). Not verified, because it needs a real drag and real input: that the host really
+reports `CLIPBRDWNDCLASS` during a drag from Explorer or a text editor, that Escape plus Ctrl+C yields
+the dragged item in those programs, the click-and-paste on the client, Windows 11 tabbed Explorer.
+(Resolving an Explorer window's folder was checked by hand on this PC, Windows 10, read-only.)
 
 Verified by the self-test: the arrangement rules, applying an arrangement (two monitors together, an
 empty screen), the panel showing every monitor live, and a drag and a click done with synthetic pointer

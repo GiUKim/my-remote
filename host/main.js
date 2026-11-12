@@ -94,6 +94,50 @@ function currentCursor() {
   const e = cursorCache.get(st.key);
   return e ? { k: st.key, img: e.img, hx: e.hx, hy: e.hy } : { k: st.key, c: 'default' };
 }
+// Something dragged out of the remote picture and let go over the client PC. The drag is ended
+// here without a drop (Escape), what was being dragged is still selected and gets copied
+// (Ctrl+C), and the result is handed over: text, or the names and sizes of files the client may
+// then fetch. Only files that this very step found on the clipboard can be fetched.
+const DRAG_MAX_BYTES = 2 * 1024 * 1024 * 1024, DRAG_MAX_FILES = 200;
+const dragFiles = new Map(); // id -> { path, size, fd }
+function offerFile(file) {
+  const st = fs.statSync(file);
+  if (!st.isFile()) return null;
+  const id = crypto.randomBytes(8).toString('hex');
+  dragFiles.set(id, { path: file, size: st.size, fd: null });
+  return { id, name: path.basename(file), size: st.size };
+}
+function closeDragFiles(id) {
+  for (const [k, f] of [...dragFiles]) if (id == null || k === id) { try { if (f.fd != null) fs.closeSync(f.fd); } catch {} dragFiles.delete(k); }
+}
+async function dragOut(button) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const cls = input.captureClass();
+  if (cls !== 'CLIPBRDWNDCLASS') { input.buttonUp(button); return { kind: 'none', why: 'no drag in progress' + (cls ? ' (mouse held by ' + cls + ')' : '') }; }
+  const before = input.clipSeq();
+  input.tap(['Escape']);
+  await sleep(90);
+  input.tap(['ControlLeft', 'KeyC']);
+  let changed = false;
+  for (let i = 0; i < 40 && !changed; i++) { await sleep(25); changed = input.clipSeq() !== before; }
+  input.buttonUp(button);
+  if (!changed) return { kind: 'none', why: 'nothing was copied' };
+  await sleep(80); // the program may still be adding formats
+  const paths = input.clipboardFiles();
+  if (paths.length) {
+    closeDragFiles();
+    const files = [];
+    let skipped = 0, total = 0;
+    for (const f of paths) {
+      let o = null;
+      try { o = files.length < DRAG_MAX_FILES ? offerFile(f) : null; } catch {}
+      if (o && total + o.size <= DRAG_MAX_BYTES) { files.push(o); total += o.size; } else { skipped++; if (o) dragFiles.delete(o.id); }
+    }
+    return files.length ? { kind: 'files', files, skipped } : { kind: 'none', why: 'only folders, or more than 2 GB' };
+  }
+  const text = clipboard.readText();
+  return text ? { kind: 'text', s: text.slice(0, CLIP_MAX), cut: text.length > CLIP_MAX } : { kind: 'none', why: 'neither text nor files' };
+}
 let cfg = null;
 let savedCfg = {}; // only what the user set; defaults are not frozen into the file
 
@@ -243,7 +287,21 @@ else {
         fs.appendFileSync(diagFile, JSON.stringify({ t: new Date().toISOString(), ...entry }) + '\n');
       } catch {}
     });
-    ipcMain.handle('cursor', () => { try { return currentCursor(); } catch { return { k: '0', c: 'default' }; } });
+    ipcMain.handle('cursor', () => { try { return { ...currentCursor(), drag: input.dragging() }; } catch { return { k: '0', c: 'default', drag: false }; } });
+    ipcMain.handle('drag-out', async (_e, button) => {
+      if (ISOLATED) return { kind: 'none', why: 'not in a local trial' }; // those never send input to this PC
+      try { return await dragOut(button | 0); } catch (e) { console.error('drag out', e); try { input.buttonUp(button | 0); } catch {} return { kind: 'none', why: 'error' }; }
+    });
+    ipcMain.handle('drag-file-read', (_e, id, offset, len) => {
+      const f = dragFiles.get(String(id));
+      if (!f || !(offset >= 0) || !(len > 0) || len > 1 << 20) return null;
+      try {
+        if (f.fd == null) f.fd = fs.openSync(f.path, 'r');
+        const buf = Buffer.alloc(len), n = fs.readSync(f.fd, buf, 0, len, offset);
+        return n === len ? buf : buf.subarray(0, n);
+      } catch (e) { console.error('drag file read', e); return null; }
+    });
+    ipcMain.on('drag-file-done', (_e, id) => closeDragFiles(id == null ? null : String(id)));
     ipcMain.handle('cursor-hide', (_e, on) => { try { setCursorsHidden(!!on && !!cfg.hideHostCursor); } catch (e) { console.error('cursor hide', e); } return cursorsHidden; });
     // Only touch the clipboard when its content actually changed.
     ipcMain.handle('clip-read', (_e, lastSeq) => {
@@ -287,7 +345,7 @@ else {
     screen.on('display-removed', displaysChanged);
     screen.on('display-metrics-changed', (_e, _d, changed) => { if (changed.some((c) => c !== 'workArea')) displaysChanged(); });
     if (!ISOLATED) createTray();
-    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app });
+    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile });
     if (BENCH) require('./bench').run({ cfg, bench: benchCfg, buildClientHtml, app });
     if (LOCALTEST) {
       const file = path.join(app.getPath('userData'), 'my-remote-localtest.html');
