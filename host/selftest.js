@@ -50,6 +50,22 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile }) 
   const check = (name, ok, detail) => { results.push(!!ok); console.log(`[selftest] ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  - ' + detail : ''}`); };
   const info = (text) => console.log(`[selftest] INFO  ${text}`);
 
+  // host/bin/capture.dll is a built file that is committed: it must be the one built from the
+  // source in native/ as it is now (native/build.js records both). Not there in a packaged copy.
+  {
+    const dll = path.join(__dirname, 'bin', 'capture.dll'), src = path.join(__dirname, '..', 'native', 'capture.cpp');
+    if (fs.existsSync(dll) && fs.existsSync(src)) {
+      const sha = (data) => require('crypto').createHash('sha256').update(data).digest('hex');
+      let rec = {};
+      try { rec = JSON.parse(fs.readFileSync(dll + '.json', 'utf8')); } catch {}
+      const sameSrc = rec.sourceSha256 === sha(fs.readFileSync(src, 'utf8').replace(/\r\n/g, '\n'));
+      const sameDll = rec.dllSha256 === sha(fs.readFileSync(dll));
+      check('the capture module is the one built from native/capture.cpp', sameSrc && sameDll,
+        !sameSrc ? 'native/capture.cpp differs from what host/bin/capture.dll was built from: run native/build.js'
+          : !sameDll ? 'host/bin/capture.dll is not the file native/build.js recorded' : '');
+    }
+  }
+
   // Pure coordinate mapping (no input is injected): two monitors side by side, 1080p then 1440p.
   {
     const virt = { x: 0, y: 0, width: 4480, height: 1440 };

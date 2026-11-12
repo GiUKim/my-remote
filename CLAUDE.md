@@ -51,14 +51,17 @@ self-test, opens a view-only client in their default browser).
   it, or from any other copyleft project, into this repository.
 - **Native code is built from the sources in `native/`** with the distribution's own cross-compiler on a
   Linux machine the user provides (`node native/build.js user@host`). Do not download compilers,
-  toolchains or prebuilt binaries from elsewhere onto either machine, and do not commit the DLLs.
+  toolchains or prebuilt binaries from elsewhere onto either machine. The one DLL that is committed is
+  `host/bin/capture.dll`, together with `host/bin/capture.dll.json` (what it was built from); commit
+  it only as `native/build.js` wrote it, in the same commit as the `capture.cpp` it was built from.
+  The self-test fails when the two do not match. Never commit a DLL from anywhere else.
 - **Do not inject input on the user's machine as a test** beyond what `--selftest` does (it injects
   none). Stray clicks and keystrokes land in whatever the user has open.
 - Do not commit `node_modules/`, `tools/`, `dist/`, or any `config.json` (see `.gitignore`).
 
 ## Gotchas
 
-- **Native capture** (`capture: 'auto'`, used when the DLL is there). `preload.js` loads the DLL through
+- **Native capture** (`capture: 'auto'`, used when `host/bin/capture.dll` is there, which it is in the repo). `preload.js` loads the DLL through
   koffi (so the host window runs with `sandbox: false`; context isolation stays on) and runs one loop
   per monitor: `mc_next` waits for the next desktop image on a worker thread, the pixels become a
   `VideoFrame`, that goes over a message port to the page, and `host.js` writes it into a
@@ -135,7 +138,7 @@ Run from `host/` with Electron's env var cleared.
 | `npm run selftest` | Local end-to-end test, prints `[selftest] PASS/FAIL` lines, exits 0 or 1 |
 | `electron . --selftest --shell-check` | Same, plus the client app's one-click layout on the real screens. Fullscreen windows cover every monitor for a few seconds, so ask the user first |
 | `electron . --selftest --dump-panel=<file.png>` | Quick look at the arrangement panel: connects, draws the panel as if the client had two screens, writes pictures (`<file>.png`, `-ctrl-drag`, `-swap-drag`, `-together`) and exits. About 20 s, opens no window |
-| `node native/build.js user@host[:folder]` | Builds the native modules on a Linux machine with mingw-w64 and puts the DLLs into `tools/native`. After a change in `native/` |
+| `node native/build.js user@host[:folder]` | Builds the native modules on a Linux machine with mingw-w64: `host/bin/capture.dll` + `capture.dll.json` (commit them with the source), `tools/native/capprobe.dll`. After a change in `native/` |
 | `npm run bench -- --native-probe --capture-probe ...` | Bench with a native observer of the same display: reports when the picture was on the host's own screen and how long after that the capturer in use had it. Needs `tools/native/capprobe.dll` |
 | `electron . --selftest --clip-check` | Same, plus putting two files on this PC's clipboard and reading them back. Only runs when the clipboard holds nothing or plain text, which is put back |
 | `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first |
@@ -163,9 +166,10 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/main.js` | Electron main: config and key storage, monitor enumeration, tray, IPC, isolated modes |
 | `host/preload.js` | The only bridge between the renderer and main (`window.hostApi`). Also runs the native capturer's loops and hands their frames to the page over a message port |
 | `host/host.html`, `host/host.js` | Host UI and the WebRTC side: capture, encoding control, data-channel routing |
-| `native/capture.cpp` | The native screen capturer (DXGI Desktop Duplication), a DLL the host loads when it is there (`tools/native/capture.dll` or `host/bin/capture.dll`; neither is committed) |
+| `native/capture.cpp` | The native screen capturer (DXGI Desktop Duplication) |
+| `host/bin/capture.dll`, `capture.dll.json` | That capturer built by `native/build.js` (stripped, no time stamp: the same source and compiler give the same file), and the record of the source hash, DLL hash, compiler and command. Committed. The host loads it when it is there; without it the engine's capturer is used |
 | `native/capprobe.cpp` | Bench only: watches a display natively and reports when each bench frame was presented and handed over |
-| `native/build.js` | Sends the sources in `native/` to a Linux machine, builds them there with mingw-w64 and brings the DLLs back into `tools/native` |
+| `native/build.js` | Sends the sources in `native/` to a Linux machine, builds them there with mingw-w64 and brings the DLLs back: `capture.dll` (and its record) into `host/bin`, the rest into `tools/native` |
 | `host/input.js` | Win32 through koffi FFI: `SendInput`, cursor shape and picture, hiding/restoring the system cursors |
 | `host/cursor-guard.js` | Separate small process that restores the cursors if the host process dies |
 | `host/signal.js` | Shared by host and client: key derivation, encrypted signaling channel |

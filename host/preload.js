@@ -38,8 +38,8 @@ function capturer() {
   if (lib !== null) return lib;
   lib = false;
   try {
-    const file = [path.join(__dirname, 'bin', 'capture.dll'), path.join(__dirname, '..', 'tools', 'native', 'capture.dll')].find((f) => { try { return fs.statSync(f).isFile(); } catch { return false; } });
-    if (file) {
+    const file = path.join(__dirname, 'bin', 'capture.dll'); // built by native/build.js, committed
+    if (fs.existsSync(file)) {
       const dll = require('koffi').load(file);
       lib = {
         open: dll.func('int mc_open(int px, int py)'),

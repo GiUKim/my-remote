@@ -1,0 +1,2 @@
+# Built files are kept byte for byte (host/bin/capture.dll is checked against its recorded hash).
+*.dll binary
