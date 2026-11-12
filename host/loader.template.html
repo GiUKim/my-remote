@@ -55,8 +55,15 @@ function launch(html, key, updated) {
   document.write(html);
   document.close();
 }
+// The host names its page by the first 20 hex digits of its SHA-256 (getClientApp in main.js).
+// Fewer digits would be easy to match with a made-up page, so a shorter name is never trusted.
+async function digest(html) {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(html)));
+  return Array.from(d, (x) => x.toString(16).padStart(2, '0')).join('');
+}
 
-async function go() {
+// fresh: do not use the stored copy of the page.
+async function go(fresh) {
   if (busy) return;
   const key = $('key').value.trim();
   store.set('mr_key', $('remember').checked ? key : null);
@@ -64,7 +71,7 @@ async function go() {
   try { keys = await RD.derive(key); } catch (e) { msg('오류: ' + e.message); return; }
   busy = true; $('go').disabled = true;
   const fail = (text) => { busy = false; $('go').disabled = false; msg(text); };
-  const cached = store.get('mr_app_html');
+  const cached = fresh ? null : store.get('mr_app_html');
   const have = cached ? store.get('mr_app_hash') || '' : '';
   const sid = RD.rand(16);
   let done = false, chan = null;
@@ -72,7 +79,7 @@ async function go() {
     msg('호스트에 연결하는 중…');
     chan = RD.channel({
       server: SERVER, subTopic: keys.topicClient, pubTopic: keys.topicHost, rxKey: keys.h2c, txKey: keys.c2h,
-      onMessage: (m) => {
+      onMessage: async (m) => {
         if (done || !m || m.t !== 'app' || m.sid !== sid) return;
         done = true;
         chan.close();
@@ -81,7 +88,13 @@ async function go() {
           store.set('mr_app_hash', String(m.hash || ''));
           launch(m.html, key, true);
         } else if (cached && m.hash === have) {
-          launch(cached, key, false);
+          // Other local files opened in this browser can share this storage, so the stored copy may
+          // not be the page it claims to be. It gets the key only when its own hash is the host's;
+          // otherwise the page is fetched anew.
+          let same = false;
+          try { same = have.length >= 20 && (await digest(cached)).startsWith(have); } catch {}
+          if (same) launch(cached, key, false);
+          else { fail(''); go(true); }
         } else {
           fail('호스트에서 클라이언트 화면을 받지 못했습니다. 다시 시도해 주세요.');
         }
@@ -102,7 +115,7 @@ async function go() {
   }
 }
 
-$('go').onclick = go;
+$('go').onclick = () => go();
 $('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
 { const k = store.get('mr_key'); if (k) { $('key').value = k; $('remember').checked = true; } }
 if (params.get('k')) { $('key').value = params.get('k'); try { history.replaceState(null, '', location.pathname); } catch {} }
