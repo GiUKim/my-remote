@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>My Remote</title>
 <style>
   html, body { height: 100%; margin: 0; background: #000; color: #e6e8eb; font: 14px/1.5 "Segoe UI", "Malgun Gothic", sans-serif; overflow: hidden; user-select: none; }
@@ -10,7 +10,9 @@
   video { -webkit-user-drag: none; }
   #bar { height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: #1d2229; border-bottom: 1px solid #2c333d; box-sizing: border-box; white-space: nowrap; overflow: hidden; }
   :fullscreen #bar { display: none; }
-  #stage { position: absolute; inset: 34px 0 0 0; overflow: hidden; }
+  /* touch-action: a finger or pen dragged over the picture is input for the host, not a pan or zoom of this page
+     (the browser would take the gesture over and cancel the pointer half way) */
+  #stage { position: absolute; inset: 34px 0 0 0; overflow: hidden; touch-action: none; }
   :fullscreen #stage { inset: 0; }
   button, select { font: inherit; background: #343c48; color: #fff; border: 0; border-radius: 5px; padding: 3px 10px; cursor: pointer; }
   button.on { background: #2b6cff; }
@@ -208,7 +210,12 @@ function send(o) {
   if (dc && dc.readyState === 'open') dc.send(JSON.stringify(o));
 }
 function liveViews() {
-  for (let i = views.length - 1; i >= 0; i--) if (views[i].win.closed) views.splice(i, 1);
+  for (let i = views.length - 1; i >= 0; i--) {
+    let gone = views[i].win.closed;
+    // A window that went on to another page (one we may not even read) shows nothing of ours any more.
+    if (!gone) try { void views[i].win.document.body; } catch { gone = true; }
+    if (gone) views.splice(i, 1);
+  }
   return views;
 }
 // What a window shows ("sel"): one monitor (its index), several together (a sorted list of
@@ -233,6 +240,7 @@ function makeView(win, root, isMain) {
   const view = {
     win, root, isMain, sel: 0, fit: 'fit', pan: { x: 0, y: 0 }, panes: [], screenIdx: null,
     swallow: new Set(), pasteKey: null, pasteTimer: 0, pending: null, raf: 0, lastPtr: null, panDir: null, panRaf: 0, toastTimer: 0,
+    cmdKeys: new Set(),
   };
   const t = (view.toastEl = win.document.createElement('div'));
   t.style.cssText = 'position:absolute;left:50%;top:28px;transform:translateX(-50%);z-index:4;display:none;padding:8px 16px;border-radius:8px;background:rgba(20,23,28,.92);border:1px solid #3a4350;color:#e6e8eb;font:14px "Segoe UI","Malgun Gothic",sans-serif;white-space:nowrap;pointer-events:none';
@@ -244,6 +252,20 @@ function makeView(win, root, isMain) {
   const editable = (n) => { const el = n && (n.nodeType === 1 ? n : n.parentElement); return !!(el && el.closest('input, textarea, select')); };
   doc.addEventListener('dragstart', (ev) => { if (!editable(ev.target)) { ev.preventDefault(); window.__rd.ptr.drag++; } }, true);
   doc.addEventListener('selectstart', (ev) => { if (!editable(ev.target)) ev.preventDefault(); }, true);
+  // A file (or a link) dragged in from this PC and let go anywhere but on a picture of the host must
+  // not make the browser open it in this window: that would replace the page, and with it the session
+  // or this monitor's window. On a picture, the picture's own handlers send the files (attachPointer).
+  const carried = (ev) => { const t = ev.dataTransfer ? [...ev.dataTransfer.types] : []; return t.includes('Files') ? 'files' : t.includes('text/uri-list') ? 'link' : ''; };
+  const onPicture = (ev) => view.panes.some((p) => p.video === ev.target);
+  const guard = (ev) => { const k = carried(ev); if (k === 'files' || (k === 'link' && !editable(ev.target))) ev.preventDefault(); };
+  doc.addEventListener('dragenter', guard, true);
+  doc.addEventListener('dragover', guard, true);
+  doc.addEventListener('drop', (ev) => {
+    guard(ev);
+    if (carried(ev) !== 'files') return;
+    if (READONLY) toast(view, '보기 전용이라 파일을 보낼 수 없습니다', 3000);
+    else if (!onPicture(ev)) toast(view, '파일은 호스트 화면 위에 놓아야 보낼 수 있습니다', 3000);
+  }, true);
   attachKeys(view);
   const relayout = () => { layout(view); scheduleView(); };
   win.addEventListener('resize', relayout);
@@ -263,14 +285,14 @@ function toast(view, text, ms) {
   view.toastTimer = setTimeout(() => { view.toastEl.style.display = 'none'; }, ms || 1400);
 }
 function render(view) {
-  for (const p of view.panes) p.video.remove();
+  for (const p of view.panes) { p.video.srcObject = null; p.video.remove(); } // let go of its player, not only of the element
   view.panes = [];
   const list = selList(view.sel).map((i) => monitors[i]);
   if (view.isMain) $('empty').style.display = monitors.length && !list.length ? 'flex' : 'none';
   for (const m of list) {
     const v = view.win.document.createElement('video');
     v.autoplay = true; v.muted = true; v.playsInline = true; v.tabIndex = 0;
-    v.style.cssText = 'position:absolute;display:block;outline:none;background:#000;object-fit:fill;cursor:' + cursorCss;
+    v.style.cssText = 'position:absolute;display:block;outline:none;background:#000;object-fit:fill;touch-action:none;cursor:' + (carrying() ? 'copy' : cursorCss);
     if (m.stream) v.srcObject = m.stream;
     const pane = { idx: m.idx, video: v };
     attachPointer(view, pane);
@@ -332,8 +354,20 @@ function refreshStreams() {
     if (st && p.video.srcObject !== st) { p.video.srcObject = st; p.video.play().catch(() => {}); }
   }
 }
+// While something is being carried out of the picture (see attachPointer), every window shows the
+// "copy" cursor instead of the host's.
+const carrying = () => views.some((v) => v.dragOut && !v.win.closed);
 function applyCursor() {
-  for (const view of liveViews()) for (const p of view.panes) p.video.style.cursor = view.dragOut ? 'copy' : cursorCss;
+  const out = carrying();
+  for (const view of liveViews()) {
+    for (const p of view.panes) p.video.style.cursor = out ? 'copy' : cursorCss;
+    // Outside our windows the browser may well keep the last cursor it showed over them: it applies a
+    // page's cursor only while the pointer is over that page, and the system asks a window that holds
+    // the mouse for none. So "copy" is put everywhere it could take effect: the pictures, each window's
+    // root and its document. Whether it then shows outside depends on the browser.
+    view.root.style.cursor = out ? 'copy' : '';
+    view.win.document.documentElement.style.cursor = out ? 'copy' : '';
+  }
 }
 // Tell the host which monitors are on screen and how large each is shown, in
 // device pixels, so it encodes only those and never more pixels than are visible.
@@ -467,6 +501,18 @@ function queueMove(view, p, buttons) {
   lastAt = p;
   send(buttons == null ? { t: 'mm', d: p.d, x: p.x, y: p.y } : { t: 'mm', d: p.d, x: p.x, y: p.y, h: hostMask(buttons) });
 }
+// A second button pressed, or one of two let go, while another is held arrives as a move, not as a
+// down or an up: press or let go of that button on the host too, where the pointer is.
+function chord(ev, p) {
+  const b = ev.button;
+  if (!(b >= 0 && b < 5)) return;
+  const bit = 1 << b, down = !!(hostMask(ev.buttons) & bit);
+  if (down === !!(held & bit)) return;
+  held = down ? held | bit : held & ~bit;
+  lastAt = p;
+  send({ t: down ? 'md' : 'mu', b, d: p.d, x: p.x, y: p.y });
+  if (down) watchOwn(ev);
+}
 // The browser ended the pointer's events while buttons were held on the host: let go of them there.
 function releaseHeld() {
   for (let b = 0; b < 5; b++) {
@@ -481,12 +527,32 @@ function releaseHeld() {
 // the host's pointer waits where it was. Letting go out there ends the host's drag without a drop
 // and brings what was dragged over to this PC (the host does that part, see dragOut in its main.js).
 // True when the pointer is over none of our windows, i.e. over this PC's own desktop and programs.
+// Our windows' rectangles say where they are, not whether another program's window lies on top of
+// one of them; the client app can tell (shell.pointerOwn: is the window under the real pointer ours?).
+// That answer is about the real pointer, so it only counts for the real pointer's events, not for
+// events a test makes up.
 function leftAll(ev) {
+  if (ev.isTrusted && ownUnder === false) return true;
   for (const v of liveViews()) {
     const w = v.win;
     if (ev.screenX >= w.screenX && ev.screenY >= w.screenY && ev.screenX < w.screenX + w.outerWidth && ev.screenY < w.screenY + w.outerHeight) return false;
   }
   return true;
+}
+// Asked every 50 ms while a button is held (that is when leaving matters), and forgotten when none is.
+let ownUnder = null, ownWatch = 0;
+function watchOwn(ev) {
+  if (!ev.isTrusted) return;
+  ownUnder = null; // pressed on one of our pictures: an answer from before (a drag that just ended outside) no longer holds
+  if (ownWatch || !held || !(shell && shell.pointerOwn)) return;
+  const tick = async () => {
+    let r = null;
+    try { r = await shell.pointerOwn(); } catch {}
+    if (!held) { ownWatch = 0; ownUnder = null; return; }
+    ownUnder = r === true || r === false ? r : null;
+    ownWatch = setTimeout(tick, 50);
+  };
+  ownWatch = setTimeout(tick, 0);
 }
 // The client app can put things where they were let go (client/shell.js); a browser cannot.
 const canDrop = () => !!(shell && shell.dropPoint && shell.dropText && shell.dropFiles && shell.fileBegin);
@@ -513,6 +579,16 @@ const WHY = {
   nodrag: '호스트에서 끌기가 진행 중이 아니었습니다', nocopy: '끌던 항목을 복사하지 못했습니다',
   empty: '끌던 것이 파일이나 글자가 아닙니다', toobig: '파일이 너무 많거나 큽니다 (최대 5000개, 2 GB)',
 };
+// The host leaves out what it cannot send (beyond 5000 files or 2 GB, or what it could not read) and says how many.
+const skippedNote = (d) => (d && d.skipped > 0 ? ` (${d.skipped}개는 제외: 너무 많거나 크거나 읽을 수 없음)` : '');
+// What was being brought over will not (all) arrive: the connection ended, the host gave up, ...
+function dropFailed(d, text) {
+  if (d) clearTimeout(d.wait);
+  if (drop === d) drop = null;
+  window.__rd.xfer.failed++;
+  toast(where(d), text || '파일을 받지 못했습니다', 5000);
+}
+let receiving = null; // the files being received now: { d, abort() } (see receiveFiles)
 async function gotDragData(m) {
   const d = drop;
   if (!d) return;
@@ -525,7 +601,11 @@ async function gotDragData(m) {
     if (!how) gotClip(m.s);
     toast(where(d), how === 'pasted' ? '놓은 곳에 붙여 넣었습니다' + (m.cut ? ' (너무 길어 앞부분만)' : '') : '가져온 글자를 복사해 두었습니다. 붙여 넣을 곳에서 Ctrl+V를 누르세요', how === 'pasted' ? 2500 : 6000);
   } else if (m.kind === 'files' && Array.isArray(m.files)) {
-    toast(where(d), `파일 ${m.files.filter((f) => !f.dir).length}개를 받는 중…`, 600000);
+    d.skipped = Number(m.skipped) || 0;
+    toast(where(d), `파일 ${m.files.filter((f) => !f.dir).length}개를 받는 중…` + skippedNote(d), 600000);
+    // The files follow on a channel of their own (receiveFiles). The host gives up when that does not
+    // open within 8 s; then say so here too, instead of showing "receiving" for ten minutes.
+    if (!d.channel) d.wait = setTimeout(() => { if (drop === d && !d.channel) dropFailed(d); }, 12000);
   } else if (d.clip) {
     drop = null; // the host's clipboard changed meanwhile: nothing to say
   } else {
@@ -535,37 +615,73 @@ async function gotDragData(m) {
     toast(where(d), '가져올 수 있는 것이 없습니다' + (WHY[m.why] ? ' — ' + WHY[m.why] : ''), 5000);
   }
 }
+// A browser keeps what arrives in memory until it saves the file. So that a file of a gigabyte or two
+// does not need that much memory in this page (which runs every window of the session), the pieces are
+// gathered into Blobs of 16 MB as they come: the browser keeps those outside the page, on disk when
+// they are large. The whole transfer is bounded by what the host may send (5000 files, 2 GB), and a
+// file is refused as soon as more arrives than its header announced.
+const RECV_MAX_BYTES = 2 * 1024 * 1024 * 1024, RECV_FOLD = 16 * 1024 * 1024;
 // Files arrive on a channel of their own: a header, the bytes in pieces, an end mark - one file after
 // another. A dragged folder comes as its files with their path inside it ("folder/sub/file") and its
 // empty folders as {t:'dir'}; the app rebuilds it, a browser saves the files one by one.
 function receiveFiles(ch) {
   ch.binaryType = 'arraybuffer';
   const d = drop, app = canDrop(), ids = [], tops = new Set(), group = Math.random().toString(36).slice(2, 12);
-  let cur = null, bytes = 0, shownAt = 0, failed = false, files = 0;
+  let cur = null, bytes = 0, shownAt = 0, failed = false, finished = false, files = 0;
   let queue = Promise.resolve(); // the app writes to disk asynchronously; keep the pieces in order
-  const fail = () => { failed = true; if (drop === d) drop = null; window.__rd.xfer.failed++; toast(where(d), '파일을 받지 못했습니다', 5000); };
+  if (d) { d.channel = true; clearTimeout(d.wait); }
+  const fail = () => {
+    if (failed) return;
+    failed = true;
+    if (receiving === me) receiving = null;
+    try { ch.close(); } catch {} // the host stops sending
+    // What has arrived is of no use: the app throws it away (an app from before fileAbort at least
+    // closes the file it was writing), a browser lets go of the pieces.
+    if (app) {
+      const left = cur && cur.id ? [...ids, cur.id] : ids;
+      try {
+        if (shell.fileAbort) for (const id of left) shell.fileAbort(id, group).catch(() => {});
+        else if (cur && cur.id) shell.fileEnd(cur.id).catch(() => {});
+      } catch {}
+    }
+    cur = null;
+    dropFailed(d);
+  };
+  // The channel can end before everything came (the connection dropped, the host stopped). Queued
+  // behind the messages already here, so that it never overtakes a "filesdone" still being handled.
+  const me = { d, abort: () => { queue = queue.then(() => { if (!finished) fail(); }); } };
+  receiving = me;
   const step = async (data) => {
     if (failed) return;
     if (typeof data !== 'string') {
       if (!cur) return;
       bytes += data.byteLength;
-      if (app) await shell.fileChunk(cur.id, new Uint8Array(data)); else cur.parts.push(data);
+      cur.got += data.byteLength;
+      if ((cur.size != null && cur.got > cur.size) || bytes > RECV_MAX_BYTES) throw new Error('more than announced');
+      if (app) await shell.fileChunk(cur.id, new Uint8Array(data));
+      else {
+        cur.parts.push(data);
+        cur.loose += data.byteLength;
+        if (cur.loose >= RECV_FOLD) { cur.blobs.push(new Blob(cur.parts)); cur.parts = []; cur.loose = 0; }
+      }
       if (performance.now() - shownAt > 400) { shownAt = performance.now(); toast(where(d), `파일 받는 중… ${(bytes / 1048576).toFixed(1)} MB`, 600000); }
       return;
     }
     const m = JSON.parse(data);
     if (m.t === 'file') {
-      const name = String(m.name);
+      const name = String(m.name), size = Number(m.size);
       tops.add(name.split('/')[0]);
-      cur = { name, parts: [], id: app ? await shell.fileBegin(name, group) : null };
+      cur = { name, size: Number.isFinite(size) && size >= 0 ? size : null, got: 0, parts: [], blobs: [], loose: 0, id: null };
+      if (app) cur.id = await shell.fileBegin(name, group);
     } else if (m.t === 'dir') {
       tops.add(String(m.name).split('/')[0]);
       if (app && shell.makeDir) await shell.makeDir(String(m.name), group);
     } else if (m.t === 'fileend' && cur) {
+      if (cur.size != null && cur.got !== cur.size) throw new Error('size'); // cut short on the way: do not keep a broken file
       files++;
       if (app) { await shell.fileEnd(cur.id); ids.push(cur.id); }
       else {
-        const blob = new Blob(cur.parts);
+        const blob = new Blob([...cur.blobs, ...cur.parts]);
         if (window.__rd.keepFiles) {
           const h = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
           window.__rd.files.push({ name: cur.name, size: blob.size, sha: [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('') });
@@ -573,19 +689,23 @@ function receiveFiles(ch) {
       }
       cur = null;
     } else if (m.t === 'filesdone') {
+      finished = true;
+      if (receiving === me) receiving = null;
       if (drop === d) drop = null;
       window.__rd.xfer.files++;
-      const what = tops.size === 1 && files > 1 ? `"${[...tops][0]}" (파일 ${files}개)` : `파일 ${files}개`;
-      if (!app) { toast(where(d), `${what}를 이 PC의 다운로드 폴더에 저장했습니다`, 6000); return; }
+      const what = tops.size === 1 && files > 1 ? `"${[...tops][0]}" (파일 ${files}개)` : `파일 ${files}개`, note = skippedNote(d);
+      // The browser saves each file as a download; with several it may first ask whether to allow that.
+      if (!app) { toast(where(d), `${what} 다운로드를 시작했습니다${note}` + (files > 1 ? ' · 브라우저가 여러 파일 다운로드를 물으면 허용하세요' : ''), 8000); return; }
       if (d) await d.ready;
       const r = (await shell.dropFiles(d ? d.id : null, ids, group)) || {};
       window.__rd.xfer.how = r.how || 'none';
       window.__rd.xfer.placed++;
-      toast(where(d), r.how === 'saved' ? `${what}를 "${r.where}"에 넣었습니다` : r.how === 'pasted' ? `${what}를 놓은 곳에 붙여 넣었습니다`
-        : r.how === 'clipboard' ? `${what}를 받았습니다. 넣을 폴더에서 Ctrl+V를 누르세요` : '받은 파일을 놓지 못했습니다', r.how === 'clipboard' ? 9000 : 4000);
+      toast(where(d), r.how === 'saved' ? `${what}를 "${r.where}"에 넣었습니다${note}` : r.how === 'pasted' ? `${what}를 놓은 곳에 붙여 넣었습니다${note}`
+        : r.how === 'clipboard' ? `${what}를 받았습니다. 넣을 폴더에서 Ctrl+V를 누르세요${note}` : '받은 파일을 놓지 못했습니다', r.how === 'clipboard' ? 9000 : 4000);
     } else if (m.t === 'fileerror') throw new Error('host');
   };
   ch.onmessage = (e) => { queue = queue.then(() => step(e.data)).catch(fail); };
+  ch.onclose = me.abort;
 }
 
 // ---- files dragged or pasted in, onto the host -----------------------------------------
@@ -594,7 +714,7 @@ function receiveFiles(ch) {
 // icon, the desktop, a mail or chat window). Pasted (Ctrl+V) with files on this PC's clipboard, they
 // go onto the host's clipboard and the host pastes them. Works in a browser and in the app.
 const PUT_MAX_FILES = 5000, PUT_MAX_BYTES = 2 * 1024 * 1024 * 1024;
-let putting = false, putView = null;
+let putting = null, putView = null; // putting: the upload under way (one at a time)
 // What a drop brought: files with their path ('folder/sub/name') and empty folders. The entries
 // must be taken from the event at once (before the first await), the browser forgets them after.
 function dropEntries(dt) {
@@ -661,7 +781,7 @@ async function upload(view, mode, at, got) {
   if (!list.length && !got.dirs.length) return false;
   if (putting) { toast(view, '앞의 파일을 아직 보내는 중입니다', 3000); return false; }
   if (list.length > PUT_MAX_FILES || bytes > PUT_MAX_BYTES) { toast(view, '파일이 너무 많거나 큽니다 (최대 5000개, 2 GB)', 5000); return false; }
-  putting = true;
+  const me = (putting = {});
   putView = view;
   window.__rd.xfer.inStart++;
   const ch = pc.createDataChannel('upload', { ordered: true }), CHUNK = 60000;
@@ -677,7 +797,7 @@ async function upload(view, mode, at, got) {
         if (ch.readyState !== 'open') throw new Error('closed');
         ch.send(await file.slice(off, off + CHUNK).arrayBuffer());
         sent += Math.min(CHUNK, file.size - off);
-        while (ch.bufferedAmount > 4 * 1024 * 1024) await sleep(15);
+        while (ch.bufferedAmount > 4 * 1024 * 1024 && ch.readyState === 'open') await sleep(15); // a closed channel keeps its count
         if (performance.now() - shownAt > 400) { shownAt = performance.now(); toast(view, `호스트로 보내는 중… ${(sent / 1048576).toFixed(1)} / ${(bytes / 1048576).toFixed(1)} MB`, 600000); }
       }
       ch.send(JSON.stringify({ t: 'fileend' }));
@@ -690,7 +810,7 @@ async function upload(view, mode, at, got) {
     toast(view, '호스트로 보내지 못했습니다', 5000);
     try { ch.close(); } catch {}
     return false;
-  } finally { putting = false; }
+  } finally { if (putting === me) putting = null; } // a new connection may have started another one meanwhile
 }
 // ---- files copied on the host, for pasting here ------------------------------------------
 // The host says when files are copied there (Ctrl+C in Explorer, ...). They are fetched when the
@@ -757,7 +877,7 @@ function edgePan(view, ev) {
 function attachPointer(view, pane) {
   const v = pane.video;
   const here = (ev) => { const q = rel(pane, ev.clientX, ev.clientY); return q && { d: q.d, x: clamp(q.x, 0, 1), y: clamp(q.y, 0, 1) }; };
-  const setOut = (on) => { if (view.dragOut !== on) { view.dragOut = on; v.style.cursor = on ? 'copy' : cursorCss; } };
+  const setOut = (on) => { if (!!view.dragOut !== on) { view.dragOut = on; applyCursor(); } };
   v.addEventListener('pointermove', (ev) => {
     if (ev.buttons && !READONLY && leftAll(ev)) {
       // A button is held and the pointer is over this PC's own desktop or programs.
@@ -774,6 +894,7 @@ function attachPointer(view, pane) {
     const p = ev.buttons ? mapPoint(ev, view, pane) : here(ev);
     if (!p) return;
     view.lastPtr = { pane, cx: ev.clientX, cy: ev.clientY };
+    chord(ev, p);
     queueMove(view, p, ev.buttons);
     edgePan(view, ev);
   });
@@ -793,10 +914,15 @@ function attachPointer(view, pane) {
     if (ev.button >= 0 && ev.button < 5) held |= 1 << ev.button;
     lastAt = p;
     send({ t: 'md', b: ev.button, d: p.d, x: p.x, y: p.y }); // 0 left, 1 middle, 2 right, 3 back, 4 forward
+    watchOwn(ev);
   });
   v.addEventListener('pointerup', (ev) => {
-    if (ev.button >= 0 && ev.button < 5) held &= ~(1 << ev.button);
-    const outside = !READONLY && leftAll(ev), b = ev.button;
+    // Only a button that this page pressed on the host is let go there. A release on its own (pressed
+    // elsewhere, or already let go when the window lost the focus) would reach the program under the
+    // host's pointer as a stray button-up, and a right one opens its context menu.
+    const b = ev.button, bit = b >= 0 && b < 5 ? 1 << b : 0, was = !bit || !!(held & bit);
+    held &= ~bit;
+    const outside = !READONLY && leftAll(ev);
     if (view.dragOut || (outside && hostDrag)) {
       // Let go outside: the host ends its drag and sends what was being dragged (see gotDragData).
       setOut(false);
@@ -817,7 +943,7 @@ function attachPointer(view, pane) {
       const decide = () => {
         if (hostDrag) { window.__rd.xfer.late++; startDrop(d); send({ t: 'dragout', b }); }
         else if (performance.now() < until) setTimeout(decide, 25);
-        else if (lastAt) send({ t: 'mu', b, d: lastAt.d, x: lastAt.x, y: lastAt.y });
+        else if (lastAt && was) send({ t: 'mu', b, d: lastAt.d, x: lastAt.x, y: lastAt.y });
       };
       decide();
       return;
@@ -826,6 +952,7 @@ function attachPointer(view, pane) {
     const p = mapPoint(ev, view, pane) || lastAt; if (!p) return;
     ev.preventDefault();
     view.pending = null;
+    if (!was) return;
     lastAt = p;
     send({ t: 'mu', b: ev.button, d: p.d, x: p.x, y: p.y });
   });
@@ -864,6 +991,8 @@ function attachPointer(view, pane) {
 // Local shortcuts (Ctrl+Alt+...). Returns true when the key was consumed here.
 function hotkey(view, ev) {
   if (!hotkeysOn || !ev.ctrlKey || !ev.altKey || ev.shiftKey || ev.metaKey) return false;
+  // AltGr arrives as Ctrl+Alt too; on many keyboards (German, French, ...) it types characters such as { [ ] } @.
+  if (ev.getModifierState && ev.getModifierState('AltGraph')) return false;
   const c = ev.code;
   const digit = /^(Digit|Numpad)([0-9])$/.exec(c);
   if (!digit && !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', 'NumpadEnter'].includes(c)) return false;
@@ -876,6 +1005,10 @@ function hotkey(view, ev) {
   else toggleFullscreen(view);
   return true;
 }
+// A Mac: Cmd does there what Ctrl does on the host (Cmd+C, Cmd+V, Cmd+Z, ...), so it is sent as Ctrl,
+// and Cmd+V is the paste shortcut. Ctrl stays Ctrl. Elsewhere Meta is the Windows key and goes as it is.
+const MAC = /Mac/i.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '');
+const hostKey = (code) => (MAC && code === 'MetaLeft' ? 'ControlLeft' : MAC && code === 'MetaRight' ? 'ControlRight' : code);
 function attachKeys(view) {
   const win = view.win, doc = win.document;
   const local = () => { const tag = doc.activeElement && doc.activeElement.tagName; return !dc || (view.isMain && arr.open) || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA'; };
@@ -890,9 +1023,11 @@ function attachKeys(view) {
   };
   const onKey = (ev) => {
     if (local()) return;
-    const o = { t: ev.type === 'keydown' ? 'kd' : 'ku', c: ev.code, k: ev.key };
+    const c = hostKey(ev.code), o = { t: ev.type === 'keydown' ? 'kd' : 'ku', c, k: c === ev.code ? ev.key : 'Control' };
     const paste = ev.type === 'keydown' && !ev.repeat && !ev.altKey &&
-      ((ev.code === 'KeyV' && ev.ctrlKey) || (ev.code === 'Insert' && ev.shiftKey && !ev.ctrlKey));
+      ((ev.code === 'KeyV' && (ev.ctrlKey || (MAC && ev.metaKey))) || (ev.code === 'Insert' && ev.shiftKey && !ev.ctrlKey));
+    // macOS sends no key-up for a key let go while Cmd is held: those are let go on the host with Cmd.
+    if (MAC && !/^Meta/.test(ev.code)) { if (ev.type === 'keyup') view.cmdKeys.delete(ev.code); else if (ev.metaKey) view.cmdKeys.add(ev.code); }
     if (paste) {
       ev.stopPropagation(); // not preventDefault: the browser must go on to fire "paste"
       flushPaste();
@@ -905,6 +1040,7 @@ function attachKeys(view) {
       if (hotkey(view, ev)) { view.swallow.add(ev.code); return; }
     } else if (view.swallow.delete(ev.code)) return;
     flushPaste();
+    if (MAC && ev.type === 'keyup' && /^Meta/.test(ev.code)) { for (const k of view.cmdKeys) send({ t: 'ku', c: k, k: '' }); view.cmdKeys.clear(); }
     send(o);
   };
   win.addEventListener('keydown', onKey, true);
@@ -927,7 +1063,7 @@ function attachKeys(view) {
     flushPaste();
   });
   for (const t of ['copy', 'cut']) doc.addEventListener(t, (ev) => { if (!local()) ev.preventDefault(); });
-  win.addEventListener('blur', () => { view.swallow.clear(); flushPaste(); send({ t: 'reset' }); held = 0; setTimeout(maybeFetchClipFiles, 150); }); // never leave keys or buttons stuck on the host
+  win.addEventListener('blur', () => { view.swallow.clear(); view.cmdKeys.clear(); flushPaste(); send({ t: 'reset' }); held = 0; setTimeout(maybeFetchClipFiles, 150); }); // never leave keys or buttons stuck on the host
   win.addEventListener('focus', () => flushClip(win)); // host -> client text that arrived while we were away
   win.addEventListener('mouseup', (ev) => { if (ev.button > 2) ev.preventDefault(); }); // no browser back/forward
 }
@@ -983,7 +1119,7 @@ function openView(sel, scr, screenIdx) {
   d.body.textContent = '';
   d.body.style.cssText = 'margin:0;background:#000;overflow:hidden;height:100vh;font:14px "Segoe UI","Malgun Gothic",sans-serif;color:#e6e8eb;user-select:none';
   const root = d.createElement('div');
-  root.style.cssText = 'position:absolute;inset:0;overflow:hidden';
+  root.style.cssText = 'position:absolute;inset:0;overflow:hidden;touch-action:none'; // as #stage: a touch on the picture is input for the host
   d.body.appendChild(root);
   const view = makeView(w, root, false);
   view.sel = sel;
@@ -1023,7 +1159,7 @@ async function popOut(i) {
   let scr = null, j = null;
   const cs = await clientScreens();
   if (cs) {
-    const used = new Set([cs.cur, ...liveViews().map((v) => v.screenIdx).filter((x) => x != null)]);
+    const used = new Set([...screenMap(cs).values()].filter((x) => x != null)); // screens with a window of ours now
     const free = cs.list.map((_, k) => k).filter((k) => !used.has(k));
     const right = mainView.sel === 'all' || i > mainView.sel;
     const pick = right ? free.find((k) => k > cs.cur) : [...free].reverse().find((k) => k < cs.cur);
@@ -1063,6 +1199,28 @@ function planLayout(N, M, cur, primary) {
   }
   return map;
 }
+// A browser lets one click open a window or go fullscreen, not both: after spreading, this window asks
+// for a click of its own, like the windows it opened (see openView).
+function clickForFullscreen() {
+  if ($('fsCover')) return;
+  const cover = document.createElement('div');
+  cover.id = 'fsCover';
+  cover.style.cssText = 'position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;gap:16px;align-items:center;justify-content:center;background:rgba(10,12,15,.62);cursor:pointer';
+  const big = document.createElement('div'), small = document.createElement('button');
+  big.textContent = '클릭하면 전체화면으로 전환됩니다';
+  big.style.cssText = 'font-size:22px';
+  small.textContent = '창 모드로 계속 쓰기';
+  cover.append(big, small);
+  const gone = () => { cover.remove(); document.removeEventListener('fullscreenchange', onFs); };
+  const onFs = () => { if (document.fullscreenElement) gone(); }; // went fullscreen some other way (button, shortcut)
+  cover.onclick = (e) => {
+    gone();
+    if (e.target !== small) goFullscreen(window);
+    if (mainView.panes[0]) mainView.panes[0].video.focus();
+  };
+  document.addEventListener('fullscreenchange', onFs);
+  $('stage').insertBefore(cover, mainView.toastEl); // under the toasts, and under the panels above the stage
+}
 async function spread() {
   const cs = await clientScreens();
   if (!cs || cs.list.length < 2) {
@@ -1080,21 +1238,23 @@ async function spread() {
   mainView.screenIdx = cs.cur;
   if (map[cs.cur]) { mainView.sel = map[cs.cur].sel; mainView.fit = map[cs.cur].fit || 'fit'; render(mainView); }
   let blocked = 0;
+  const at = screenMap(cs), placed = new Set([mainView]);
   for (const [k, e] of Object.entries(map)) {
     const j = Number(k);
     if (j === cs.cur || e.sel === 'none' || !cs.list[j]) continue;
-    const existing = liveViews().find((v) => v.screenIdx === j);
-    if (existing) { existing.sel = e.sel; existing.fit = e.fit || 'fit'; render(existing); continue; }
+    const existing = liveViews().find((v) => !v.isMain && at.get(v) === j);
+    if (existing) { existing.sel = e.sel; existing.fit = e.fit || 'fit'; render(existing); placed.add(existing); continue; }
     const view = openView(e.sel, cs.list[j], j);
-    if (view) view.fit = e.fit || 'fit'; else blocked++;
+    if (view) { view.fit = e.fit || 'fit'; placed.add(view); } else blocked++;
   }
+  notTwice(placed);
   renderBar();
   scheduleView();
   saveLayout();
   // In the app every window goes fullscreen now, from this one click. A browser places the
   // windows first (asking for fullscreen first can keep them on this screen) and then needs
-  // one click in each window.
-  if (shell) await shell.fullscreenAll(); else await goFullscreen(window);
+  // one click in each window - in this one too once a window was opened: that used up the click.
+  if (shell) await shell.fullscreenAll(); else if (!(await goFullscreen(window))) clickForFullscreen();
   if (blocked) toast(mainView, `창 ${blocked}개가 팝업 차단으로 열리지 못했습니다. 주소창에서 팝업을 "항상 허용"으로 바꾸거나 한 번 더 누르세요.`, 6000);
   else if (N > M) toast(mainView, `호스트 모니터 ${N}개 중 ${M}개를 펼쳤습니다. 나머지는 Ctrl+Alt+←/→ 로 전환하세요.`, 5000);
 }
@@ -1105,12 +1265,44 @@ async function spread() {
 const COLORS = ['#4c8dff', '#ff9f43', '#2ecc71', '#d66bff', '#f1c40f', '#ff6b6b', '#1abc9c', '#e67e22'];
 const arr = { open: false, cs: null, A: [], prev: [], host: [], client: [], drag: null, wires: [], raf: 0, busy: false };
 
-// The arrangement the open windows amount to.
+// The screen of this PC each window is on. A window opened onto a screen may have been moved since,
+// and one opened where no screen was free was put anywhere: when this PC's screens are known, where
+// the window is now decides (its centre). One window per screen: the main window has its own, and a
+// further window on a screen that has one already counts as on none.
+function screenMap(cs) {
+  const at = new Map(), taken = new Set();
+  for (const v of liveViews()) { // the main window first
+    let c = v.isMain ? cs.cur : v.screenIdx;
+    if (!v.isMain && !cs.limited) {
+      const w = v.win, x = w.screenX + w.outerWidth / 2, y = w.screenY + w.outerHeight / 2;
+      const k = cs.list.findIndex((s) => x >= s.left && x < s.left + s.width && y >= s.top && y < s.top + s.height);
+      if (k >= 0) c = k; // else (minimized, off every screen) where it was put
+    }
+    if (c == null || !cs.list[c] || taken.has(c)) c = null; else taken.add(c);
+    if (!v.isMain && !cs.limited) v.screenIdx = c;
+    at.set(v, c);
+  }
+  return at;
+}
+// A window that is on no screen of its own keeps what it shows, but not a monitor that one of the
+// windows just placed on the screens shows now: a monitor is never shown twice.
+function notTwice(placed) {
+  const shown = new Set();
+  for (const v of placed) if (!v.win.closed) for (const h of selList(v.sel)) shown.add(h);
+  for (const v of [...liveViews()]) {
+    if (placed.has(v)) continue;
+    const list = selList(v.sel), keep = list.filter((h) => !shown.has(h));
+    if (keep.length === list.length) continue;
+    if (!keep.length) v.win.close(); else { v.sel = normSel(keep); v.pan = { x: 0, y: 0 }; render(v); }
+  }
+}
+// The arrangement the open windows amount to. A window that shows chosen monitors counts before one
+// that shows them all (an overview): the overview only fills in the monitors no other window shows.
 function currentAssign(cs) {
-  const A = monitors.map(() => null);
-  for (const v of liveViews()) {
-    const c = v.isMain ? cs.cur : v.screenIdx;
-    if (c == null || !cs.list[c]) continue;
+  const A = monitors.map(() => null), at = screenMap(cs);
+  for (const v of [...at.keys()].sort((a, b) => (a.sel === 'all') - (b.sel === 'all'))) {
+    const c = at.get(v);
+    if (c == null) continue;
     for (const h of selList(v.sel)) if (A[h] == null) A[h] = c;
   }
   return A;
@@ -1141,16 +1333,20 @@ function applyAssign(A, cs) {
   let blocked = 0;
   arr.busy = true;
   try {
+    const at = screenMap(cs), placed = new Set([mainView]);
     for (let c = 0; c < cs.list.length; c++) {
       const sel = normSel(A.map((x, h) => (x === c ? h : -1)));
-      let view = c === cs.cur ? mainView : liveViews().find((v) => !v.isMain && v.screenIdx === c);
+      let view = c === cs.cur ? mainView : liveViews().find((v) => !v.isMain && at.get(v) === c);
       if (sel === 'none') {
         if (view && !view.isMain) view.win.close();
         else if (view && view.sel !== 'none') { view.sel = 'none'; render(view); }
       } else if (view) {
+        placed.add(view);
         if (!sameSel(view.sel, sel)) { view.sel = sel; view.pan = { x: 0, y: 0 }; render(view); toast(view, label(sel)); }
-      } else if (!openView(sel, cs.list[c], c)) blocked++;
+      } else if (!(view = openView(sel, cs.list[c], c))) blocked++;
+      else placed.add(view);
     }
+    notTwice(placed);
     mainView.screenIdx = cs.cur;
     mainView.layoutSig = `${monitors.length}:${cs.list.length}`;
     liveViews();
@@ -1202,6 +1398,7 @@ function arrBuild() {
   const boxW = $('arrBox').clientWidth - 44, cs = arr.cs;
   const fit = (list, cap) => Math.min(cap / Math.max(...list.map((m) => m.w)), (boxW - 28 * (list.length - 1)) / list.reduce((a, m) => a + m.w, 0));
   const hs = monitors.map((m) => ({ w: m.width, h: m.height })), ks = fit(hs, 250);
+  for (const t of [...arr.host, ...arr.client]) tileVideos(t, []); // the old tiles' players go with them
   $('arrHost').textContent = ''; $('arrClient').textContent = '';
   arr.host = monitors.map((m, i) => {
     const t = monTile('host', i, m.width * ks, m.height * ks, `${m.width}×${m.height}${m.primary ? ' · 주 모니터' : ''}${m.hdr ? ' · HDR ⚠' : ''}`);
@@ -1366,7 +1563,7 @@ function arrDragEnd(commit) {
   if (!d) return;
   arr.drag = null;
   d.tile.el.classList.remove('lift');
-  if (d.ghost) d.ghost.remove();
+  if (d.ghost) { const gv = d.ghost.querySelector('video'); if (gv) gv.srcObject = null; d.ghost.remove(); }
   if (!d.moved) { if (commit && d.tile.kind === 'host') arrToggle(d.tile.i); return; }
   if (commit && d.aim) arrCommit(arrOp(arr.A, d.tile, d.aim, d.copy)); else arrPaint(arr.A);
 }
@@ -1386,7 +1583,11 @@ for (const type of ['keydown', 'keyup']) window.addEventListener(type, (ev) => {
   if (ev.key === 'Control' && arr.drag && arr.drag.moved) arrDragMove(arr.drag.x, arr.drag.y, type === 'keydown');
   if (type === 'keydown' && ev.key === 'Escape') { if (arr.drag) arrDragEnd(false); else if ($('arrTip').style.display === 'block') arrTip(false); else arrClose(); }
 });
-window.addEventListener('resize', () => { if (arr.open && !arr.drag) { arrBuild(); arrPaint(arr.A); } });
+// Rebuilt once the size has settled, not on every step of a window being resized (each rebuild makes new players).
+window.addEventListener('resize', () => {
+  clearTimeout(arr.resizeTimer);
+  arr.resizeTimer = setTimeout(() => { if (arr.open && !arr.drag) { arrBuild(); arrPaint(arr.A); } }, 150);
+});
 // The explanations live behind the "?" button: a click shows them, a click anywhere else puts them away.
 function arrTip(on) { $('arrTip').style.display = on ? 'block' : 'none'; $('arrHelp').classList.toggle('on', on); }
 $('arrHelp').onclick = (ev) => { ev.stopPropagation(); arrTip($('arrTip').style.display !== 'block'); };
@@ -1405,12 +1606,27 @@ $('arrGo').onclick = async () => { arrClose(); if (shell) await shell.fullscreen
 window.addEventListener('pagehide', () => { for (const v of liveViews()) if (!v.isMain) v.win.close(); });
 
 // ---- connection --------------------------------------------------------------------
+// What belonged to the connection that ends here. The host lets go of its keys and buttons when a
+// session ends, and a new session reports a drag only once one starts: a drag, a held button or a
+// drop left over from this one would mislead the next (moves stopping at the window edge, a release
+// for a button pressed in the old session, "nothing to bring over").
+function forgetSession() {
+  hostDrag = false; held = 0; lastAt = null;
+  for (const v of views) { v.leftAt = 0; v.dragOut = false; v.cmdKeys.clear(); }
+  applyCursor();
+  const r = receiving;
+  if (r) r.abort(); // its files will not all arrive
+  if (drop && (!r || drop !== r.d)) dropFailed(drop, '연결이 끊겨 가져오지 못했습니다');
+  drop = null;
+  putting = null; // an upload under way finds its channel closed and stops by itself
+}
 function cleanupPc() {
   clearTimeout(helloTimer); clearTimeout(retryTimer);
   if (chan) { chan.close(); chan = null; }
   const old = pc;
   pc = null; dc = null;
   if (old) { try { old.close(); } catch {} }
+  forgetSession();
 }
 // Full stop: back to the key panel.
 function disconnect(text) {
@@ -1422,6 +1638,7 @@ function disconnect(text) {
   renderBar();
   $('audio').srcObject = null;
   overlay('');
+  if ($('fsCover')) $('fsCover').remove();
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   $('panel').style.display = 'flex';
   msg(text || '');
@@ -1474,6 +1691,17 @@ function onHostMessage(data) {
   }
 }
 
+// After a host update the page reloads through the loader (see onOffer), which closes the other windows
+// and leaves fullscreen. They are put back on the first connection afterwards: the app needs no click
+// for that; a browser does, so it says which button to press.
+let respread = null; // what was on screen before that reload (read at boot)
+function restoreLayout() {
+  const r = respread;
+  respread = null;
+  if (!r) return;
+  if (r.spread) { if (shell) spread().catch(() => {}); else toast(mainView, '호스트가 업데이트되어 창이 하나로 줄었습니다. 다시 펼치려면 "모니터에 펼치기"를 누르세요', 8000); }
+  else if (r.fs) { if (shell) shell.fullscreenAll().catch(() => {}); else toast(mainView, '호스트가 업데이트되었습니다. 전체화면으로 돌아가려면 "전체화면"을 누르세요', 6000); }
+}
 async function onOffer(m) {
   // The host now serves a different client page than the one running here (it was updated):
   // go back through the loader, which fetches the new page and reconnects.
@@ -1484,11 +1712,23 @@ async function onOffer(m) {
     try { sessionStorage.setItem('mr_reloaded_for', m.app); } catch {}
     overlay('호스트가 업데이트되어 새 클라이언트 화면을 받아옵니다…');
     want = false;
+    // The windows and fullscreen do not survive the reload; the new page puts them back (restoreLayout).
+    try { sessionStorage.setItem('mr_respread', JSON.stringify({ spread: mainView.layoutSig != null && liveViews().some((v) => !v.isMain), fs: !!document.fullscreenElement })); } catch {}
     cleanupPc();
-    location.hash = 'k=' + $('key').value.trim() + '&auto' + (READONLY ? '&ro' : '');
+    // The loader takes the key from the address (#k=...) or from the one it remembers. Never the address:
+    // the browser would keep it in its history. So it goes where a remembered key is kept, and when the
+    // person did not want it kept there, a mark in this tab tells the new page to remove it at once
+    // (see boot). Without that mark the loader simply asks for the key again.
+    const key = $('key').value.trim();
+    let handOver = $('remember').checked;
+    if (!handOver) try { sessionStorage.setItem('mr_forget_key', '1'); handOver = sessionStorage.getItem('mr_forget_key') === '1'; } catch {}
+    if (handOver) store.set('mr_key', key);
+    const rest = '#auto' + (READONLY ? '&ro' : '');
+    try { history.replaceState(null, '', location.pathname + location.search + rest); } catch { location.hash = rest.slice(1); }
     location.reload();
     return;
   }
+  connSeq++;
   const my = (pc = new RTCPeerConnection({ iceServers: m.ice }));
   let x = 0;
   monitors = m.monitors.map((mon, i) => {
@@ -1535,6 +1775,7 @@ async function onOffer(m) {
     if (pc !== my) return;
     const st = my.connectionState;
     if (st === 'connected') {
+      const first = !ever;
       ever = true; retry = 0;
       clearTimeout(helloTimer);
       $('panel').style.display = 'none';
@@ -1544,6 +1785,7 @@ async function onOffer(m) {
       window.__rd.connects++;
       if (chan) { chan.close(); chan = null; } // signaling no longer needed
       if (mainView.panes[0]) mainView.panes[0].video.focus();
+      if (first) restoreLayout();
     } else if (st === 'failed') {
       lost('연결 실패 — 양쪽 네트워크가 직접 연결(P2P)을 막고 있을 수 있습니다. 호스트 설정에 TURN 서버를 추가해야 합니다.');
     } else if (st === 'disconnected') {
@@ -1623,9 +1865,11 @@ $('diagCopy').onclick = async () => {
 $('hk').onchange = () => { hotkeysOn = $('hk').checked; store.set('mr_hotkeys', hotkeysOn ? 'on' : 'off'); };
 
 // ---- stats and diagnostics ------------------------------------------------------------
-let last = null;
+// The counters below start again with every connection (a reconnect, a 'renew', a codec change), so
+// a reading is only ever compared with one of the same connection.
+let last = null, connSeq = 0;
 setInterval(async () => {
-  const my = pc;
+  const my = pc, conn = connSeq;
   if (!my || my.connectionState !== 'connected') { $('stats').textContent = ''; last = null; return; }
   const rep = await my.getStats();
   let bytes = 0, frames = 0, rtt = null, relay = false, jb = 0, jbn = 0;
@@ -1650,13 +1894,13 @@ setInterval(async () => {
   for (const m of monitors) { const e = byMid[m.mid]; fps[m.idx] = e ? e.fps : 0; res[m.idx] = e ? e.res : ''; }
   Object.assign(window.__rd, { frames, fps, res });
   const now = performance.now();
-  if (last) {
+  if (last && last.pc === my) {
     const mbps = ((bytes - last.bytes) * 8) / ((now - last.t) / 1000) / 1e6;
     const buf = jbn > last.jbn ? ((jb - last.jb) / (jbn - last.jbn)) * 1000 : 0;
     let viewed = [];
     try { viewed = JSON.parse(lastView || '[]').map((e) => e.i); } catch {}
     $('stats').textContent = `${viewed.map((i) => `${i + 1}:${fps[i]}`).join(' ')} fps · ${mbps.toFixed(1)} Mbps · 왕복 ${rtt != null ? Math.round(rtt * 1000) : '?'} ms · 버퍼 ${Math.round(buf)} ms · ${relay ? 'TURN 중계' : 'P2P 직접'}`;
-    samples.push({ t: Date.now(), viewed, fps, res, mbps, rtt: rtt != null ? rtt * 1000 : null, buf, relay, lost, recv, freezes, freezeDur, dropped, nack, pli, decoder, host: hostStat });
+    samples.push({ t: Date.now(), conn, viewed, fps, res, mbps, rtt: rtt != null ? rtt * 1000 : null, buf, relay, lost, recv, freezes, freezeDur, dropped, nack, pli, decoder, host: hostStat });
     if (samples.length > 45) samples.shift(); // about 90 seconds
     // The same numbers go to the host, which appends them to a local log file for troubleshooting.
     const pick = (o) => Object.fromEntries(viewed.map((i) => [i, o[i]]));
@@ -1668,7 +1912,7 @@ setInterval(async () => {
       ...(Object.values(window.__rd.xfer).some(Boolean) ? { xfer: { ...window.__rd.xfer } } : {}),
     } });
   }
-  last = { bytes, t: now, jb, jbn };
+  last = { pc: my, bytes, t: now, jb, jbn };
 }, 2000);
 
 // Plain-text summary of the last ~90 seconds, for finding out why it feels slow.
@@ -1679,7 +1923,9 @@ function buildReport() {
   const num = (list) => list.filter((x) => typeof x === 'number' && isFinite(x));
   const avg = (list) => { const v = num(list); return v.length ? v.reduce((x, y) => x + y, 0) / v.length : 0; };
   const mmm = (list) => { const v = num(list); return v.length ? `${Math.min(...v)}/${Math.round(avg(v))}/${Math.max(...v)}` : '-'; };
-  const pk = (b.lost - a.lost) + (b.recv - a.recv);
+  // Counted since the start of the latest connection only: a reconnect starts the counters again.
+  const c = samples.find((x) => x.conn === b.conn);
+  const pk = (b.lost - c.lost) + (b.recv - c.recv);
   const L = [];
   L.push(`My Remote 진단 — ${new Date().toLocaleString()}`);
   L.push(`구간: 최근 ${Math.round((b.t - a.t) / 1000)}초`);
@@ -1695,7 +1941,8 @@ function buildReport() {
     const limits = [...new Set(hm.map((x) => x.limit))].join(',') || '?';
     L.push(`모니터 ${i + 1}: 수신 fps 최소/평균/최대 ${mmm(samples.map((x) => x.fps[i]))} · 수신 해상도 ${b.res[i]} · 호스트 캡처 fps ${mmm(hm.map((x) => x.cap))} → 인코딩 fps ${mmm(hm.map((x) => x.enc))} · 제한 요인 ${limits}`);
   }
-  L.push(`끊김: 화면 멈춤 ${b.freezes - a.freezes}회 (${(b.freezeDur - a.freezeDur).toFixed(1)}초) · 버린 프레임 ${b.dropped - a.dropped} · 패킷 손실 ${pk > 0 ? (((b.lost - a.lost) / pk) * 100).toFixed(2) : '0'}% · 재전송 요청 ${b.nack - a.nack} · 키프레임 요청 ${b.pli - a.pli}`);
+  L.push(`끊김: 화면 멈춤 ${b.freezes - c.freezes}회 (${(b.freezeDur - c.freezeDur).toFixed(1)}초) · 버린 프레임 ${b.dropped - c.dropped} · 패킷 손실 ${pk > 0 ? (((b.lost - c.lost) / pk) * 100).toFixed(2) : '0'}% · 재전송 요청 ${b.nack - c.nack} · 키프레임 요청 ${b.pli - c.pli}`
+    + (c !== a ? ` (다시 연결된 뒤 ${Math.round((b.t - c.t) / 1000)}초 동안)` : ''));
   L.push(`수신 버퍼 지연: 평균 ${Math.round(avg(samples.map((x) => x.buf)))} ms, 최대 ${Math.round(Math.max(0, ...num(samples.map((x) => x.buf))))} ms`);
   L.push(`화질 모드: ${mode} · 호스트 커서 숨김: ${offerInfo.cursorHidden ? '예' : '아니오'}`);
   return L.join('\n');
@@ -1703,6 +1950,12 @@ function buildReport() {
 
 // ---- boot ----------------------------------------------------------------------------
 if (boot) {
+  // Back from a self-update (see onOffer): the key came through the remembered-key slot, which the
+  // person had left empty. Empty it again before anything else; connect() then leaves it empty.
+  let forget = false;
+  try { forget = sessionStorage.getItem('mr_forget_key') === '1'; sessionStorage.removeItem('mr_forget_key'); } catch {}
+  if (forget) { store.set('mr_key', null); boot.remember = false; }
+  try { respread = JSON.parse(sessionStorage.getItem('mr_respread') || 'null'); sessionStorage.removeItem('mr_respread'); } catch {}
   $('key').value = boot.key;
   $('remember').checked = !!boot.remember;
   connect();
