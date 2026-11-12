@@ -3,7 +3,6 @@ const $ = (id) => document.getElementById(id);
 const CLIP_MAX = 60000;
 let cfg, keys, chan;
 let session = null;
-const seen = new Set();
 
 function log(s) {
   const line = `${new Date().toLocaleTimeString()}  ${s}`;
@@ -16,7 +15,7 @@ function status(text, cls) { $('status').textContent = text; $('dot').className 
 // The preload script runs the native capturer and sends each monitor's frames over a message
 // port (see preload.js); here they go into a MediaStreamTrackGenerator, which the engine encodes
 // and sends like any other video track.
-let nativePort = null, nativeOff = false;
+let nativePort = null, nativeOff = false, nativeTurn = Promise.resolve(), sizeRenewAt = 0;
 const nativeOpening = new Map();
 function nativeChannel() {
   if (nativePort) return nativePort;
@@ -30,33 +29,52 @@ function nativeChannel() {
     } else if (m.t === 'opened') {
       const done = nativeOpening.get(m.i);
       if (done) { nativeOpening.delete(m.i); done(m); }
-    } else if (m.t === 'failed' && session && session.native) {
+    } else if (m.t === 'failed' && session && session.native && session.native[m.i]) {
       // A monitor in HDR mode, or one the capturer lost for good: go on with the engine's capturer.
+      // Only a loop of this session counts: what a loop of an earlier session reported arrives before
+      // the first of this session's loops has opened.
       log(`네이티브 캡처 중단 (모니터 ${m.i + 1}: ${m.error}) — 기본 캡처로 다시 연결합니다`);
       if (m.error !== 'size') nativeOff = true; // a changed size is a changed monitor setup: that renegotiates by itself
-      try { if (session.dc && session.dc.readyState === 'open') session.dc.send(JSON.stringify({ t: 'renew' })); } catch {}
-      teardown('캡처 방식 변경', true);
+      else sizeRenewAt = performance.now(); // see onDisplaysChanged
+      renew(session, '캡처 방식 변경');
     }
   };
   window.postMessage('mr-native-capture', '*', [ch.port2]);
   return nativePort;
 }
-// One generator per monitor, or null when any monitor cannot be captured natively.
-async function openNative(sources) {
+// One generator per monitor, or null when any monitor cannot be captured natively or the session
+// ended meanwhile. The preload knows the capture loops by monitor number only, and 'close' ends all
+// of them, so sessions take turns: a session opens its loops only after the one before it has closed
+// its own (its teardown does that, or the session itself when it finds itself replaced while opening).
+function openNative(s, sources) {
+  const turn = nativeTurn.then(() => openNativeLoops(s, sources));
+  nativeTurn = turn.catch(() => null);
+  return turn;
+}
+async function openNativeLoops(s, sources) {
+  if (nativeOff || session !== s) return null;
   const port = nativeChannel(), list = [];
   for (let i = 0; i < sources.length; i++) {
     const r = await new Promise((done) => {
       nativeOpening.set(i, done);
       port.postMessage({ t: 'open', i, x: sources[i].x + 8, y: sources[i].y + 8, gap: Math.max(0, Number(cfg.captureGap) || 0) });
-      setTimeout(() => done({ ok: false, error: 'no answer' }), 4000);
+      // A capturer that has not answered in 4 s is not asked again: its answer, should it still come,
+      // would be taken for the answer to a later request.
+      setTimeout(() => { if (nativeOpening.get(i) === done) { nativeOpening.delete(i); nativeOff = true; } done({ ok: false, error: 'no answer' }); }, 4000);
     });
+    // Replaced or ended meanwhile: close what was opened for it.
+    if (session !== s) { port.postMessage({ t: 'close' }); return null; }
     if (!r.ok || r.width !== sources[i].width || r.height !== sources[i].height) {
       log(`네이티브 캡처를 쓸 수 없습니다 (모니터 ${i + 1}: ${r.ok ? '크기 불일치' : r.error}) — 기본 캡처를 사용합니다`);
       port.postMessage({ t: 'close' });
+      s.native = null;
       return null;
     }
     const gen = new MediaStreamTrackGenerator({ kind: 'video' });
     list.push({ gen, writer: gen.writable.getWriter() });
+    // From the first loop on, so that a teardown closes them and their frames and failures count as
+    // this session's.
+    s.native = list;
   }
   return list;
 }
@@ -78,6 +96,18 @@ function teardown(reason, silent) {
   $('stats').textContent = '';
   status('대기 중 — 접속을 기다리는 중', 'ok');
   log('세션 종료: ' + reason);
+}
+
+// Ends the session and has the client come back at once with a new hello, keeping its windows: the
+// monitors or the capture method changed. The client hears 'renew' on the session's channel; a session
+// whose channel is not open yet is ended when it opens, because a client that heard nothing would wait
+// out its 20-s hello timer first.
+function renew(s, reason) {
+  if (session !== s) return;
+  if (s.dc && s.dc.readyState === 'open') {
+    try { s.dc.send(JSON.stringify({ t: 'renew' })); } catch {}
+    teardown(reason, true);
+  } else s.stale = reason;
 }
 
 const CODECS = ['H264', 'VP9', 'AV1', 'VP8'];
@@ -150,6 +180,7 @@ function applyEncoding(s) {
         p.degradationPreference = smooth ? 'maintain-framerate' : 'maintain-resolution';
         await sender.setParameters(p);
       } catch (e) { log('인코더 설정 실패: ' + e.message); }
+      if (session !== s) return; // the next session's capture loops go by the same monitor numbers
       if (s.native && nativePort) nativePort.postMessage({ t: 'show', i, on: !!plan[i] }); // a monitor nobody looks at is not captured
     }
   });
@@ -303,7 +334,7 @@ async function sendFiles(s, files) {
   ch.binaryType = 'arraybuffer';
   const CHUNK = 60000;
   try {
-    await new Promise((res, rej) => { ch.onopen = res; ch.onerror = rej; setTimeout(() => rej(new Error('channel did not open')), 8000); });
+    await new Promise((res, rej) => { ch.onopen = res; ch.onerror = rej; ch.onclose = () => rej(new Error('connection closed')); setTimeout(() => rej(new Error('channel did not open')), 8000); });
     for (const f of files) {
       if (f.dir) { ch.send(JSON.stringify({ t: 'dir', name: f.name })); continue; } // an empty folder of a dragged folder
       ch.send(JSON.stringify({ t: 'file', id: f.id, name: f.name, size: f.size }));
@@ -312,7 +343,12 @@ async function sendFiles(s, files) {
         const buf = await api.dragFileRead(f.id, off, Math.min(CHUNK, f.size - off));
         if (!buf || !buf.byteLength) throw new Error('could not read ' + f.name);
         ch.send(buf);
-        while (ch.bufferedAmount > 4 * 1024 * 1024) await new Promise((r) => setTimeout(r, 15));
+        // Wait while 4 MB are queued. A channel that closes keeps its queued count, so the wait must
+        // also end when the channel or the session does.
+        while (ch.bufferedAmount > 4 * 1024 * 1024) {
+          if (session !== s || ch.readyState !== 'open') throw new Error('connection closed');
+          await new Promise((r) => setTimeout(r, 15));
+        }
       }
       ch.send(JSON.stringify({ t: 'fileend', id: f.id }));
       api.dragFileDone(f.id);
@@ -322,7 +358,8 @@ async function sendFiles(s, files) {
   } catch (e) {
     log('끌어내기: 파일 전송 실패 — ' + e.message);
     try { ch.send(JSON.stringify({ t: 'fileerror' })); } catch {}
-    api.dragFileDone(null);
+    // Only this transfer's files: a newer drag-out may have offered others meanwhile.
+    for (const f of files) if (f.id) api.dragFileDone(f.id);
   }
   setTimeout(() => { try { ch.close(); } catch {} }, 5000);
 }
@@ -365,28 +402,37 @@ function startChannelTasks(s, dc) {
 
 async function startSession(hello) {
   teardown('새 접속 요청');
+  // The session is the current one from here on, so that a newer hello or a teardown during any of the
+  // waits below finds it and closes what it has. After each wait it checks that it still is the
+  // current one; if not, it stops there and closes what it got during that wait.
+  const s = (session = {
+    sid: hello.sid, started: performance.now(), streams: [], timers: [], dropTimer: 0, videoSenders: [], clip: null, native: null,
+    mode: hello.mode === 'smooth' ? 'smooth' : 'sharp', encQueue: Promise.resolve(),
+  });
   log('접속 요청 수신 — 화면 캡처 시작');
   status('연결 협상 중…', 'wait');
-  const sources = await api.getSources();
-  if (!sources.length) { log('캡처할 모니터를 찾지 못했습니다'); return; }
+  const sources = await (s.sourcesP = api.getSources());
+  if (session !== s) return;
+  if (!sources.length) { log('캡처할 모니터를 찾지 못했습니다'); teardown('모니터 없음', true); return; }
   for (const src of sources) if (src.hdr) log(`주의: 모니터 ${src.idx + 1}은 Windows HDR이 켜져 있어 원격 화면에서 색이 밝게 날아갑니다. 이 PC의 설정 > 시스템 > 디스플레이에서 그 모니터의 HDR을 끄면 정상으로 보입니다.`);
-  const pc = new RTCPeerConnection({ iceServers: cfg.iceServers });
-  const s = (session = {
-    sid: hello.sid, pc, sources, streams: [], timers: [], dropTimer: 0, videoSenders: [], clip: null,
-    need: new Map(sources.map((_, i) => [i, { w: 0, h: 0 }])), /* w,h 0 = full size */ mode: hello.mode === 'smooth' ? 'smooth' : 'sharp', encQueue: Promise.resolve(),
-  });
+  const pc = (s.pc = new RTCPeerConnection({ iceServers: cfg.iceServers }));
+  s.sources = sources;
+  s.need = new Map(sources.map((_, i) => [i, { w: 0, h: 0 }])); // w,h 0 = full size
 
   const dc = (s.dc = pc.createDataChannel('input', { ordered: true }));
   dc.onmessage = (e) => onClientMessage(s, dc, e.data);
-  dc.onopen = () => { if (session === s) startChannelTasks(s, dc); };
+  dc.onopen = () => { if (session !== s) return; if (s.stale) renew(s, s.stale); else startChannelTasks(s, dc); };
+  // The client closed its connection (연결 끊기, its page closed or reloaded). The channel closes at
+  // once, while the connection state would say so only after the ICE timeout and the 15-s grace.
+  dc.onclose = () => { if (session === s) teardown('클라이언트 연결 종료', true); };
   // Files the client drags or pastes in come on channels it opens (see receiveUpload).
   pc.ondatachannel = (e) => { if (e.channel.label === 'upload' && session === s) receiveUpload(s, e.channel); else try { e.channel.close(); } catch {} };
 
   // The native capturer when it is there: its images carry no pointer, so nothing has to be hidden
   // on this PC. Otherwise the engine's capturer, with this PC's pointer hidden before capture
   // starts, so that the frames carry no pointer (see input.js).
-  s.native = cfg.capture !== 'engine' && !nativeOff && api.nativeCapture() ? await openNative(sources) : null;
-  if (session !== s) { if (s.native && nativePort) nativePort.postMessage({ t: 'close' }); return; }
+  s.native = cfg.capture !== 'engine' && !nativeOff && api.nativeCapture() ? await openNative(s, sources) : null;
+  if (session !== s) return; // the loops it opened are closed (see openNative)
   s.cursorHidden = s.native ? true : await api.hideCursor(true);
   if (session !== s) return;
   log(s.native ? '화면 캡처: 네이티브' : '화면 캡처: 기본(브라우저 엔진)');
@@ -425,6 +471,7 @@ async function startSession(hello) {
     log('연결 상태: ' + st);
     if (st === 'connected') {
       clearTimeout(s.dropTimer);
+      if (s.stale) return; // ended as soon as its channel opens (see renew)
       status('원격 접속 중 (화면 전송 중)', 'live');
       api.session(true);
       applyEncoding(s);
@@ -433,16 +480,19 @@ async function startSession(hello) {
   };
 
   await pc.setLocalDescription(await pc.createOffer());
+  if (session !== s) return;
   await applyEncoding(s);
   await RD.waitIce(pc, 2500);
   if (session !== s) return;
   const mids = (s.mids = s.videoSenders.map((sender) => pc.getTransceivers().find((t) => t.sender === sender).mid));
   const appHash = (await api.getClientApp()).hash;
+  if (session !== s) return;
   await chan.send({
     app: appHash,
     t: 'offer', sid: s.sid, ts: Date.now(), sdp: pc.localDescription.sdp, ice: cfg.iceServers, audio, codec: s.codec, cursorHidden: s.cursorHidden,
     monitors: sources.map((src, i) => ({ idx: i, mid: mids[i], x: src.x, y: src.y, width: src.width, height: src.height, primary: src.primary, hdr: src.hdr || undefined })),
   });
+  if (session !== s) return; // ended while the offer was being posted: no timers for it
   log(`offer 전송 (모니터 ${sources.length}개${audio ? ', 소리 포함' : ''})`);
   // Give up if the client never completes the handshake.
   s.dropTimer = setTimeout(() => { if (session === s && pc.connectionState !== 'connected') teardown('협상 시간 초과'); }, 30000);
@@ -515,30 +565,54 @@ function hintBitrate(sdp, startKbps, minKbps, maxKbps) {
   return out.join('\r\n');
 }
 
+// Replay protection. Every ver and hello carries a new random sid and the sender's clock time: each is
+// taken once, and only within five minutes of that time (the clocks of two PCs may differ that much).
+// The sids taken are kept in this page's storage for as long as they could pass that test, so that a
+// message recorded before the host restarted cannot be played back right after (a hello would end the
+// session that is live then). Only messages that decrypted with the key ever get here.
+const MAX_AGE = 5 * 60 * 1000, SEEN_KEY = 'mr_host_seen';
+const seen = new Map(); // sid -> ts
+try { for (const [sid, ts] of JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')) if (Date.now() - ts <= MAX_AGE) seen.set(sid, ts); } catch {}
+function firstTime(m) {
+  if (seen.has(m.sid)) return false;
+  for (const [sid, ts] of seen) if (Date.now() - ts > MAX_AGE) seen.delete(sid); // too old to pass the age test anyway
+  seen.set(m.sid, Number(m.ts));
+  try { localStorage.setItem(SEEN_KEY, JSON.stringify([...seen])); } catch {}
+  return true;
+}
+
 async function onMessage(m) {
-  try {
-    if (!m || typeof m.sid !== 'string' || Math.abs(Date.now() - m.ts) > 5 * 60 * 1000) return;
-    if (m.t === 'ver') {
-      // A loader asking for the current client page. Only someone holding the key can have sent
-      // this, and the reply is encrypted to the key. The page is skipped when the loader has it.
-      if (seen.has(m.sid)) return; // replay
-      seen.add(m.sid);
+  if (!m || typeof m.sid !== 'string' || !(Math.abs(Date.now() - m.ts) <= MAX_AGE)) return; // also without a ts
+  if (m.t === 'ver') {
+    // A loader asking for the current client page. Only someone holding the key can have sent
+    // this, and the reply is encrypted to the key. The page is skipped when the loader has it.
+    if (!firstTime(m)) return; // replay
+    try {
       const app = await api.getClientApp();
       const fresh = m.have !== app.hash;
       await chan.send({ t: 'app', sid: m.sid, ts: Date.now(), hash: app.hash, html: fresh ? app.html : undefined });
       log(fresh ? '클라이언트 화면을 최신 버전으로 전송했습니다' : '클라이언트 화면이 이미 최신입니다');
-    } else if (m.t === 'hello') {
-      if (seen.has(m.sid)) return; // replay
-      seen.add(m.sid);
-      if (seen.size > 500) seen.clear();
-      await startSession(m);
-    } else if (m.t === 'answer' && session && m.sid === session.sid && session.pc.signalingState === 'have-local-offer') {
-      await session.pc.setRemoteDescription({ type: 'answer', sdp: hintBitrate(m.sdp, Math.round(cfg.startBitrateMbps * 1000), Math.round(cfg.minBitrateMbps * 1000), Math.round(cfg.maxTotalMbps * 1000)) });
-      log('answer 수신 — 연결 수립 중');
+    } catch (e) {
+      // The loader says so and can be tried again. A session that is live has nothing to do with it.
+      log('클라이언트 화면 전송 실패: ' + e.message);
     }
-  } catch (e) {
-    log('오류: ' + e.message);
-    teardown('오류');
+  } else if (m.t === 'hello') {
+    if (!firstTime(m)) return; // replay
+    try { await startSession(m); } catch (e) {
+      log('오류: ' + e.message);
+      // Only the session this hello started; a newer one may have taken its place meanwhile. No 'bye':
+      // that would tell the client not to try again.
+      if (session && session.sid === m.sid) teardown('오류', true);
+    }
+  } else if (m.t === 'answer' && session && m.sid === session.sid && session.pc && session.pc.signalingState === 'have-local-offer') {
+    const s = session;
+    try {
+      await s.pc.setRemoteDescription({ type: 'answer', sdp: hintBitrate(m.sdp, Math.round(cfg.startBitrateMbps * 1000), Math.round(cfg.minBitrateMbps * 1000), Math.round(cfg.maxTotalMbps * 1000)) });
+      log('answer 수신 — 연결 수립 중');
+    } catch (e) {
+      log('오류: ' + e.message);
+      if (session === s) teardown('오류', true);
+    }
   }
 }
 
@@ -560,11 +634,20 @@ async function onMessage(m) {
   $('regen').onclick = () => api.regenKey();
   $('kick').onclick = () => teardown('사용자가 끊음');
   api.onKick(() => teardown('사용자가 끊음'));
-  api.onDisplaysChanged(() => {
-    if (!session) return;
+  api.onDisplaysChanged(async () => {
+    const s = session;
+    if (!s) return;
+    // A capture loop that saw a monitor change size has renewed the session at once (see 'failed'),
+    // and main reports that change 1.5 s after its last display event, often while the client's next
+    // session is being set up. Leave a session alone that started after such a renew and already has
+    // the monitors as they are now. (Any other report renews, changed or not: the self-test sends one
+    // to have the session renegotiated.)
+    if (sizeRenewAt && s.started > sizeRenewAt && performance.now() - sizeRenewAt < 10000) {
+      const [had, now] = await Promise.all([s.sourcesP, api.getSources()]).catch(() => []);
+      if (session !== s || (had && now && JSON.stringify(had) === JSON.stringify(now))) return;
+    }
     log('호스트 모니터 구성 변경 감지 — 세션을 다시 협상합니다');
-    try { if (session.dc && session.dc.readyState === 'open') session.dc.send(JSON.stringify({ t: 'renew' })); } catch {}
-    teardown('모니터 구성 변경', true);
+    renew(s, '모니터 구성 변경');
   });
   $('export').onclick = async () => { const p = await api.exportClient(); if (p) log('클라이언트 파일 저장: ' + p); };
 })();
