@@ -14,6 +14,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -22,13 +23,23 @@
 struct Capturer {
   bool used;
   SRWLOCK lock;
+  int px, py;          // a point of the desktop inside the monitor, in physical pixels (from mc_open)
   IDXGIOutput1* output; ID3D11Device* device; ID3D11DeviceContext* context; IDXGIOutputDuplication* dup; ID3D11Texture2D* staging;
   int width, height;   // of the desktop image
   int stagingW, stagingH;
+  // While the image cannot be had: tries that failed in a row, when to try next, and since when the
+  // tries have failed for a reason other than another desktop having the screen (0: they have not).
+  int failures; LONGLONG retryAt, failingSince;
+  union { RECT dirty[256]; DXGI_OUTDUPL_MOVE_RECT moved[170]; } meta; // what changed with a frame
 };
 static Capturer g_caps[8];
 static SRWLOCK g_table = SRWLOCK_INIT;
 static char g_error[200] = "";
+// A capture that keeps failing is tried again for this long before mc_next gives up (-4) and the
+// host goes on with the engine's capturer. The time another desktop has the screen (the lock screen,
+// a permission prompt, another user's session) does not count: that can last for hours, ends by
+// itself, and no capturer of this user could read it meanwhile.
+static const double GIVE_UP_MS = 10000;
 
 // One clock: the performance counter, anchored once to the system time (ms since 1970). Windows
 // reports presentation times as performance counter values, so they convert exactly.
@@ -48,19 +59,83 @@ static void initClock() {
 }
 static void fail(const char* what, HRESULT hr) { snprintf(g_error, sizeof g_error, "%s (0x%08lx)", what, (unsigned long)hr); }
 template <class T> static void drop(T*& p) { if (p) { p->Release(); p = nullptr; } }
+// The lock screen, a permission prompt (UAC) or another user's session has the screen.
+static bool elsewhere(HRESULT hr) { return hr == E_ACCESSDENIED || hr == DXGI_ERROR_SESSION_DISCONNECTED; }
 
-// (Re)starts the duplication of the capturer's output. False while that is not possible, e.g.
-// while the lock screen or a permission prompt has the screen.
-static bool duplicate(Capturer& c) {
+// (Re)starts the duplication of the capturer's output. Fails e.g. while the lock screen or a
+// permission prompt has the screen.
+static HRESULT duplicate(Capturer& c) {
   drop(c.dup);
   HRESULT hr = c.output->DuplicateOutput(c.device, &c.dup);
-  if (FAILED(hr)) { fail("DuplicateOutput", hr); return false; }
+  if (FAILED(hr)) { fail(elsewhere(hr) ? "another desktop has the screen (lock screen, permission prompt, other session)" : "DuplicateOutput", hr); return hr; }
   DXGI_OUTDUPL_DESC d; c.dup->GetDesc(&d);
-  if (d.Rotation != DXGI_MODE_ROTATION_IDENTITY && d.Rotation != DXGI_MODE_ROTATION_UNSPECIFIED) { fail("the monitor is rotated", E_NOTIMPL); drop(c.dup); return false; }
+  if (d.Rotation != DXGI_MODE_ROTATION_IDENTITY && d.Rotation != DXGI_MODE_ROTATION_UNSPECIFIED) { fail("the monitor is rotated", E_NOTIMPL); drop(c.dup); return E_NOTIMPL; }
   c.width = (int)d.ModeDesc.Width; c.height = (int)d.ModeDesc.Height;
-  return true;
+  return S_OK;
 }
-static void closeAll(Capturer& c) { drop(c.staging); drop(c.dup); drop(c.context); drop(c.device); drop(c.output); c.used = false; }
+// Lets go of the duplication and the graphics device, to start over with new ones or for good.
+static void release(Capturer& c) { drop(c.staging); drop(c.dup); drop(c.context); drop(c.device); drop(c.output); }
+static void closeAll(Capturer& c) { release(c); c.used = false; }
+
+// Finds the monitor at the capturer's point, makes a graphics device and starts the duplication.
+// What it made stays in c also when a later step failed.
+static HRESULT start(Capturer& c) {
+  release(c);
+  IDXGIFactory1* factory = nullptr; IDXGIAdapter1* adapter = nullptr; IDXGIOutput* output = nullptr;
+  HRESULT hr = CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory);
+  bool found = false;
+  if (FAILED(hr)) fail("CreateDXGIFactory1", hr);
+  for (UINT a = 0; SUCCEEDED(hr) && !found && factory->EnumAdapters1(a, &adapter) != DXGI_ERROR_NOT_FOUND; a++) {
+    for (UINT o = 0; !found && adapter->EnumOutputs(o, &output) != DXGI_ERROR_NOT_FOUND; o++) {
+      DXGI_OUTPUT_DESC d; output->GetDesc(&d);
+      const RECT& r = d.DesktopCoordinates;
+      found = d.AttachedToDesktop && c.px >= r.left && c.px < r.right && c.py >= r.top && c.py < r.bottom;
+      if (!found) drop(output);
+    }
+    if (!found) drop(adapter);
+  }
+  if (SUCCEEDED(hr) && !found) { hr = E_FAIL; fail("no monitor at that point", hr); }
+  // The device must be on the adapter the monitor hangs on (a PC can have several).
+  if (SUCCEEDED(hr)) { hr = D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &c.device, nullptr, &c.context); if (FAILED(hr)) fail("D3D11CreateDevice", hr); }
+  if (SUCCEEDED(hr)) { hr = output->QueryInterface(__uuidof(IDXGIOutput1), (void**)&c.output); if (FAILED(hr)) fail("IDXGIOutput1", hr); }
+  if (SUCCEEDED(hr)) hr = duplicate(c);
+  drop(output); drop(adapter); drop(factory);
+  return hr;
+}
+
+// After a failure. Windows takes the duplication away on every desktop switch (lock screen,
+// permission prompt), mode change and full-screen program; then only the duplication is made again.
+// After anything else, or when the graphics device is gone (a reset of the graphics card, a driver
+// restart: a removed device never works again), the next try starts over with a new device. The
+// first try is at once, later ones less and less often. True when the tries have failed for
+// GIVE_UP_MS, not counting time on another desktop.
+static bool setback(Capturer& c, HRESULT hr) {
+  const bool device = c.device && c.output && c.device->GetDeviceRemovedReason() == S_OK;
+  if (device && (hr == DXGI_ERROR_ACCESS_LOST || elsewhere(hr))) drop(c.dup); else release(c);
+  static const int waitMs[] = { 0, 50, 100, 200, 500, 1000 };
+  const LONGLONG now = tick();
+  c.retryAt = now + (LONGLONG)(waitMs[c.failures < 5 ? c.failures : 5] / g_tickMs);
+  c.failures++;
+  if (elsewhere(hr)) { c.failingSince = 0; return false; }
+  if (!c.failingSince) c.failingSince = now;
+  return (double)(now - c.failingSince) * g_tickMs >= GIVE_UP_MS;
+}
+static void working(Capturer& c) { c.failures = 0; c.failingSince = 0; }
+
+// The share of the image that changed with this frame, 0..1: the areas Windows reports as drawn anew
+// (dirty rectangles) and as moved there (move rectangles). Overlaps count twice, so it can come out
+// too large but not too small; 1 when Windows does not say or says more than fits here.
+static double changedShare(Capturer& c, const DXGI_OUTDUPL_FRAME_INFO& fi) {
+  const double all = (double)c.width * c.height;
+  if (all <= 0 || fi.TotalMetadataBufferSize == 0 || fi.TotalMetadataBufferSize > sizeof c.meta) return 1;
+  double area = 0;
+  UINT n = 0;
+  if (FAILED(c.dup->GetFrameMoveRects(sizeof c.meta, c.meta.moved, &n))) return 1;
+  for (UINT i = 0; i < n / sizeof *c.meta.moved; i++) { const RECT& r = c.meta.moved[i].DestinationRect; area += (double)(r.right - r.left) * (r.bottom - r.top); }
+  if (FAILED(c.dup->GetFrameDirtyRects(sizeof c.meta, c.meta.dirty, &n))) return 1;
+  for (UINT i = 0; i < n / sizeof *c.meta.dirty; i++) { const RECT& r = c.meta.dirty[i]; area += (double)(r.right - r.left) * (r.bottom - r.top); }
+  return area >= all ? 1 : area / all;
+}
 
 // Starts capturing the monitor that contains the desktop point (px,py), in physical pixels.
 // Returns a handle (0..7), or -1 (see mc_error).
@@ -73,26 +148,8 @@ EXPORT int mc_open(int px, int py) {
   Capturer& c = g_caps[handle];
   memset(&c, 0, sizeof c);
   InitializeSRWLock(&c.lock);
-  IDXGIFactory1* factory = nullptr; IDXGIAdapter1* adapter = nullptr; IDXGIOutput* output = nullptr;
-  HRESULT hr = CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory);
-  bool found = false;
-  if (FAILED(hr)) fail("CreateDXGIFactory1", hr);
-  for (UINT a = 0; SUCCEEDED(hr) && !found && factory->EnumAdapters1(a, &adapter) != DXGI_ERROR_NOT_FOUND; a++) {
-    for (UINT o = 0; !found && adapter->EnumOutputs(o, &output) != DXGI_ERROR_NOT_FOUND; o++) {
-      DXGI_OUTPUT_DESC d; output->GetDesc(&d);
-      const RECT& r = d.DesktopCoordinates;
-      found = d.AttachedToDesktop && px >= r.left && px < r.right && py >= r.top && py < r.bottom;
-      if (!found) drop(output);
-    }
-    if (!found) drop(adapter);
-  }
-  if (SUCCEEDED(hr) && !found) { hr = E_FAIL; fail("no monitor at that point", hr); }
-  // The device must be on the adapter the monitor hangs on (a PC can have several).
-  if (SUCCEEDED(hr)) { hr = D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &c.device, nullptr, &c.context); if (FAILED(hr)) fail("D3D11CreateDevice", hr); }
-  if (SUCCEEDED(hr)) { hr = output->QueryInterface(__uuidof(IDXGIOutput1), (void**)&c.output); if (FAILED(hr)) fail("IDXGIOutput1", hr); }
-  if (SUCCEEDED(hr) && !duplicate(c)) hr = E_FAIL;
-  drop(output); drop(adapter); drop(factory);
-  if (FAILED(hr)) { closeAll(c); handle = -1; } else c.used = true;
+  c.px = px; c.py = py;
+  if (FAILED(start(c))) { closeAll(c); handle = -1; } else c.used = true;
   ReleaseSRWLockExclusive(&g_table);
   return handle;
 }
@@ -106,9 +163,12 @@ EXPORT int mc_size(int handle, int* width, int* height) {
 
 // Waits up to timeoutMs for the next desktop image and copies it into dst (width*height*4 bytes).
 // Returns 1: a new image was copied; info = { presented, handed over, copied (ms since 1970), images
-// Windows composed since the last call }.  0: nothing new in that time (or only the pointer moved, or
-// the screen is not available right now).  -1: closed.  -2: the pixel format is not 8 bits per colour
-// (a monitor in HDR mode).  -3: the size changed, ask mc_size again.
+// Windows composed since the last call, share of the image that changed (0..1) }.  0: nothing new in
+// that time (or only the pointer moved).  2: the screen cannot be read right now (the lock screen or a
+// permission prompt has it, or the capture is being started again after a mode change or a reset of
+// the graphics card); the next calls go on trying, mc_error says why.  -1: closed.  -2: the pixel
+// format is not 8 bits per colour (a monitor in HDR mode).  -3: the size changed, ask mc_size again.
+// -4: the capture could not be started again for GIVE_UP_MS (see mc_error).
 EXPORT int mc_next(int handle, unsigned char* dst, int dstLen, int timeoutMs, double* info) {
   if (handle < 0 || handle >= 8) return -1;
   Capturer& c = g_caps[handle];
@@ -116,20 +176,35 @@ EXPORT int mc_next(int handle, unsigned char* dst, int dstLen, int timeoutMs, do
   int result = 0;
   const LONGLONG deadline = tick() + (LONGLONG)(timeoutMs / g_tickMs);
   while (c.used) {
-    const int left = (int)((deadline - tick()) * g_tickMs);
+    const LONGLONG now = tick();
+    const int left = (int)((deadline - now) * g_tickMs);
     if (left <= 0) break;
     if (!c.dup) {
-      // Lost earlier (resolution change, lock screen, permission prompt): try again, calmly.
-      const int before = c.width * c.height;
-      if (!duplicate(c)) { Sleep(left < 50 ? left : 50); continue; }
-      if (c.width * c.height != before) { result = -3; break; }
+      // Lost earlier: try again when it is time.
+      if (now < c.retryAt) { const int wait = (int)((c.retryAt - now) * g_tickMs) + 1; Sleep(wait < left ? wait : left); continue; }
+      const int w = c.width, h = c.height;
+      const HRESULT hr = c.device ? duplicate(c) : start(c);
+      if (FAILED(hr)) { if (setback(c, hr)) { result = -4; break; } continue; }
+      if (c.width != w || c.height != h) { result = -3; break; }
     }
     DXGI_OUTDUPL_FRAME_INFO fi; IDXGIResource* resource = nullptr;
     HRESULT hr = c.dup->AcquireNextFrame(left, &fi, &resource);
     const LONGLONG handed = tick();
-    if (hr == DXGI_ERROR_WAIT_TIMEOUT) break;
-    if (FAILED(hr)) { drop(c.dup); continue; }
+    if (hr == DXGI_ERROR_WAIT_TIMEOUT) {
+      // A still screen, unless the graphics device is gone: then nothing comes any more.
+      hr = c.device->GetDeviceRemovedReason();
+      if (hr == S_OK) { working(c); break; }
+      fail("the graphics device was removed", hr);
+      if (setback(c, hr)) { result = -4; break; }
+      continue;
+    }
+    if (FAILED(hr)) {
+      fail(hr == DXGI_ERROR_ACCESS_LOST ? "the duplication was lost (desktop switch, mode change)" : "AcquireNextFrame", hr);
+      if (setback(c, hr)) { result = -4; break; }
+      continue;
+    }
     if (fi.LastPresentTime.QuadPart == 0) { drop(resource); c.dup->ReleaseFrame(); continue; } // only the pointer moved
+    const double changed = changedShare(c, fi);
     ID3D11Texture2D* image = nullptr;
     hr = resource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&image);
     D3D11_TEXTURE2D_DESC td = {};
@@ -146,21 +221,24 @@ EXPORT int mc_next(int handle, unsigned char* dst, int dstLen, int timeoutMs, do
     if (SUCCEEDED(hr) && bytes) c.context->CopyResource(c.staging, image);
     drop(image); drop(resource);
     c.dup->ReleaseFrame();
-    if (FAILED(hr)) { fail("reading the desktop image", hr); continue; }
+    // A new duplication starts with the current desktop image, so this one is not lost for good.
+    if (FAILED(hr)) { fail("reading the desktop image", hr); if (setback(c, hr)) { result = -4; break; } continue; }
     if (!bytes) { result = -2; fail("the monitor is not in an 8 bit colour mode (HDR?)", E_NOTIMPL); break; }
     if ((int)td.Width != c.width || (int)td.Height != c.height || dstLen < c.width * c.height * 4) { c.width = (int)td.Width; c.height = (int)td.Height; result = -3; break; }
     D3D11_MAPPED_SUBRESOURCE m;
     hr = c.context->Map(c.staging, 0, D3D11_MAP_READ, 0, &m); // waits for the copy to finish
-    if (FAILED(hr)) { fail("Map", hr); continue; }
+    if (FAILED(hr)) { fail("Map", hr); if (setback(c, hr)) { result = -4; break; } continue; }
     const int rowBytes = c.width * 4;
     if ((int)m.RowPitch == rowBytes) memcpy(dst, m.pData, (size_t)rowBytes * c.height);
     else for (int y = 0; y < c.height; y++) memcpy(dst + (size_t)y * rowBytes, (const unsigned char*)m.pData + (size_t)y * m.RowPitch, rowBytes);
     c.context->Unmap(c.staging, 0);
-    info[0] = toMs(fi.LastPresentTime.QuadPart); info[1] = toMs(handed); info[2] = toMs(tick()); info[3] = (double)fi.AccumulatedFrames;
+    info[0] = toMs(fi.LastPresentTime.QuadPart); info[1] = toMs(handed); info[2] = toMs(tick()); info[3] = (double)fi.AccumulatedFrames; info[4] = changed;
+    working(c);
     result = 1;
     break;
   }
   if (!c.used) result = -1;
+  else if (result == 0 && !c.dup) result = 2; // still trying
   ReleaseSRWLockExclusive(&c.lock);
   return result;
 }
@@ -174,3 +252,18 @@ EXPORT void mc_close(int handle) {
 }
 EXPORT double mc_now(void) { initClock(); return toMs(tick()); }
 EXPORT const char* mc_error(void) { return g_error; }
+
+// For the self-test only: acts as if Windows had taken the duplication away (what 1: as on the lock
+// screen or a mode change) or the graphics device (2: as on a reset of the graphics card), so that
+// the way back can be tested without either. 3: as 2, and the monitor does not come back: the next
+// mc_next gives up (-4) without waiting GIVE_UP_MS.
+EXPORT void mc_test_lose(int handle, int what) {
+  if (handle < 0 || handle >= 8) return;
+  Capturer& c = g_caps[handle];
+  AcquireSRWLockExclusive(&c.lock);
+  if (c.used) {
+    if (what == 1) drop(c.dup); else release(c);
+    if (what == 3) { c.px = c.py = INT_MIN; c.failingSince = tick() - (LONGLONG)(GIVE_UP_MS / g_tickMs) - 1; }
+  }
+  ReleaseSRWLockExclusive(&c.lock);
+}

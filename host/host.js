@@ -29,10 +29,16 @@ function nativeChannel() {
     } else if (m.t === 'opened') {
       const done = nativeOpening.get(m.i);
       if (done) { nativeOpening.delete(m.i); done(m); }
+    } else if (m.t === 'paused' && session && session.native && session.native[m.i]) {
+      // The lock screen or a permission prompt has the screen, or the capturer is starting again
+      // after a mode change or a reset of the graphics card. It keeps trying by itself: the session
+      // stays and the client keeps the last picture meanwhile.
+      log(m.on ? `모니터 ${m.i + 1}: 지금은 화면을 읽을 수 없습니다 (${m.error}) — 다시 읽을 수 있게 되면 이어서 보냅니다` : `모니터 ${m.i + 1}: 화면을 다시 읽습니다`);
     } else if (m.t === 'failed' && session && session.native && session.native[m.i]) {
-      // A monitor in HDR mode, or one the capturer lost for good: go on with the engine's capturer.
-      // Only a loop of this session counts: what a loop of an earlier session reported arrives before
-      // the first of this session's loops has opened.
+      // A monitor in HDR mode, or one the capturer could not get back (GIVE_UP_MS in
+      // native/capture.cpp): go on with the engine's capturer. Only a loop of this session counts:
+      // what a loop of an earlier session reported arrives before the first of this session's loops
+      // has opened.
       log(`네이티브 캡처 중단 (모니터 ${m.i + 1}: ${m.error}) — 기본 캡처로 다시 연결합니다`);
       if (m.error !== 'size') nativeOff = true; // a changed size is a changed monitor setup: that renegotiates by itself
       else sizeRenewAt = performance.now(); // see onDisplaysChanged

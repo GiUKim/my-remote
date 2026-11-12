@@ -1,7 +1,7 @@
 {
   "source": "native/capture.cpp",
-  "sourceSha256": "618704f798cf1074846bbe1155b4af9fd72139ad03c65f0d11a2a3e8f97fc666",
-  "dllSha256": "3ca47c21c65d7c1792b7a65a7bb9dac14c4d2fe496ee08ef56b69e3d82e8a34b",
+  "sourceSha256": "f222f00474b33c19dc769c01bc4793ce6d22b201959376ae14055ab8bedcc253",
+  "dllSha256": "6580b5cbaa27fc4488c5d86b11a4f1844f260b4bcd4f3b2af9190d79e9c8a10b",
   "compiler": "x86_64-w64-mingw32-g++ (GCC) 10-win32 20220113",
   "command": "x86_64-w64-mingw32-g++ -O2 -Wall -shared -static -s -fno-exceptions -fno-rtti -Wl,--no-insert-timestamp -o capture.dll capture.cpp -ld3d11 -ldxgi -ldxguid -luuid"
 }

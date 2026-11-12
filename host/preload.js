@@ -43,6 +43,11 @@ contextBridge.exposeInMainWorld('hostApi', {
 const fs = require('fs');
 const path = require('path');
 const REPEATS = 45, REPEAT_MS = 20; // for about a second
+// After a small change (under SMALL of the picture: a blinking caret, a typed character, a button
+// that lights up) only FEW repeats: the rest of the picture is sharp already and that spot gets
+// sharp within a few frames. With the full count, a caret blinking every half second kept a still
+// monitor at about 50 frames a second for as long as it blinked.
+const FEW = 6, SMALL = 0.01;
 let lib = null;
 function capturer() {
   if (lib !== null) return lib;
@@ -68,12 +73,14 @@ function capturer() {
 }
 // Every loop that is running. They must all be closed before this page goes away: a wait that is
 // still under way when the page's script environment is torn down takes the whole process with it
-// (seen on reload). Closing waits for the wait under way, which is at most REPEAT_MS long.
+// (seen on reload). Closing waits for the wait under way, which is at most REPEAT_MS long (plus one
+// try to start the capture again while the screen cannot be read).
 const loops = new Set();
 window.addEventListener('beforeunload', () => { for (const r of [...loops]) r.stop(); });
 function captureLoop(port, i, handle, width, height, gap) {
-  const r = { on: true, alive: true, last: null, repeats: 0, stamp: 0, closed: false };
-  const buf = new Uint8Array(width * height * 4), info = new Float64Array(4);
+  // left: repeats of the last image still to send. paused: the screen cannot be read right now.
+  const r = { on: true, alive: true, last: null, left: 0, paused: false, stamp: 0, closed: false };
+  const buf = new Uint8Array(width * height * 4), info = new Float64Array(5);
   const stamp = () => (r.stamp = Math.max(r.stamp + 1, Math.round(performance.now() * 1000)));
   const end = () => {
     if (r.closed) return;
@@ -95,15 +102,22 @@ function captureLoop(port, i, handle, width, height, gap) {
         port.postMessage({ t: 'failed', i, error: err ? String(err.message || err) : got === -2 ? 'hdr' : got === -3 ? 'size' : lib.error() });
         return;
       }
+      // 2: the lock screen or a permission prompt has the screen, or the capturer is starting again
+      // after a mode change or a reset of the graphics card. It goes on trying by itself (and gives up
+      // with -4 only when that does not come back), so the session stays and the picture waits.
+      if ((got === 2) !== r.paused) {
+        r.paused = got === 2;
+        port.postMessage({ t: 'paused', i, on: r.paused, error: r.paused ? lib.error() : '' });
+      }
       try {
         let frame = null;
         if (got === 1) {
           frame = new VideoFrame(buf, { format: 'BGRX', codedWidth: width, codedHeight: height, timestamp: stamp() });
           if (r.last) r.last.close();
           r.last = frame.clone();
-          r.repeats = 0;
-        } else if (r.last && r.repeats < REPEATS) {
-          r.repeats++;
+          r.left = Math.max(r.left, info[4] < SMALL ? FEW : REPEATS); // a series under way is not cut short
+        } else if (r.last && r.left > 0) {
+          r.left--;
           frame = new VideoFrame(r.last, { timestamp: stamp() });
         }
         if (frame) port.postMessage({ t: 'frame', i, frame, presented: got === 1 ? info[0] : 0 }, [frame]);
@@ -127,8 +141,13 @@ window.addEventListener('message', (e) => {
       runs.set(m.i, captureLoop(port, m.i, handle, w[0], h[0], m.gap || 0));
       port.postMessage({ t: 'opened', i: m.i, ok: true, width: w[0], height: h[0] });
     } else if (m.t === 'show') {
+      // Sent whenever the encoding was set (the connection is up, the monitor came on screen, its
+      // size changed): the last image goes again with a full series of repeats. The encoder drops
+      // what comes before it runs, works at a new size only from the next frame on, and cannot ask
+      // the page for a frame, so a monitor whose picture does not change would otherwise stay black
+      // or blurred on the client until something on it changed.
       const r = runs.get(m.i);
-      if (r) { if (m.on && !r.on) r.repeats = 0; r.on = !!m.on; } // back on screen: the picture is sent again
+      if (r) { if (m.on) r.left = REPEATS; r.on = !!m.on; }
     } else if (m.t === 'close') {
       for (const r of runs.values()) r.stop();
       runs.clear();
