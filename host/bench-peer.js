@@ -5,7 +5,7 @@
 // It shows the test picture on one display of this PC, connects the real client page to the
 // bench host, records for every frame the client shows which picture frame it was and when it
 // reached the screen, and reports the result to the host process.
-const { app, BrowserWindow, screen } = require('electron');
+const { app, BrowserWindow, screen, nativeImage } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -61,24 +61,38 @@ const MUNGE = `(() => {
   return true;
 })()`;
 
-// Runs in the client page: for every frame the <video> presents, read the row of cells.
+// Runs in the client page: for every frame the <video> presents, read the row of cells, and for
+// some frames keep the brightness of a rectangle of the picture to compare with what was drawn.
 const PROBE = `(() => {
   const o = __O__;
   const v = mainView.panes[0].video;
-  const R = (window.__bench = { rows: [], bad: 0, calls: 0, err: '', how: '', dbg: [], geo: '' });
+  const R = (window.__bench = { rows: [], crops: [], bad: 0, calls: 0, err: '', how: '', dbg: [], geo: '', canvas: false });
   const even = (x) => Math.max(0, Math.floor(x / 2) * 2);
-  // lum(i) = brightness (0..765) of cell i
+  const T = performance.timeOrigin - o.t0;
+  // lum(i) = brightness (0..765) of cell i. Returns [phase, time code] of the frame, or null.
   const decode = (lum, n, now, md) => {
     const hi = (lum(0) + lum(n - 1)) / 2, lo = (lum(1) + lum(n - 2)) / 2;
-    if (hi - lo < 240) { R.bad++; if (R.dbg.length < 3) { const a = []; for (let i = 0; i < n; i++) a.push(lum(i)); R.dbg.push(a.join(',')); } return; }
+    if (hi - lo < 240) { R.bad++; if (R.dbg.length < 3) { const a = []; for (let i = 0; i < n; i++) a.push(lum(i)); R.dbg.push(a.join(',')); } return null; }
     const mid = (hi + lo) / 2;
     let val = 0;
     for (let i = 2; i < n - 2; i++) val = val * 2 + (lum(i) > mid ? 1 : 0);
-    const T = performance.timeOrigin - o.t0;
-    R.rows.push([T + now, T + md.expectedDisplayTime, md.receiveTime ? T + md.receiveTime : 0, md.processingDuration || 0, md.presentedFrames, Math.floor(val / 2 ** 30), Math.floor(val / 2 ** 20) % 1024, val % 2 ** 20]);
+    const ph = Math.floor(val / 2 ** 30), t = val % 2 ** 20;
+    R.rows.push([T + now, T + md.expectedDisplayTime, md.receiveTime ? T + md.receiveTime : 0, md.processingDuration || 0, md.presentedFrames, ph, Math.floor(val / 2 ** 20) % 1024, t]);
+    return [ph, t];
   };
+  // Which frames to keep a piece of: after the whole picture changed (phase 2) every frame at first,
+  // while things move (phases 1 and 3) one in eight.
+  let openT = -1, openN = 0, moveN = 0;
+  const wanted = (ph, t) => {
+    if (!o.crop || R.crops.length >= 420) return false;
+    if (ph === 2) { if (t !== openT) { openT = t; openN = 0; } openN++; return openN <= 90 || openN % 6 === 0; }
+    if (ph === 1 || ph === 3) return ++moveN % 8 === 0;
+    return false;
+  };
+  const b64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192)); return btoa(s); };
+  const keep = (id, md, w, h, lum) => R.crops.push([id[1], id[0], T + md.expectedDisplayTime, w, h, b64(lum)]);
   // Reading must not hold up the page: a slow read makes the next callback late and frames go by unread.
-  // So take the frame and copy two rows of it asynchronously; fall back to a canvas if that is not possible.
+  // So take the frame and copy rows of it asynchronously; fall back to a canvas if that is not possible.
   let cv = null, g = null;
   const cb = (now, md) => {
     v.requestVideoFrameCallback(cb);
@@ -87,28 +101,42 @@ const PROBE = `(() => {
       const f = new VideoFrame(v);
       const k = f.codedWidth / o.monW, cell = o.cell * k, n = o.cells;
       const rect = { x: even(o.x * k), y: even(o.y * k + cell / 2), width: even(Math.ceil(cell * n) + 1), height: 2 };
+      const crop = o.crop && k === 1 ? { x: even(o.x + o.crop.x), y: even(o.y + o.crop.y), width: o.crop.w, height: o.crop.h } : null;
       // Some decoders' frames copy out wrong (seen with hardware AV1): after a run of unreadable frames, use the canvas.
       if (R.bad > 20 && !R.rows.length) R.canvas = true;
-      const fmt = R.canvas ? null : f.format, planar = !!fmt && !/^(RGB|BGR)/.test(fmt);
+      const fmt = R.canvas ? null : f.format, planar = !!fmt && !/^(RGB|BGR)/.test(fmt), bgr = !!fmt && /^BGR/.test(fmt);
       if (!R.geo) R.geo = fmt + ' coded ' + f.codedWidth + 'x' + f.codedHeight + ', visible ' + JSON.stringify(f.visibleRect) + ', video ' + v.videoWidth + 'x' + v.videoHeight + ', rect ' + JSON.stringify(rect);
       if (fmt) {
         const buf = new Uint8Array(f.allocationSize({ rect }));
         f.copyTo(buf, { rect }).then((layout) => {
-          f.close();
           const off = layout[0].offset, px = planar ? 1 : 4;
-          decode((i) => { const p = off + Math.min(rect.width - 1, Math.floor((i + 0.5) * cell)) * px; return planar ? buf[p] * 3 : buf[p] + buf[p + 1] + buf[p + 2]; }, n, now, md);
+          const id = decode((i) => { const p = off + Math.min(rect.width - 1, Math.floor((i + 0.5) * cell)) * px; return planar ? buf[p] * 3 : buf[p] + buf[p + 1] + buf[p + 2]; }, n, now, md);
           R.how = 'frame ' + fmt;
-        }).catch((e) => { try { f.close(); } catch {} R.err = String(e); });
+          if (!id || !crop || !wanted(id[0], id[1])) return;
+          const cbuf = new Uint8Array(f.allocationSize({ rect: crop }));
+          return f.copyTo(cbuf, { rect: crop }).then((l) => {
+            const w = crop.width, h = crop.height, out = new Uint8Array(w * h), o0 = l[0].offset, st = l[0].stride;
+            if (planar) for (let y = 0; y < h; y++) out.set(cbuf.subarray(o0 + y * st, o0 + y * st + w), y * w);
+            else for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const q = o0 + y * st + x * 4; out[y * w + x] = Math.round(0.299 * cbuf[q + (bgr ? 2 : 0)] + 0.587 * cbuf[q + 1] + 0.114 * cbuf[q + (bgr ? 0 : 2)]); }
+            keep(id, md, w, h, out);
+          });
+        }).then(() => f.close(), (e) => { try { f.close(); } catch {} R.err = String(e); });
         return;
       }
       f.close();
       if (!cv) { cv = document.createElement('canvas'); g = cv.getContext('2d', { willReadFrequently: true }); }
-      const w = rect.width;
-      if (cv.width !== w) { cv.width = w; cv.height = 1; }
-      g.drawImage(v, rect.x, rect.y, w, 1, 0, 0, w, 1);
-      const d = g.getImageData(0, 0, w, 1).data;
-      decode((i) => { const p = Math.min(w - 1, Math.floor((i + 0.5) * cell)) * 4; return d[p] + d[p + 1] + d[p + 2]; }, n, now, md);
+      // One drawing holds both the row of cells and the rectangle, so they are from the same frame.
+      const W = crop ? Math.max(rect.width, o.crop.x + o.crop.w) : rect.width, Hh = crop ? Math.max(rect.y - o.y + 1, o.crop.y + o.crop.h) : rect.y - o.y + 1;
+      if (cv.width !== W || cv.height !== Hh) { cv.width = W; cv.height = Hh; }
+      g.drawImage(v, o.x * k, o.y * k, W, Hh, 0, 0, W, Hh);
+      const d = g.getImageData(0, rect.y - even(o.y * k), rect.width, 1).data;
+      const id = decode((i) => { const p = Math.min(rect.width - 1, Math.floor((i + 0.5) * cell)) * 4; return d[p] + d[p + 1] + d[p + 2]; }, n, now, md);
       R.how = 'canvas';
+      if (id && crop && wanted(id[0], id[1])) {
+        const c = g.getImageData(o.crop.x, o.crop.y, o.crop.w, o.crop.h).data, out = new Uint8Array(o.crop.w * o.crop.h);
+        for (let i = 0, j = 0; j < out.length; i += 4, j++) out[j] = Math.round(0.299 * c[i] + 0.587 * c[i + 1] + 0.114 * c[i + 2]);
+        keep(id, md, o.crop.w, o.crop.h, out);
+      }
     } catch (e) { R.err = String(e); }
   };
   v.requestVideoFrameCallback(cb);
@@ -205,8 +233,14 @@ function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon }
   // host: what the encoder and the bandwidth estimate did, overall and during scrolling only
   {
     const list = hs.filter((h) => h && h.mons && h.mons[mon]);
-    const per = P.sparse + P.scroll;
-    const scrolling = (t) => { const el = t - C.t0 - (started - offP.off); return el >= 0 && el % per >= P.sparse; };
+    const total = P.phases.reduce((a, x) => a + x.ms, 0);
+    const phaseAt = (t) => {
+      let rest = (t - C.t0 - (started - offP.off)) % total;
+      if (rest < 0) return '';
+      for (const x of P.phases) { if (rest < x.ms) return x.type; rest -= x.ms; }
+      return '';
+    };
+    const during = (type) => ([x, y]) => phaseAt(x.t) === type && phaseAt(y.t) === type;
     const sum = (pairs) => {
       const a = { dt: 0, src: 0, enc: 0, bytes: 0, qp: 0, encT: 0, pkt: 0, pace: 0, key: 0, huge: 0 };
       for (const [x, y] of pairs) {
@@ -218,17 +252,16 @@ function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon }
       return a.dt ? { captureFps: r1(a.src / a.dt), encodeFps: r1(a.enc / a.dt), mbps: r1(a.bytes * 8 / a.dt / 1e6), qp: r1(a.enc ? a.qp / a.enc : null), encodeMs: r1(a.enc ? a.encT / a.enc * 1000 : null), pacerMs: r1(a.pkt ? a.pace / a.pkt * 1000 : null), keyFrames: a.key, hugeFrames: a.huge } : null;
     };
     const pairs = list.slice(1).map((y, i) => [list[i], y]);
-    // Per half second: [seconds, scrolling, capture fps, encode fps, Mbps, QP, frames the capture side discarded]
+    // Per half second: [seconds, phase (lower case = it changed within the half second), capture fps, encode fps, Mbps, QP]
     out.timeline = pairs.map(([x, y]) => {
-      const a = sum([[x, y]]) || {};
-      return [r1((y.t - list[0].t) / 1000), scrolling(x.t) && scrolling(y.t) ? 1 : scrolling(x.t) || scrolling(y.t) ? 0.5 : 0, a.captureFps, a.encodeFps, a.mbps, a.qp,
-        y.mons[mon].discarded != null ? y.mons[mon].discarded - x.mons[mon].discarded : null];
+      const a = sum([[x, y]]) || {}, ph = phaseAt(x.t), same = ph === phaseAt(y.t);
+      return [r1((y.t - list[0].t) / 1000), (ph[0] || '?')[same ? 'toUpperCase' : 'toLowerCase'](), a.captureFps, a.encodeFps, a.mbps, a.qp];
     });
     const first = list[0], lastS = list[list.length - 1];
     const avail = list.map((h) => (h.avail || 0) / 1e6);
     const lim = (k) => (lastS && first ? r1(((lastS.mons[mon].limitDur || {})[k] || 0) - ((first.mons[mon].limitDur || {})[k] || 0)) : null);
     out.host = {
-      all: sum(pairs), scroll: sum(pairs.filter(([x, y]) => scrolling(x.t) && scrolling(y.t))), sparse: sum(pairs.filter(([x, y]) => !scrolling(x.t) && !scrolling(y.t))),
+      all: sum(pairs), ...Object.fromEntries([...new Set(P.phases.map((x) => x.type))].map((type) => [type, sum(pairs.filter(during(type)))])),
       encoder: lastS ? lastS.mons[mon].impl : '', codec: lastS ? lastS.mons[mon].codec : '', res: lastS ? lastS.mons[mon].w + 'x' + lastS.mons[mon].h : '',
       bwe: { min: r1(Math.min(...avail)), p50: r1(quant(avail, 0.5)), max: r1(Math.max(...avail)), series: avail.map(r1) },
       targetMbps: r1(quant(list.map((h) => (h.mons[mon].targetBitrate || 0) / 1e6), 0.5)),
@@ -250,11 +283,108 @@ function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon }
   return out;
 }
 
+// Picture quality. Each kept piece of a client frame is compared with the same rectangle of the
+// frame as it was drawn (the picture window draws it again). The measure is PSNR of brightness,
+// in dB: about 30 = soft but readable, 35 = good, 40+ = hard to tell from the original. A constant
+// gain/offset between the two (video range, colour conversion) is taken out first.
+async function quality({ crops, drawn, pat, offP, offC, rect, snapshot }) {
+  if (!crops.length) return null;
+  const info = new Map(drawn.map((e) => [e[0], e]));
+  const cache = new Map();
+  const truth = async (t) => {
+    if (!cache.has(t)) {
+      const s = await pat.webContents.executeJavaScript(`window.__pat.truth(${t}, ${JSON.stringify(rect)})`);
+      cache.set(t, s ? Buffer.from(s, 'base64') : null);
+    }
+    return cache.get(t);
+  };
+  const items = [];
+  for (const [t, ph, disp, w, h, b] of crops) {
+    const tr = info.has(t) ? await truth(t) : null, px = Buffer.from(b, 'base64');
+    if (!tr || tr.length !== px.length) continue;
+    items.push({ t, ph, age: disp - offC.off - (t - offP.off), w, h, px, tr });
+  }
+  if (!items.length) return null;
+  const fit = (it) => {
+    let sx = 0, sy = 0, sxx = 0, sxy = 0;
+    const n = it.px.length;
+    for (let i = 0; i < n; i++) { const x = it.tr[i], y = it.px[i]; sx += x; sy += y; sxx += x * x; sxy += x * y; }
+    const a = (n * sxy - sx * sy) / Math.max(1e-9, n * sxx - sx * sx);
+    return [a, (sy - a * sx) / n];
+  };
+  // The gain/offset comes from frames that had time to settle (the last one of each still period).
+  const groups = new Map();
+  for (const it of items) if (it.ph === 2) { if (!groups.has(it.t)) groups.set(it.t, []); groups.get(it.t).push(it); }
+  for (const g of groups.values()) g.sort((x, y) => x.age - y.age);
+  const settled = [...groups.values()].map((g) => g[g.length - 1]).filter((it) => it.age > 1500);
+  const fits = (settled.length ? settled : items).map(fit);
+  const a = quant(fits.map((f) => f[0]), 0.5), b = quant(fits.map((f) => f[1]), 0.5);
+  const psnr = (it) => {
+    let se = 0;
+    for (let i = 0; i < it.px.length; i++) { const e = (it.px[i] - b) / a - it.tr[i]; se += e * e; }
+    return Math.min(60, 10 * Math.log10(255 * 255 / Math.max(1e-6, se / it.px.length)));
+  };
+  for (const it of items) it.db = psnr(it);
+  const out = { gain: r1(a * 100) / 100, offset: r1(b), pieces: items.length };
+  const med = (list) => r1(quant(list.filter((x) => x != null), 0.5));
+  if (groups.size) {
+    // After the whole picture changed: when the new picture first shows, how good it is then, and how it improves.
+    const AT = [150, 300, 500, 1000, 2000];
+    const ev = [...groups.values()].map((g) => {
+      const final = g[g.length - 1].age > 1500 ? g[g.length - 1].db : null;
+      const at = (ms) => { const upTo = g.filter((it) => it.age <= ms); return upTo.length ? upTo[upTo.length - 1].db : null; };
+      const reach = (db) => { const hit = g.find((it) => it.db >= db); return hit ? hit.age : null; };
+      return { first: g[0].age, firstDb: g[0].db, at: AT.map(at), final, readable: reach(32), good: reach(36), settled: final != null ? reach(final - 1.5) : null, frames: g.length, page: info.get(g[0].t)[3] };
+    });
+    out.open = {
+      events: ev.length, firstMs: med(ev.map((e) => e.first)), firstDb: med(ev.map((e) => e.firstDb)),
+      at: Object.fromEntries(AT.map((ms, i) => [ms, med(ev.map((e) => e.at[i]))])), finalDb: med(ev.map((e) => e.final)),
+      readableMs: med(ev.map((e) => e.readable)), goodMs: med(ev.map((e) => e.good)), settledMs: med(ev.map((e) => e.settled)),
+      each: ev.map((e) => ({ page: e.page, firstMs: r1(e.first), firstDb: r1(e.firstDb), at: e.at.map(r1), finalDb: r1(e.final), goodMs: r1(e.good), settledMs: r1(e.settled), frames: e.frames })),
+    };
+  }
+  for (const [name, code] of [['scroll', 1], ['drag', 3]]) {
+    const list = items.filter((it) => it.ph === code).map((it) => it.db);
+    if (list.length) out[name] = { n: list.length, p10: r1(quant(list, 0.1)), p50: r1(quant(list, 0.5)), p90: r1(quant(list, 0.9)) };
+  }
+  if (snapshot) {
+    // Side by side, drawn | shown, for looking at: first frame after a change, about 0.3 s later, settled; one mid-drag, one mid-scroll.
+    const png = (it, name) => {
+      const W = it.w * 2 + 8, buf = Buffer.alloc(W * it.h * 4, 255);
+      for (let y = 0; y < it.h; y++) for (let x = 0; x < it.w; x++) {
+        const tv = it.tr[y * it.w + x], cvv = Math.max(0, Math.min(255, Math.round((it.px[y * it.w + x] - b) / a)));
+        let o = (y * W + x) * 4; buf[o] = buf[o + 1] = buf[o + 2] = tv;
+        o = (y * W + it.w + 8 + x) * 4; buf[o] = buf[o + 1] = buf[o + 2] = cvv;
+      }
+      fs.writeFileSync(`${snapshot}.${name}.png`, nativeImage.createFromBitmap(buf, { width: W, height: it.h }).toPNG());
+    };
+    let n = 0;
+    for (const g of groups.values()) {
+      if (n >= 2) break;
+      n++;
+      // The raw brightness of the settled frame, drawn then shown, for a closer look (w*h bytes each).
+      fs.writeFileSync(`${snapshot}.open${n}-settled.${g[0].w}x${g[0].h}.raw`, Buffer.concat([g[g.length - 1].tr, g[g.length - 1].px]));
+      png(g[0], `open${n}-first-${Math.round(g[0].age)}ms-${Math.round(g[0].db)}dB`);
+      const mid = g.find((it) => it.age >= g[0].age + 250) || g[g.length - 1];
+      png(mid, `open${n}-later-${Math.round(mid.age)}ms-${Math.round(mid.db)}dB`);
+      png(g[g.length - 1], `open${n}-settled-${Math.round(g[g.length - 1].db)}dB`);
+    }
+    for (const [name, code] of [['scroll', 1], ['drag', 3]]) {
+      const list = items.filter((it) => it.ph === code).sort((x, y) => x.db - y.db);
+      if (list.length) { const it = list[Math.floor(list.length / 2)]; png(it, `${name}-typical-${Math.round(it.db)}dB`); }
+    }
+  }
+  return out;
+}
+
 async function run() {
   const displays = screen.getAllDisplays().sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
   // Stay out of the way: prefer a display the pointer is not on, and not the primary one.
   const cur = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id, prim = screen.getPrimaryDisplay().id;
-  const score = (i) => (displays[i].id !== cur ? 2 : 0) + (displays[i].id !== prim ? 1 : 0);
+  // A display in HDR mode is captured with wrong tones, which would spoil the picture-quality comparison.
+  const color = require('./input').displayColor();
+  const isHdr = (x) => { const r = screen.dipToScreenRect(null, x.bounds); return color.some((e) => e.hdr && e.x === r.x && e.y === r.y); };
+  const score = (i) => (isHdr(displays[i]) ? 0 : 4) + (displays[i].id !== cur ? 2 : 0) + (displays[i].id !== prim ? 1 : 0);
   let di = Number.isInteger(B.display) && displays[B.display] ? B.display : displays.map((_, i) => i).sort((a, b) => score(b) - score(a) || b - a)[0];
   const d = displays[di], phys = screen.dipToScreenRect(null, d.bounds);
   const pw = Math.min(P.w, d.bounds.width), ph = Math.min(P.h, d.bounds.height);
@@ -264,7 +394,7 @@ async function run() {
     return w;
   };
   const pat = mk({ x: d.bounds.x, y: d.bounds.y, width: pw, height: ph });
-  await pat.loadFile(path.join(__dirname, 'bench-pattern.html'), { query: { t0: String(C.t0), sparse: String(P.sparse), scroll: String(P.scroll), speed: String(P.speed), every: String(P.every), cell: String(P.cell) } });
+  await pat.loadFile(path.join(__dirname, 'bench-pattern.html'), { query: { t0: String(C.t0), phases: JSON.stringify(P.phases), speed: String(P.speed), every: String(P.every), cell: String(P.cell) } });
   pat.showInactive();
 
   // The client window: small, in a corner of another display. On the captured display it would
@@ -292,9 +422,11 @@ async function run() {
   await js(`setSel(mainView, ${mon}); setFit(mainView, '1:1'); 1`);
   if (!(await until(`Number(String(window.__rd.res[${mon}]).split('x')[0]) === ${phys.width}`, 25))) throw new Error('full resolution was not reached: ' + (await js('JSON.stringify(window.__rd.res)')));
   if (B.clientJsConnected) await js(B.clientJsConnected + '\n;0');
+  // The rectangle compared for picture quality, in picture pixels: below the row of cells, over text and pictures.
+  const CROP = { x: 40, y: 60, w: 416, h: 200 };
   await js(PROBE.replace('__O__', JSON.stringify({
     x: (pat.getBounds().x - d.bounds.x) * d.scaleFactor, y: (pat.getBounds().y - d.bounds.y) * d.scaleFactor,
-    cell: Math.round(P.cell * d.scaleFactor), cells: 36, monW: phys.width, t0: C.t0,
+    cell: Math.round(P.cell * d.scaleFactor), cells: 36, monW: phys.width, t0: C.t0, crop: d.scaleFactor === 1 ? CROP : null,
   })));
 
   const clockOffset = async (wc) => {
@@ -334,10 +466,14 @@ async function run() {
   }
   const pinfo = await pat.webContents.executeJavaScript('({ drawn: window.__pat.drawn, started: window.__pat.started, raf: window.__pat.raf, w: window.__pat.w, h: window.__pat.h })');
   const res = analyze({ rows, drawn: pinfo.drawn, started: pinfo.started, hs, cs0, cs1, m0, m1, offP, offC, mon });
+  // The kept pieces of frames come over in batches (they are large), then are compared with what was drawn.
+  const crops = [];
+  for (const total = await js('window.__bench.crops.length'); crops.length < total;) crops.push(...(await js(`window.__bench.crops.slice(${crops.length}, ${crops.length + 30})`)));
+  res.quality = await quality({ crops, drawn: pinfo.drawn, pat, offP, offC, rect: CROP, snapshot: B.snapshot });
   Object.assign(res.probe, probe);
   res.cpu = cpu; // percent of the whole machine (all cores), over the measured window, both including the picture window's process share
   res.setup = {
-    display: di + 1, monitor: phys.width + 'x' + phys.height, picture: pinfo.w + 'x' + pinfo.h, clientWindowOnDisplay: displays.indexOf(cd) + 1,
+    display: di + 1, hdr: isHdr(d), monitor: phys.width + 'x' + phys.height, picture: pinfo.w + 'x' + pinfo.h, clientWindowOnDisplay: displays.indexOf(cd) + 1,
     clockUncertaintyMs: r1((offP.rt + offC.rt) / 2), clockOffsetMs: r1(offC.off - offP.off),
   };
   return res;

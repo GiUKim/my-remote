@@ -82,7 +82,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app }) => {
   const w = new BrowserWindow({ show: false, width: 1280, height: 720, webPreferences: { backgroundThrottling: false } });
   await w.loadFile(file, { hash: `k=${cfg.key}&auto&ro` });
   const js = (code) => w.webContents.executeJavaScript(code);
-  const state = () => js(`({ ...window.__rd, sel: mainView.sel, fit: mainView.fit, view: lastView,
+  const state = () => js(`({ ...window.__rd, sel: mainView.sel, fit: mainView.fit, view: lastView, panes: mainView.panes.length, empty: document.getElementById('empty').style.display === 'flex',
     mons: monitors.map((m) => ({ w: m.width, h: m.height })),
     cursorCss: mainView.panes[0] ? mainView.panes[0].video.style.cursor : '' })`);
   const until = async (pred, secs) => {
@@ -100,6 +100,34 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app }) => {
     check('connect and receive video', ok, ok ? `${s.monitors} monitor(s): ${s.mons.map((m) => m.w + 'x' + m.h).join(', ')}` : JSON.stringify(s));
     if (!ok) throw new Error('no connection');
     const N = s.monitors;
+
+    // --dump-panel=<file.png>: pictures of the arrangement panel for checking its design, then exit.
+    // It is drawn as if this PC had two 2560x1440 screens; nothing is applied and no window is opened.
+    const dumpPanel = process.argv.find((a) => a.startsWith('--dump-panel='));
+    if (dumpPanel) {
+      const out = dumpPanel.split('=')[1], shot = async (name) => fs.writeFileSync(out.replace(/\.png$/, name + '.png'), (await w.webContents.capturePage()).toPNG());
+      await js(`mainView.layoutSig = 'demo'; arr.snap = true; document.head.appendChild(document.createElement('style')).textContent = '* { transition: none !important; }'; arrOpen().then(() => { const s = { left: 0, top: 0, width: 2560, height: 1440, availLeft: 0, availTop: 0, availWidth: 2560, availHeight: 1440 };
+        arr.cs = { list: [s, { ...s, left: 2560, availLeft: 2560 }], cur: 0 }; arr.A = monitors.map((_, h) => (h < 2 ? h : null)); arr.prev = arr.A.slice(); arrBuild(); arrPaint(arr.A); })`);
+      await sleep(3500);
+      await shot('');
+      const dbg = await js(`(() => { const t = arr.host[1], r = t.lcd.getBoundingClientRect(), b = arr.host[2] || arr.host[0], q = b.lcd.getBoundingClientRect(), el = document.getElementById('arr');
+        const fire = (type, target, x, y, ctrl) => target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 7, clientX: x, clientY: y, ctrlKey: !!ctrl }));
+        fire('pointerdown', t.lcd, r.left + 30, r.top + 30); fire('pointermove', el, r.left + 60, r.top + 40); fire('pointermove', el, q.left + q.width / 2, q.top + q.height / 2, true);
+        return JSON.stringify({ drag: !!arr.drag, moved: arr.drag && arr.drag.moved, aim: arr.drag && arr.drag.aim && arr.drag.aim.i, shown: arr.shown }); })()`);
+      console.log('[selftest] INFO  panel drag state: ' + dbg);
+      await sleep(1500);
+      await shot('-ctrl-drag');
+      await js(`(() => { const el = document.getElementById('arr'), q = arr.host[0].lcd.getBoundingClientRect();
+        el.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: q.left + q.width / 2, clientY: q.top + q.height / 2, pointerId: 7 })); })()`);
+      await sleep(1500);
+      await shot('-swap-drag');
+      await js(`arrDragEnd(false); arrPaint([null, 0, 0].slice(0, monitors.length)); 1`);
+      await sleep(1500);
+      await shot('-together');
+      console.log('[selftest] INFO  panel pictures written next to ' + out);
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+      return app.exit(0);
+    }
 
     [ok, s] = await until((x) => !!x.cursor, 5);
     check('cursor shape sync', ok && s.cursorCss === s.cursor, `host cursor = ${s.cursor}`);
@@ -138,8 +166,58 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app }) => {
 
       const plan = await js(`JSON.stringify([planLayout(3, 3, 1, 0), planLayout(3, 2, 0, 1), planLayout(2, 3, 2, 0)].map((p) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, v.sel]))))`);
       check('layout plan keeps left-to-right order', plan === JSON.stringify([{ 0: 0, 1: 1, 2: 2 }, { 0: 1, 1: 2 }, { 1: 0, 2: 1 }]), plan);
+
+      // Arrangement panel. First the rules for dragging one tile onto another (host monitors 1..3, this PC's screens 1..2).
+      const ops = await js(`JSON.stringify([
+        arrOp([0, 1, null], { kind: 'host', i: 1 }, { kind: 'host', i: 2 }, false),
+        arrOp([0, 1, null], { kind: 'host', i: 1 }, { kind: 'host', i: 2 }, true),
+        arrOp([0, 1, null], { kind: 'host', i: 0 }, { kind: 'host', i: 1 }, false),
+        arrOp([0, 1, null], { kind: 'client', i: 1 }, { kind: 'host', i: 2 }, false),
+        arrOp([0, 1, null], { kind: 'client', i: 1 }, { kind: 'host', i: 0 }, false),
+        arrOp([0, 1, null], { kind: 'host', i: 2 }, { kind: 'client', i: 0 }, true),
+        arrOp([0, 1, null], { kind: 'client', i: 0 }, { kind: 'client', i: 1 }, false),
+      ])`);
+      check('arrangement: move swaps, Ctrl adds, onto an unused monitor takes over',
+        ops === JSON.stringify([[0, null, 1], [0, 1, 1], [1, 0, null], [0, null, 1], [1, 0, null], [0, 1, 0], [1, 0, null]]), ops);
+
+      // Applying an arrangement (with a single screen of this PC, so no window is opened here).
+      const one = `{ list: [{ left: 0, top: 0, width: 1920, height: 1080, availLeft: 0, availTop: 0, availWidth: 1920, availHeight: 1080 }], cur: 0 }`;
+      await js(`applyAssign(monitors.map((_, h) => (h < 2 ? 0 : null)), ${one})`);
+      [ok, s] = await until((x) => x.panes === 2 && x.fps[0] > 0 && x.fps[1] > 0 && Object.keys(x.fps).every((i) => Number(i) < 2 || x.fps[i] === 0), 15);
+      check('arrangement: one screen shows two monitors together', ok, `showing ${JSON.stringify(s.sel)}, fps ${JSON.stringify(s.fps)}`);
+      await js(`applyAssign(monitors.map(() => null), ${one})`);
+      [ok, s] = await until((x) => x.sel === 'none' && x.empty && Object.values(x.fps).every((f) => f === 0), 12);
+      check('arrangement: a screen can be left empty (nothing is sent)', ok, `fps ${JSON.stringify(s.fps)}`);
+
+      // The panel itself: every monitor is shown small while it is open, and a drag changes what the window shows.
+      await js(`arrOpen().then(() => { arr.cs = ${one}; arr.A = monitors.map((_, h) => (h === 0 ? 0 : null)); arr.prev = arr.A.slice(); arrBuild(); arrPaint(arr.A); applyAssign(arr.A, arr.cs); })`);
+      [ok, s] = await until((x) => x.sel === 0 && JSON.parse(x.view).length === x.monitors, 12);
+      const tiles = await js(`({ host: arr.host.length, client: arr.client.length, shown: document.getElementById('arr').style.display, live: arr.host.every((t) => t.videos.size === 1) })`);
+      check('arrangement panel: shows every host monitor live', ok && tiles.host === N && tiles.client === 1 && tiles.shown === 'flex' && tiles.live, JSON.stringify(tiles) + ' requested ' + s.view);
+      await js(`(() => {
+        const at = (t) => { const r = t.lcd.getBoundingClientRect(); return { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }; };
+        const fire = (type, target, pos, extra) => target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 7, ...pos, ...extra }));
+        const a = at(arr.host[0]), b = at(arr.host[1]);
+        fire('pointerdown', arr.host[0].lcd, a);
+        fire('pointermove', document.getElementById('arr'), { clientX: (a.clientX + b.clientX) / 2, clientY: a.clientY });
+        fire('pointermove', document.getElementById('arr'), b);
+        fire('pointerup', document.getElementById('arr'), b);
+      })()`);
+      [ok, s] = await until((x) => x.sel === 1, 10);
+      const after = await js(`JSON.stringify(arr.A)`);
+      check('arrangement panel: dragging one monitor onto another swaps them', s.sel === 1 && JSON.parse(after)[0] === null && JSON.parse(after)[1] === 0, `window shows monitor ${typeof s.sel === 'number' ? s.sel + 1 : s.sel}, arrangement ${after}`);
+      await js(`(() => { const t = arr.host[1].lcd, r = t.getBoundingClientRect(), pos = { clientX: r.left + 20, clientY: r.top + 20 };
+        for (const type of ['pointerdown', 'pointerup']) (type === 'pointerdown' ? t : document.getElementById('arr')).dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 7, ...pos })); })()`);
+      const offA = await js(`JSON.stringify(arr.A)`);
+      await js(`(() => { const t = arr.host[1].lcd, r = t.getBoundingClientRect(), pos = { clientX: r.left + 20, clientY: r.top + 20 };
+        for (const type of ['pointerdown', 'pointerup']) (type === 'pointerdown' ? t : document.getElementById('arr')).dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 7, ...pos })); })()`);
+      const onA = await js(`JSON.stringify(arr.A)`);
+      check('arrangement panel: a click turns a monitor off, another click brings it back', JSON.parse(offA).every((x) => x === null) && JSON.parse(onA)[1] === 0, `${offA} then ${onA}`);
+      await js(`arrClose(); applyAssign(monitors.map((_, h) => (h === 0 ? 0 : null)), ${one})`);
+      [ok, s] = await until((x) => x.sel === 0 && onlyFps(x, 0), 12);
+      check('arrangement: back to one monitor', ok, `fps ${JSON.stringify(s.fps)}`);
     } else {
-      info('single monitor host: monitor switching and overview checks skipped');
+      info('single monitor host: monitor switching, overview and arrangement checks skipped');
     }
 
     // Pasting must reach the page through the browser's paste event (no clipboard-read permission).

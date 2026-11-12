@@ -45,6 +45,7 @@ const DEFAULTS = {
   startBitrateMbps: 8,  // where the bandwidth estimate starts (it adapts from there)
   minBitrateMbps: 1,    // it never goes below this
   maxFps: 60,
+  refine: true,         // keep sending a still screen until it is fully sharp (AV1 only); costs about a frame of delay while things move
   audio: true,          // send system sound
   clipboard: true,      // two-way text clipboard
   hideHostCursor: true, // while connected, hide the cursor on this PC so the video has no trailing cursor
@@ -146,11 +147,13 @@ async function getSources() {
   const srcs = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
   const primaryId = screen.getPrimaryDisplay().id;
   const rects = [], out = [];
+  const color = input.displayColor(); // which displays Windows has in HDR mode (they are captured too bright)
   displays.forEach((d, i) => {
     const src = srcs.find((s) => s.display_id === String(d.id)) || (srcs.length === displays.length ? srcs[i] : null);
     if (!src) return;
     const r = screen.dipToScreenRect(null, d.bounds); // physical pixels
-    out.push({ id: src.id, idx: rects.length, x: r.x, y: r.y, width: r.width, height: r.height, primary: d.id === primaryId });
+    const c = color.find((e) => e.x === r.x && e.y === r.y);
+    out.push({ id: src.id, idx: rects.length, x: r.x, y: r.y, width: r.width, height: r.height, primary: d.id === primaryId, hdr: !!(c && c.hdr) });
     rects.push(r);
   });
   input.setMonitors(rects);

@@ -242,4 +242,41 @@ function restoreCursors() { return SystemParametersInfoW(0x0057, 0, 0, 0); }
 // Changes whenever the clipboard content changes; reading it does not open the clipboard.
 const GetClipboardSequenceNumber = user32.func('GetClipboardSequenceNumber', 'uint32', []);
 
-module.exports = { handle, reset, setMonitors, target, cursorState, cursorBitmap, hideCursors, restoreCursors, clipSeq: () => GetClipboardSequenceNumber() };
+// ---- displays in HDR mode ----------------------------------------------------------
+// A display with Windows HDR switched on is captured wrong: the capture gets the desktop after
+// Windows has raised SDR content to its HDR brightness and cut it off at SDR white, so everything
+// comes out brighter and the light half of the tones turns plain white. Nothing in the capture
+// path can undo that (the cut-off part is gone), so the host only finds such displays and says so.
+// Returns [{ x, y, hdr, gain }] per active display: position on the virtual desktop in physical
+// pixels, whether HDR is on, and how much brighter (in linear light) SDR content is drawn there.
+const GetDisplayConfigBufferSizes = user32.func('GetDisplayConfigBufferSizes', 'long', ['uint32', koffi.out(koffi.pointer('uint32')), koffi.out(koffi.pointer('uint32'))]);
+const QueryDisplayConfig = user32.func('QueryDisplayConfig', 'long', ['uint32', koffi.inout(koffi.pointer('uint32')), 'uint8*', koffi.inout(koffi.pointer('uint32')), 'uint8*', 'uintptr_t']);
+const DisplayConfigGetDeviceInfo = user32.func('DisplayConfigGetDeviceInfo', 'long', ['uint8*']);
+function displayColor() {
+  const out = [];
+  try {
+    const QDC_ONLY_ACTIVE_PATHS = 2, PATH = 72, MODE = 64;
+    const np = [0], nm = [0];
+    if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, np, nm) !== 0) return out;
+    const paths = Buffer.alloc(PATH * np[0]), modes = Buffer.alloc(MODE * nm[0]);
+    if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, np, paths, nm, modes, 0) !== 0) return out;
+    for (let i = 0; i < np[0]; i++) {
+      const p = i * PATH, mi = paths.readUInt32LE(p + 12);
+      if (mi >= nm[0] || modes.readUInt32LE(mi * MODE) !== 1) continue; // 1 = source mode
+      const x = modes.readInt32LE(mi * MODE + 28), y = modes.readInt32LE(mi * MODE + 32);
+      // Request header: type, size, adapter (8 bytes), target id.
+      const ask = (type, size) => {
+        const b = Buffer.alloc(size);
+        b.writeUInt32LE(type, 0); b.writeUInt32LE(size, 4);
+        paths.copy(b, 8, p + 20, p + 28); b.writeUInt32LE(paths.readUInt32LE(p + 28), 16);
+        return DisplayConfigGetDeviceInfo(b) === 0 ? b : null;
+      };
+      const color = ask(9, 32), white = ask(11, 24); // advanced colour info, SDR white level
+      const hdr = !!color && (color.readUInt32LE(20) & 2) !== 0;
+      out.push({ x, y, hdr, gain: hdr && white ? white.readUInt32LE(20) / 1000 : 1 });
+    }
+  } catch (e) { console.error('display colour', e); }
+  return out;
+}
+
+module.exports = { handle, reset, setMonitors, target, cursorState, cursorBitmap, hideCursors, restoreCursors, displayColor, clipSeq: () => GetClipboardSequenceNumber() };

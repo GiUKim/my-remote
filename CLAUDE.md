@@ -53,6 +53,14 @@ self-test, opens a view-only client in their default browser).
 
 ## Gotchas
 
+- **A display with Windows HDR on is captured wrong.** Desktop Duplication hands over the desktop after
+  Windows raised SDR content to HDR brightness and clipped it at SDR white, so the picture is brighter
+  and the light tones are plain white (measured: linear gain 3, everything above ~170/255 clipped). The
+  clipped part is gone, so it cannot be corrected afterwards. `input.displayColor()` finds such displays
+  (`DisplayConfigGetDeviceInfo`, read-only; Electron's `screen` does not report it reliably). The host
+  logs a warning, the offer marks the monitor `hdr`, the client shows it. The fix is the user's: turn HDR
+  off for that display. The bench avoids HDR displays, because the quality comparison is meaningless there.
+
 - **`ELECTRON_RUN_AS_NODE`**: terminals inside VS Code / Cursor set it, and Electron then runs as plain
   Node and crashes with `Cannot read properties of undefined (reading 'requestSingleInstanceLock')` or
   similar. Clear it before launching Electron (`Remove-Item Env:ELECTRON_RUN_AS_NODE` or `unset`). The
@@ -87,8 +95,9 @@ Run from `host/` with Electron's env var cleared.
 |---|---|
 | `npm run selftest` | Local end-to-end test, prints `[selftest] PASS/FAIL` lines, exits 0 or 1 |
 | `electron . --selftest --shell-check` | Same, plus the client app's one-click layout on the real screens. Fullscreen windows cover every monitor for a few seconds, so ask the user first |
+| `electron . --selftest --dump-panel=<file.png>` | Quick look at the arrangement panel: connects, draws the panel as if the client had two screens, writes pictures (`<file>.png`, `-ctrl-drag`, `-swap-drag`, `-together`) and exits. About 20 s, opens no window |
 | `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first |
-| `npm run bench -- --net=direct,home,narrow,wifi --try=old,base` | Measures delay and smoothness on this PC for the given link conditions and settings, prints a table (see "Performance"). About 45 s per run. Shows a test picture on one display and a small window on another for that time; they never take focus and no input is injected, but tell the user before a long series |
+| `npm run bench -- --net=direct,home,narrow,wifi --try=old,base` | Measures delay and smoothness on this PC for the given link conditions and settings, prints a table (see "Performance"). `--picture-test=quality` measures picture quality instead (a window opening, a window being dragged, scrolling); `--snapshot` saves what the client showed next to what was drawn. About 45 s per run. Shows a test picture on one display and a small window on another for that time; they never take focus and no input is injected, but tell the user before a long series |
 | `npm run localtest` | Local trial: host window plus view-only client in the default browser |
 | `npm start` | The real host (connects to the signaling server). User-initiated only |
 | `npm run build-client` | Regenerates `../my-remote-client.html` (the loader) from `loader.template.html` and `signal.js` |
@@ -138,8 +147,8 @@ The host builds the page once at start, so page and host always match.
 
 Signaling (through the relay, each message deflated, encrypted, chunked to 3000 chars):
 
-1. client -> host topic: `{t:'hello', sid, ts, mode, codec}` (`codec` optional: `H264`, `VP9`, `AV1`)
-2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, codec, cursorHidden, app, monitors:[{idx, mid, x, y, width, height, primary}]}`
+1. client -> host topic: `{t:'hello', sid, ts, mode, codec}` (`codec` optional: `H264`, `H264HQ`, `VP9`, `AV1`)
+2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, codec, cursorHidden, app, monitors:[{idx, mid, x, y, width, height, primary, hdr?}]}`
    (`x`,`y`,`width`,`height` are the monitor's rectangle on the host's virtual desktop, physical pixels)
 3. client -> host topic: `{t:'answer', sid, ts, sdp}`
 
@@ -169,14 +178,23 @@ desktop range for `SendInput`. Keys are sent as set-1 scancodes so the host's ke
 
 ## Client layout model
 
-Each client window is a *view*: it shows one host monitor (`sel` = index) or all of them in their real
-arrangement (`sel` = `'all'`), in `fit` or `1:1` mode. The video element is sized to the monitor's exact
+Each client window is a *view*. What it shows is `sel`: one host monitor (its index), several together in
+their real arrangement with gaps closed (a sorted list of indexes; `'all'` when it is every monitor), or
+nothing (`'none'`, main window only). One monitor can be shown in `fit` or `1:1` mode. The video element is sized to the monitor's exact
 aspect ratio, so pointer mapping is a plain proportion of the element. Policy, in `client.template.html`:
 
 - `planLayout(N, M, cur, primary)` decides which host monitor goes on which client screen (both sorted
   left to right): all N on neighbouring screens when N <= M, otherwise M neighbouring monitors around the
   primary. The result is remembered per `N:M` in localStorage.
 - Selecting a monitor that another window shows swaps the two, so a monitor is never shown twice.
+- The arrangement panel (`모니터 배치`, `arr*` functions) edits one list: for every host monitor, the client
+  screen it is shown on, or null. `arrOp(A, src, dst, copy)` is the whole drag rule set (host onto host
+  swaps, Ctrl adds the target to the dragged monitor's screen; screen and host: that screen shows that
+  monitor and what it showed moves to the monitor's old place; screen onto screen swaps).
+  `applyAssign(A, cs)` makes the windows match: it changes what open windows show, opens a window on a
+  screen that needs one and closes the window of an emptied screen (the main window shows a hint
+  instead). A click on a host tile turns it off and remembers where it was. While the panel is open
+  every monitor is requested at tile size, so tiles of unused monitors are live too.
 - `Ctrl+Alt` + arrows / digits / Enter are local shortcuts and are not forwarded (user can turn them off).
 - An exact integer enlargement is drawn with `image-rendering: pixelated`; anything else is smoothed.
 - Browsers allow one popup and one fullscreen request per click and restrict window placement, so in
@@ -217,6 +235,17 @@ Findings so far (i9-9900K, RTX 3060, three 1080p displays at 75 Hz, 1280x720 pic
   starts it sends 4-6 times its bitrate for up to a second, and the engine then drops frames.
   AV1 (libaom, on the CPU) does neither, stays sharp while scrolling at a third of the bitrate, and
   costs about 1.6 cores for one moving 1080p picture. Hence `codec: 'auto'`.
+- Picture quality (`--picture-test=quality`, PSNR of brightness against what was drawn; 30 dB = soft
+  but readable, 35 = good, 40+ = hard to tell from the original). AV1 while a window is dragged or a
+  page scrolls: 41 to 43 dB. After the whole picture changes at once it first shows after 130 to 170 ms
+  at about 35 dB (text readable, fine photo grain smoothed) and then improves. A still screen used
+  to get only a few frames a second, so that took 2 to 3 s; with `minFrameRate: 0` on the capture
+  (`refine` in `capture()`, AV1 only) the engine repeats the still frame until the encoder reports it has
+  settled: 0.5 to 1 s, at the cost of about one frame of delay while things move (scroll delay p50
+  +10 to +20 ms; capturing at 120 or 240 fps did not buy that back). AV1 levels off near 43 dB (its
+  quantizer has a floor). The graphics card's
+  H.264 encoder at three times the bitrate (`H264HQ`) gives 52 to 55 dB from the first frame on a link
+  with room for it (fine on an emulated 200 Mbps link; on a 40 Mbps one the estimate collapsed and it showed 7 fps), so it is only ever an explicit choice.
 - Not fixed: capture delivers 45-50 fps for 60 requested (the capturer spends at most half of each
   interval capturing); on a 6 Mbps link the estimate still collapses now and then when a scroll
   starts; `minFrameRate: 0`, the WGC capturer, 120 fps capture and turning the frame dropper off
@@ -241,6 +270,11 @@ dragging across monitors of different sizes. Input injection was verified separa
 `--cursor-check` confirmed on the real screen that hiding the host cursor removes it from the video and
 that it is restored afterwards. With `codec: H264` the hardware encoder is used at window-sized and full resolutions; the
 small overview tiles (480x270) fall back to OpenH264 and the hardware encoder returns afterwards.
+
+Verified by the self-test: the arrangement rules, applying an arrangement (two monitors together, an
+empty screen), the panel showing every monitor live, and a drag and a click done with synthetic pointer
+events. Not verified: the arrangement panel opening windows on a real second client screen (browser or
+client app), HDR detection on any PC but this one, `H264HQ` on a real link.
 
 Not verified: anything in "Performance" on a real link between two networks (the bench is one PC with an
 emulated link), AV1 decoding speed on a client other than this PC, AV1 encoding load on a host with fewer cores,

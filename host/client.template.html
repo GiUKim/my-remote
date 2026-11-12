@@ -24,12 +24,41 @@
   small { color: #8b94a1; }
   kbd { background: #0e1014; border: 1px solid #3a4350; border-radius: 4px; padding: 1px 6px; font: 12px Consolas, monospace; }
   #help td { padding: 3px 10px 3px 0; }
+  #empty { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; color: #8b94a1; font-size: 16px; line-height: 1.8; }
+  /* monitor arrangement */
+  #arr { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(10, 12, 15, .92); z-index: 7; user-select: none; }
+  #arrBox { position: relative; width: min(1180px, 96vw); max-height: 96vh; overflow: auto; box-sizing: border-box; background: #1d2229; border: 1px solid #2c333d; border-radius: 12px; padding: 16px 22px 14px; }
+  #arrArea { position: relative; }
+  #arrWires { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+  .arrTitle { text-align: center; color: #8b94a1; font-size: 13px; margin: 2px 0; }
+  .arrRow { display: flex; justify-content: center; align-items: flex-end; gap: 28px; padding: 8px 0; }
+  .mon { position: relative; display: flex; flex-direction: column; align-items: center; cursor: grab; touch-action: none; transition: opacity .15s, transform .15s; }
+  .mon .lcd { position: relative; background: #05070a; border: 6px solid #0b0d10; border-radius: 8px; box-shadow: 0 0 0 2px var(--c, #46505e); overflow: hidden; transition: box-shadow .18s, transform .18s; }
+  .mon .scr { position: absolute; inset: 0; display: flex; transition: filter .2s, opacity .2s; }
+  .mon .scr video { flex: 1 1 0; min-width: 0; height: 100%; object-fit: fill; pointer-events: none; background: #000; }
+  .mon .neck { width: 14%; height: 9px; background: #39424e; }
+  .mon .base { width: 38%; height: 5px; background: #39424e; border-radius: 3px; }
+  .mon .num { position: absolute; left: 6px; top: 6px; min-width: 24px; height: 24px; padding: 0 5px; box-sizing: border-box; border-radius: 12px; background: var(--c, #5b6573); color: #fff; font: 700 14px/24px "Segoe UI", sans-serif; text-align: center; box-shadow: 0 1px 4px rgba(0, 0, 0, .5); transition: background .18s; }
+  .mon .note { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: #e6e8eb; font-size: 14px; text-shadow: 0 1px 3px #000; pointer-events: none; }
+  .mon .cap { margin-top: 6px; font-size: 12px; color: #c5ccd6; text-align: center; white-space: nowrap; }
+  .mon .tag { display: inline-block; margin-top: 3px; padding: 1px 9px; border-radius: 10px; font-size: 12px; background: var(--c, #39424e); color: #fff; transition: background .18s; }
+  .mon.off .scr { filter: grayscale(1) brightness(.4); }
+  .mon.off .note { display: flex; }
+  .mon.off .tag { color: #aab2bd; }
+  .mon.lift { opacity: .35; }
+  .mon.aim .lcd { box-shadow: 0 0 0 3px #fff, 0 0 20px rgba(255, 255, 255, .35); transform: scale(1.05); }
+  .mon.client { cursor: grab; }
+  .mon.client .lcd { border-color: #1a1f26; background: #11151a; }
+  #arrGhost { position: fixed; z-index: 9; pointer-events: none; transform: translate(-50%, -50%) rotate(-2deg); border-radius: 6px; overflow: hidden; border: 2px solid #fff; box-shadow: 0 10px 28px rgba(0, 0, 0, .65); opacity: .9; background: #11151a; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 13px; }
+  #arrGhost video { width: 100%; height: 100%; object-fit: fill; }
+  #arrGhost b { position: absolute; right: 4px; bottom: 4px; padding: 0 7px; border-radius: 9px; background: #2b6cff; font-size: 12px; display: none; }
 </style>
 </head>
 <body>
 <div id="bar">
   <span id="mons"></span>
   <button id="spread" title="이 PC의 모니터마다 호스트 모니터를 하나씩, 좌우 순서를 맞춰 펼칩니다">모니터에 펼치기</button>
+  <button id="arrBtn" title="어느 호스트 모니터를 이 PC의 어느 모니터에 띄울지 끌어다 놓아 정합니다">모니터 배치</button>
   <button id="fs" title="전체화면에서는 Alt+Tab, Win 키 등도 원격으로 전달됩니다">전체화면</button>
   <select id="fit" title="이 창의 표시 방식">
     <option value="fit">화면에 맞춤</option>
@@ -46,7 +75,7 @@
   <b id="ro" style="display:none;color:#e0b341">보기 전용 (조작 불가)</b>
   <span id="stats"></span>
 </div>
-<div id="stage"><div id="ov"></div></div>
+<div id="stage"><div id="empty">이 창에 표시할 호스트 모니터가 없습니다.<br><b>모니터 배치</b>에서 모니터를 끌어다 놓거나 위쪽의 모니터 버튼을 누르세요.</div><div id="ov"></div></div>
 <audio id="audio" autoplay></audio>
 <div id="help"><div class="box">
   <h3 style="margin:0 0 10px">단축키</h3>
@@ -72,11 +101,33 @@
       <select id="codec">
         <option value="">호스트 기본값</option>
         <option value="H264">H.264 (그래픽카드 가속)</option>
+        <option value="H264HQ">H.264 최고 화질 (매우 빠른 회선 전용)</option>
         <option value="VP9">VP9</option>
         <option value="AV1">AV1 (글자가 선명, 호스트 CPU 사용)</option>
       </select></span>
   </div>
-  <p style="margin:8px 0 0"><small>코덱을 바꾸면 즉시 다시 연결합니다. 끊김이 있을 때 다른 코덱과 비교해 보세요.</small></p>
+  <p style="margin:8px 0 0"><small>코덱을 바꾸면 즉시 다시 연결합니다. 끊김이 있을 때 다른 코덱과 비교해 보세요. "최고 화질"은 화면이 바뀐 순간부터 원본과 구별하기 어렵지만 수십 Mbps를 쓰므로, 양쪽 회선이 모두 빠를 때만 좋습니다. 느린 회선에서는 오히려 끊깁니다.</small></p>
+</div></div>
+<div id="arr"><div id="arrBox">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px">
+    <h3 style="margin:0">모니터 배치</h3>
+    <small id="arrMsg"></small>
+    <button id="arrClose" style="margin-left:auto">닫기</button>
+  </div>
+  <div id="arrArea">
+    <div class="arrTitle">호스트 PC의 모니터 <small>(원격으로 조작하는 PC)</small></div>
+    <div class="arrRow" id="arrHost"></div>
+    <div style="height:58px"></div>
+    <div class="arrRow" id="arrClient"></div>
+    <div class="arrTitle">이 PC의 모니터</div>
+    <svg id="arrWires"></svg>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+    <small>끌어다 놓기: 옮기기 (원래 있던 화면과 자리 바꿈) · <kbd>Ctrl</kbd>+끌기: 같은 화면에 함께 표시 · 호스트 모니터 클릭: 끄기/켜기</small>
+    <button id="arrPerm" style="margin-left:auto;display:none;background:#343c48">이 PC의 다른 모니터도 사용</button>
+    <button id="arrReset" style="background:#343c48">기본 배치</button>
+    <button id="arrGo" style="background:#2b6cff">전체화면으로 시작</button>
+  </div>
 </div></div>
 <div id="panel"><div class="box">
   <h2 style="margin:0 0 6px">My Remote</h2>
@@ -118,8 +169,9 @@ let lastView = '', viewTimer = 0, cursorCss = 'default';
 let lastClip = null, pendingClip = null;
 let mode = store.get('mr_mode') === 'smooth' ? 'smooth' : 'sharp';
 let hotkeysOn = store.get('mr_hotkeys') !== 'off';
-let codec = ['H264', 'VP9', 'AV1'].includes(store.get('mr_codec')) ? store.get('mr_codec') : '';
+let codec = ['H264', 'H264HQ', 'VP9', 'AV1'].includes(store.get('mr_codec')) ? store.get('mr_codec') : '';
 let hostStat = null, offerInfo = {};
+const hdrTold = new Set(); // host monitors whose HDR warning has been shown
 const samples = []; // rolling measurements for the diagnostics report
 $('mode').value = mode;
 $('hk').checked = hotkeysOn;
@@ -136,7 +188,18 @@ function liveViews() {
   for (let i = views.length - 1; i >= 0; i--) if (views[i].win.closed) views.splice(i, 1);
   return views;
 }
+// What a window shows ("sel"): one monitor (its index), several together (a sorted list of
+// indexes, or 'all' for every one), or nothing ('none').
+const selList = (sel) => (sel === 'all' ? monitors.map((m) => m.idx) : Array.isArray(sel) ? sel.filter((i) => monitors[i]) : monitors[sel] ? [sel] : []);
+const isMulti = (sel) => sel === 'all' || Array.isArray(sel);
+const sameSel = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+function normSel(list) {
+  const l = [...new Set(list)].filter((i) => monitors[i]).sort((a, b) => a - b);
+  return !l.length ? 'none' : l.length === 1 ? l[0] : l.length === monitors.length ? 'all' : l;
+}
 function label(sel) {
+  if (sel === 'none') return '표시할 모니터 없음';
+  if (Array.isArray(sel)) return '모니터 ' + sel.map((i) => i + 1).join(' + ');
   if (sel === 'all') return `전체 보기 (모니터 ${monitors.length}개)`;
   const m = monitors[sel];
   return m ? `모니터 ${sel + 1} · ${m.width}×${m.height}` : '';
@@ -172,7 +235,8 @@ function toast(view, text, ms) {
 function render(view) {
   for (const p of view.panes) p.video.remove();
   view.panes = [];
-  const list = view.sel === 'all' ? monitors : [monitors[view.sel]].filter(Boolean);
+  const list = selList(view.sel).map((i) => monitors[i]);
+  if (view.isMain) $('empty').style.display = monitors.length && !list.length ? 'flex' : 'none';
   for (const m of list) {
     const v = view.win.document.createElement('video');
     v.autoplay = true; v.muted = true; v.playsInline = true; v.tabIndex = 0;
@@ -198,12 +262,12 @@ function layout(view) {
     s.left = l + 'px'; s.top = t + 'px'; s.width = w + 'px'; s.height = h + 'px';
     s.imageRendering = crisp ? 'pixelated' : '';
   };
-  if (view.sel === 'all') {
-    // All monitors in their real physical arrangement, scaled to fit.
-    const x0 = Math.min(...monitors.map((m) => m.x)), y0 = Math.min(...monitors.map((m) => m.y));
-    const bw = Math.max(...monitors.map((m) => m.x + m.width)) - x0, bh = Math.max(...monitors.map((m) => m.y + m.height)) - y0;
+  if (isMulti(view.sel)) {
+    // Several monitors in their real physical arrangement, scaled to fit.
+    const r = groupRects(view.panes.map((p) => p.idx));
+    const bw = Math.max(...r.map((m) => m.nx + m.w)), bh = Math.max(...r.map((m) => m.ny + m.h));
     const s = Math.min(W / bw, H / bh), ox = (W - bw * s) / 2, oy = (H - bh * s) / 2;
-    for (const p of view.panes) { const m = monitors[p.idx]; place(p, ox + (m.x - x0) * s, oy + (m.y - y0) * s, m.width * s, m.height * s, false); }
+    view.panes.forEach((p, k) => place(p, ox + r[k].nx * s, oy + r[k].ny * s, r[k].w * s, r[k].h * s, false));
     return;
   }
   const p = view.panes[0], m = monitors[p.idx];
@@ -220,7 +284,19 @@ function layout(view) {
     place(p, (W - m.width * s) / 2, (H - m.height * s) / 2, m.width * s, m.height * s, crisp);
   }
 }
+// Where monitors go when one window shows several: as they stand on the host, with the empty
+// space left by monitors that are not shown closed up.
+function groupRects(idxs) {
+  const r = idxs.map((i) => ({ x: monitors[i].x, y: monitors[i].y, w: monitors[i].width, h: monitors[i].height }));
+  for (const [p, s] of [['x', 'w'], ['y', 'h']]) {
+    const order = [...r].sort((a, b) => a[p] - b[p]);
+    let end = order[0][p], shift = order[0][p];
+    for (const m of order) { if (m[p] > end) shift += m[p] - end; end = Math.max(end, m[p] + m[s]); m['n' + p] = m[p] - shift; }
+  }
+  return r;
+}
 function refreshStreams() {
+  arrStreams();
   for (const view of liveViews()) for (const p of view.panes) {
     const st = monitors[p.idx] && monitors[p.idx].stream;
     if (st && p.video.srcObject !== st) { p.video.srcObject = st; p.video.play().catch(() => {}); }
@@ -239,7 +315,7 @@ function sendView(force) {
     const dpr = view.win.devicePixelRatio || 1;
     for (const p of view.panes) {
       let w = 0, h = 0; // 0 = full resolution
-      if (view.sel === 'all' || view.fit !== '1:1') {
+      if (isMulti(view.sel) || view.fit !== '1:1') {
         const r = p.video.getBoundingClientRect();
         w = Math.ceil(r.width * dpr); h = Math.ceil(r.height * dpr);
         if (!w || !h) continue;
@@ -249,6 +325,11 @@ function sendView(force) {
       else if (!w || !cur.w) need.set(p.idx, { w: 0, h: 0 });
       else need.set(p.idx, { w: Math.max(cur.w, w), h: Math.max(cur.h, h) });
     }
+  }
+  // The arrangement panel shows every monitor small, including those no window shows.
+  if (arr.open) for (const t of arr.host) {
+    const r = t.lcd.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    if (r.width && !need.has(t.i)) need.set(t.i, { w: Math.ceil(r.width * dpr), h: Math.ceil(r.height * dpr) });
   }
   const v = [...need].sort((a, b) => a[0] - b[0]).map(([i, n]) => ({ i, w: n.w, h: n.h }));
   const j = JSON.stringify(v);
@@ -261,7 +342,7 @@ setInterval(() => sendView(false), 1000); // also notices closed windows
 
 function setSel(view, sel) {
   if (sel !== 'all' && !monitors[sel]) return;
-  if (sel !== 'all' && view.sel !== 'all') {
+  if (typeof sel === 'number' && typeof view.sel === 'number') {
     // Keep every monitor on at most one window: swap with the window that already shows it.
     const other = liveViews().find((v) => v !== view && v.sel === sel);
     if (other) { other.sel = view.sel; other.pan = { x: 0, y: 0 }; render(other); toast(other, label(other.sel)); }
@@ -273,12 +354,13 @@ function setSel(view, sel) {
   renderBar();
   scheduleView();
   saveLayout();
+  if (arr.open) arrSync();
   if (view.panes[0]) view.panes[0].video.focus();
 }
 function cycle(view, dir) {
   const n = monitors.length;
   if (!n) return;
-  setSel(view, view.sel === 'all' ? (dir > 0 ? 0 : n - 1) : (view.sel + dir + n) % n);
+  setSel(view, typeof view.sel !== 'number' ? (dir > 0 ? 0 : n - 1) : (view.sel + dir + n) % n);
 }
 function setFit(view, fit) {
   view.fit = fit;
@@ -349,7 +431,7 @@ function queueMove(view, p) {
 }
 // 1:1 mode larger than the window: pushing the pointer against an edge pans the picture.
 function edgePan(view, ev) {
-  if (view.sel === 'all' || view.fit !== '1:1' || !view.panes[0]) { view.panDir = null; return; }
+  if (typeof view.sel !== 'number' || view.fit !== '1:1' || !view.panes[0]) { view.panDir = null; return; }
   const R = view.root.getBoundingClientRect(), c = view.panes[0].video.getBoundingClientRect(), M = 28;
   const dx = c.width > R.width + 1 ? (ev.clientX < R.left + M ? 1 : ev.clientX > R.right - M ? -1 : 0) : 0;
   const dy = c.height > R.height + 1 ? (ev.clientY < R.top + M ? 1 : ev.clientY > R.bottom - M ? -1 : 0) : 0;
@@ -410,14 +492,14 @@ function hotkey(view, ev) {
   if (c === 'ArrowLeft') cycle(view, -1);
   else if (c === 'ArrowRight') cycle(view, 1);
   else if (c === 'ArrowUp') setSel(view, 'all');
-  else if (c === 'ArrowDown') { if (view.sel !== 'all') setFit(view, view.fit === '1:1' ? 'fit' : '1:1'); }
+  else if (c === 'ArrowDown') { if (typeof view.sel === 'number') setFit(view, view.fit === '1:1' ? 'fit' : '1:1'); }
   else if (digit) { const n = Number(digit[2]); if (n === 0) setSel(view, 'all'); else if (monitors[n - 1]) setSel(view, n - 1); else toast(view, `모니터 ${n}은(는) 없습니다`); }
   else toggleFullscreen(view);
   return true;
 }
 function attachKeys(view) {
   const win = view.win, doc = win.document;
-  const local = () => { const tag = doc.activeElement && doc.activeElement.tagName; return !dc || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA'; };
+  const local = () => { const tag = doc.activeElement && doc.activeElement.tagName; return !dc || (view.isMain && arr.open) || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA'; };
   // A paste shortcut is held back until the browser's paste event has given us
   // the clipboard text, so the host receives "clipboard, then Ctrl+V" in order.
   const flushPaste = () => {
@@ -470,8 +552,9 @@ function renderBar() {
   monitors.forEach((m, i) => {
     const b = document.createElement('button');
     b.textContent = `모니터 ${i + 1}`;
-    b.className = mainView.sel === i ? 'on' : '';
-    b.title = `${m.width}×${m.height} — 이 창에 표시 (Ctrl+Alt+${i + 1})`;
+    b.className = mainView.sel === i || (Array.isArray(mainView.sel) && mainView.sel.includes(i)) ? 'on' : '';
+    b.title = `${m.width}×${m.height} — 이 창에 표시 (Ctrl+Alt+${i + 1})` + (m.hdr ? '\n주의: 호스트에서 이 모니터의 HDR이 켜져 있어 색이 실제보다 밝게 보입니다. 호스트 PC의 디스플레이 설정에서 HDR을 끄면 해결됩니다.' : '');
+    if (m.hdr) b.textContent += ' ⚠';
     b.onclick = () => setSel(mainView, i);
     const p = document.createElement('button');
     p.textContent = '↗';
@@ -488,7 +571,7 @@ function renderBar() {
     box.append(a, ' ');
   }
   $('fit').value = mainView.fit;
-  $('fit').disabled = mainView.sel === 'all';
+  $('fit').disabled = typeof mainView.sel !== 'number';
 }
 // Client screens, left to right, or null without the Window Management permission.
 async function clientScreens() {
@@ -540,7 +623,7 @@ function openView(sel, scr, screenIdx) {
   d.addEventListener('fullscreenchange', () => { if (!cover.isConnected) corner.style.display = d.fullscreenElement ? 'none' : ''; });
   if (!shell) root.append(cover, corner); // the app places the window and makes it fullscreen itself
 
-  w.addEventListener('pagehide', () => setTimeout(() => { liveViews(); scheduleView(); }, 100));
+  w.addEventListener('pagehide', () => setTimeout(() => { liveViews(); scheduleView(); arrSync(); }, 100));
   render(view);
   scheduleView();
   return view;
@@ -573,7 +656,7 @@ function loadLayout(sig) {
 }
 function saveLayout() {
   const entries = liveViews().filter((v) => v.screenIdx != null);
-  if (entries.length < 2 || !mainView || mainView.layoutSig == null) return;
+  if (!entries.length || !mainView || mainView.layoutSig == null) return;
   const map = {};
   for (const v of entries) map[v.screenIdx] = { sel: v.sel, fit: v.fit };
   try { const all = JSON.parse(store.get('mr_layout') || '{}'); all[mainView.layoutSig] = map; store.set('mr_layout', JSON.stringify(all)); } catch {}
@@ -602,7 +685,8 @@ async function spread() {
   const sig = `${N}:${M}`;
   const primary = Math.max(0, monitors.findIndex((m) => m.primary));
   let map = loadLayout(sig);
-  const valid = map && map[cs.cur] && Object.values(map).every((e) => e && (e.sel === 'all' || monitors[e.sel]));
+  const okSel = (s) => s === 'all' || s === 'none' || (Array.isArray(s) ? s.length > 1 && s.every((i) => monitors[i]) : !!monitors[s]);
+  const valid = map && map[cs.cur] && Object.values(map).every((e) => e && okSel(e.sel)) && Object.values(map).some((e) => e.sel !== 'none');
   if (!valid) map = planLayout(N, M, cs.cur, primary);
   mainView.layoutSig = sig;
   mainView.screenIdx = cs.cur;
@@ -610,7 +694,7 @@ async function spread() {
   let blocked = 0;
   for (const [k, e] of Object.entries(map)) {
     const j = Number(k);
-    if (j === cs.cur) continue;
+    if (j === cs.cur || e.sel === 'none' || !cs.list[j]) continue;
     const existing = liveViews().find((v) => v.screenIdx === j);
     if (existing) { existing.sel = e.sel; existing.fit = e.fit || 'fit'; render(existing); continue; }
     const view = openView(e.sel, cs.list[j], j);
@@ -626,6 +710,301 @@ async function spread() {
   if (blocked) toast(mainView, `창 ${blocked}개가 팝업 차단으로 열리지 못했습니다. 주소창에서 팝업을 "항상 허용"으로 바꾸거나 한 번 더 누르세요.`, 6000);
   else if (N > M) toast(mainView, `호스트 모니터 ${N}개 중 ${M}개를 펼쳤습니다. 나머지는 Ctrl+Alt+←/→ 로 전환하세요.`, 5000);
 }
+
+// ---- arrangement panel: which host monitor goes on which screen of this PC ---------
+// The state is one list: for every host monitor, the screen of this PC it is shown on (or null).
+// A screen can show several monitors together; a monitor is shown on at most one screen.
+const COLORS = ['#4c8dff', '#ff9f43', '#2ecc71', '#d66bff', '#f1c40f', '#ff6b6b', '#1abc9c', '#e67e22'];
+const arr = { open: false, cs: null, A: [], prev: [], host: [], client: [], drag: null, wires: [], raf: 0, busy: false };
+
+// The arrangement the open windows amount to.
+function currentAssign(cs) {
+  const A = monitors.map(() => null);
+  for (const v of liveViews()) {
+    const c = v.isMain ? cs.cur : v.screenIdx;
+    if (c == null || !cs.list[c]) continue;
+    for (const h of selList(v.sel)) if (A[h] == null) A[h] = c;
+  }
+  return A;
+}
+// What dragging one tile onto another does. Tiles are { kind: 'host' | 'client', i }.
+//  host -> host      the two swap places (onto a monitor that is off: it takes over, the dragged one goes off);
+//                    with Ctrl the target joins the dragged monitor's screen instead
+//  screen <-> host   that screen shows that monitor; what it showed before moves to where the monitor
+//                    was (or goes off); with Ctrl the monitor is added and nothing else moves
+//  screen -> screen  the two screens swap what they show
+function arrOp(A, src, dst, copy) {
+  A = A.slice();
+  if (src.kind === 'host' && dst.kind === 'host') {
+    if (copy) { if (A[src.i] != null) A[dst.i] = A[src.i]; }
+    else { const t = A[dst.i]; A[dst.i] = A[src.i]; A[src.i] = t; }
+  } else if (src.kind === 'client' && dst.kind === 'client') {
+    if (!copy) for (let k = 0; k < A.length; k++) A[k] = A[k] === src.i ? dst.i : A[k] === dst.i ? src.i : A[k];
+  } else {
+    const h = src.kind === 'host' ? src.i : dst.i, c = src.kind === 'host' ? dst.i : src.i, was = A[h];
+    if (!copy) for (let k = 0; k < A.length; k++) if (A[k] === c && k !== h) A[k] = was;
+    A[h] = c;
+  }
+  return A;
+}
+// Makes the windows match an arrangement: changes what open windows show, opens a window on a
+// screen that needs one, closes the window of a screen that is left empty.
+function applyAssign(A, cs) {
+  let blocked = 0;
+  arr.busy = true;
+  try {
+    for (let c = 0; c < cs.list.length; c++) {
+      const sel = normSel(A.map((x, h) => (x === c ? h : -1)));
+      let view = c === cs.cur ? mainView : liveViews().find((v) => !v.isMain && v.screenIdx === c);
+      if (sel === 'none') {
+        if (view && !view.isMain) view.win.close();
+        else if (view && view.sel !== 'none') { view.sel = 'none'; render(view); }
+      } else if (view) {
+        if (!sameSel(view.sel, sel)) { view.sel = sel; view.pan = { x: 0, y: 0 }; render(view); toast(view, label(sel)); }
+      } else if (!openView(sel, cs.list[c], c)) blocked++;
+    }
+    mainView.screenIdx = cs.cur;
+    mainView.layoutSig = `${monitors.length}:${cs.list.length}`;
+    liveViews();
+    renderBar();
+    scheduleView();
+    saveLayout();
+  } finally { arr.busy = false; }
+  return blocked;
+}
+
+function arrMsg(text, ms) {
+  $('arrMsg').textContent = text || '';
+  clearTimeout(arr.msgTimer);
+  if (text && ms) arr.msgTimer = setTimeout(() => { $('arrMsg').textContent = ''; }, ms);
+}
+function monTile(kind, i, w, h, caption) {
+  const mk = (cls, parent) => { const e = document.createElement('div'); e.className = cls; parent.appendChild(e); return e; };
+  const el = document.createElement('div');
+  el.className = 'mon ' + kind;
+  el.dataset.kind = kind; el.dataset.i = i;
+  const lcd = mk('lcd', el);
+  lcd.style.width = Math.round(w) + 'px'; lcd.style.height = Math.round(h) + 'px';
+  const scr = mk('scr', lcd), num = mk('num', lcd), note = mk('note', lcd);
+  num.textContent = i + 1;
+  mk('neck', el); mk('base', el);
+  const cap = mk('cap', el);
+  cap.append(caption, document.createElement('br'));
+  const tag = document.createElement('span');
+  tag.className = 'tag';
+  cap.appendChild(tag);
+  return { kind, i, el, lcd, scr, num, note, tag, videos: new Map() };
+}
+// Keeps the little videos inside a tile equal to a list of monitors (reusing elements, so nothing flickers).
+function tileVideos(t, list) {
+  for (const [h, v] of [...t.videos]) if (!list.includes(h)) { v.srcObject = null; v.remove(); t.videos.delete(h); }
+  list.forEach((h) => {
+    let v = t.videos.get(h);
+    if (!v) { v = document.createElement('video'); v.muted = true; v.autoplay = true; v.playsInline = true; t.videos.set(h, v); }
+    if (monitors[h] && v.srcObject !== monitors[h].stream) { v.srcObject = monitors[h].stream; v.play().catch(() => {}); }
+    v.style.flexGrow = monitors[h] ? monitors[h].width / monitors[h].height : 1;
+    t.scr.appendChild(v); // in order
+  });
+}
+function arrStreams() {
+  if (!arr.open) return;
+  for (const t of [...arr.host, ...arr.client]) for (const [h, v] of t.videos) if (monitors[h] && v.srcObject !== monitors[h].stream) { v.srcObject = monitors[h].stream; v.play().catch(() => {}); }
+}
+function arrBuild() {
+  const boxW = $('arrBox').clientWidth - 44, cs = arr.cs;
+  const fit = (list, cap) => Math.min(cap / Math.max(...list.map((m) => m.w)), (boxW - 28 * (list.length - 1)) / list.reduce((a, m) => a + m.w, 0));
+  const hs = monitors.map((m) => ({ w: m.width, h: m.height })), ks = fit(hs, 250);
+  $('arrHost').textContent = ''; $('arrClient').textContent = '';
+  arr.host = monitors.map((m, i) => {
+    const t = monTile('host', i, m.width * ks, m.height * ks, `${m.width}×${m.height}${m.primary ? ' · 주 모니터' : ''}${m.hdr ? ' · HDR 켜짐(색 밝게 보임)' : ''}`);
+    tileVideos(t, [i]);
+    $('arrHost').appendChild(t.el);
+    return t;
+  });
+  const sc = cs.list.map((s) => ({ w: s.width, h: s.height, px: `${Math.round(s.width * (s.devicePixelRatio || s.scale || 1))}×${Math.round(s.height * (s.devicePixelRatio || s.scale || 1))}` })), kc = fit(sc, 210);
+  arr.client = cs.list.map((s, c) => {
+    const t = monTile('client', c, sc[c].w * kc, sc[c].h * kc, sc[c].px + (c === cs.cur ? ' · 이 창이 있는 화면' : ''));
+    t.el.style.setProperty('--c', COLORS[c % COLORS.length]);
+    t.tag.textContent = `내 모니터 ${c + 1}`;
+    t.note.textContent = '비어 있음';
+    $('arrClient').appendChild(t.el);
+    return t;
+  });
+  $('arrPerm').style.display = cs.limited ? '' : 'none';
+  arr.wires = monitors.map(() => null);
+}
+// Shows an arrangement (the real one, or the one a drag would give) and marks the tile being aimed at.
+function arrPaint(A, aim) {
+  arr.host.forEach((t, h) => {
+    const c = A[h];
+    t.el.classList.toggle('off', c == null);
+    t.el.classList.toggle('aim', !!aim && aim.kind === 'host' && aim.i === h);
+    if (c == null) { t.el.style.removeProperty('--c'); t.tag.textContent = '표시 안 함'; t.note.textContent = '꺼짐'; }
+    else { t.el.style.setProperty('--c', COLORS[c % COLORS.length]); t.tag.textContent = `내 모니터 ${c + 1}에 표시`; }
+  });
+  arr.client.forEach((t, c) => {
+    const list = A.map((x, h) => (x === c ? h : -1)).filter((h) => h >= 0);
+    tileVideos(t, list);
+    t.el.classList.toggle('off', !list.length);
+    t.el.classList.toggle('aim', !!aim && aim.kind === 'client' && aim.i === c);
+    t.tag.textContent = `내 모니터 ${c + 1}` + (list.length ? ' ← 호스트 ' + list.map((h) => h + 1).join(' + ') : '');
+  });
+  arr.shown = A;
+  if (!arr.raf) arr.raf = requestAnimationFrame(arrWires);
+}
+// The lines from each host monitor to the screen it is shown on. They glide to their new place.
+function arrWires() {
+  arr.raf = 0;
+  if (!arr.open) return;
+  const area = $('arrArea').getBoundingClientRect(), A = arr.shown || arr.A;
+  let moving = false, d = '';
+  const svg = $('arrWires');
+  const parts = [];
+  arr.host.forEach((t, h) => {
+    const c = A[h], a = t.el.getBoundingClientRect();
+    const x1 = a.left + a.width / 2 - area.left, y1 = a.bottom - area.top + 3;
+    let goal = { x1, y1, x2: x1, y2: y1, o: 0 };
+    if (c != null && arr.client[c]) {
+      const b = arr.client[c].lcd.getBoundingClientRect(), same = A.map((x, k) => (x === c ? k : -1)).filter((k) => k >= 0);
+      goal = { x1, y1, x2: b.left - area.left + b.width * (same.indexOf(h) + 1) / (same.length + 1), y2: b.top - area.top - 3, o: 1 };
+    }
+    const w = arr.wires[h] || (arr.wires[h] = { ...goal, x2: goal.x1, y2: goal.y1, o: 0 });
+    for (const k of ['x1', 'y1', 'x2', 'y2', 'o']) { const diff = goal[k] - w[k]; if (!arr.snap && (Math.abs(diff) > 0.4 || (k === 'o' && Math.abs(diff) > 0.02))) { w[k] += diff * 0.28; moving = true; } else w[k] = goal[k]; }
+    if (w.o > 0.03) {
+      const col = COLORS[(c == null ? 0 : c) % COLORS.length], my = (w.y1 + w.y2) / 2;
+      parts.push(`<path d="M${w.x1.toFixed(1)},${w.y1.toFixed(1)} C${w.x1.toFixed(1)},${my.toFixed(1)} ${w.x2.toFixed(1)},${my.toFixed(1)} ${w.x2.toFixed(1)},${w.y2.toFixed(1)}" fill="none" stroke="${col}" stroke-width="3.5" stroke-linecap="round" opacity="${w.o.toFixed(2)}"/><circle cx="${w.x2.toFixed(1)}" cy="${w.y2.toFixed(1)}" r="4.5" fill="${col}" opacity="${w.o.toFixed(2)}"/>`);
+    }
+  });
+  svg.innerHTML = parts.join('');
+  if (moving) arr.raf = requestAnimationFrame(arrWires);
+}
+// The windows changed some other way (a shortcut, a closed window): show what is true now.
+function arrSync() {
+  if (!arr.open || arr.busy || arr.drag) return;
+  arr.A = currentAssign(arr.cs);
+  arrPaint(arr.A);
+}
+async function arrOpen() {
+  if (!monitors.length) return;
+  const cs = await clientScreens();
+  // Without the permission to see this PC's screens (a plain browser), only the screen this window is on is known.
+  arr.cs = cs || { list: [{ left: 0, top: 0, width: screen.width, height: screen.height, availLeft: 0, availTop: 0, availWidth: screen.availWidth, availHeight: screen.availHeight, devicePixelRatio: window.devicePixelRatio }], cur: 0, limited: true };
+  arr.open = true;
+  $('arr').style.display = 'flex';
+  let blocked = 0;
+  if (!arr.cs.limited && arr.cs.list.length > 1 && mainView.layoutSig == null) {
+    // First time with several screens: start from the arrangement used last time, else host 1, 2, ... on screens 1, 2, ...
+    const N = monitors.length, M = arr.cs.list.length, saved = loadLayout(`${N}:${M}`);
+    const okSel = (s) => s === 'all' || s === 'none' || (Array.isArray(s) ? s.every((i) => monitors[i]) : !!monitors[s]);
+    const map = saved && Object.values(saved).every((e) => e && okSel(e.sel)) && Object.values(saved).some((e) => e.sel !== 'none')
+      ? saved : planLayout(N, M, arr.cs.cur, Math.max(0, monitors.findIndex((m) => m.primary)));
+    const A = monitors.map(() => null);
+    for (const [k, e] of Object.entries(map)) if (arr.cs.list[Number(k)]) for (const h of selList(e.sel)) A[h] = Number(k);
+    blocked = applyAssign(A, arr.cs);
+  }
+  arr.A = currentAssign(arr.cs);
+  arr.prev = arr.A.slice();
+  arrBuild();
+  arrPaint(arr.A);
+  arrMsg(arr.cs.limited ? '이 브라우저는 이 PC의 모니터를 하나만 알려 줍니다. 여러 모니터에 펼치려면 아래 버튼으로 권한을 허용하세요.'
+    : blocked ? '다른 모니터의 창이 팝업 차단으로 열리지 못했습니다. 주소창에서 이 페이지의 팝업을 허용한 뒤 모니터를 다시 놓아 주세요.' : '');
+  sendView(false);
+}
+function arrClose() {
+  arrDragEnd(false);
+  arr.open = false;
+  $('arr').style.display = 'none';
+  for (const t of [...arr.host, ...arr.client]) tileVideos(t, []);
+  cancelAnimationFrame(arr.raf); arr.raf = 0;
+  scheduleView();
+  if (mainView.panes[0]) mainView.panes[0].video.focus();
+}
+function arrCommit(A) {
+  arr.A = A;
+  arrPaint(A);
+  const blocked = applyAssign(A, arr.cs);
+  arrMsg(blocked ? '창이 팝업 차단으로 열리지 못했습니다. 주소창에서 이 페이지의 팝업을 허용한 뒤 다시 놓아 주세요.' : '', 7000);
+  if (blocked) arrSync();
+}
+// A plain click on a host monitor turns it off; another click brings it back where it was.
+function arrToggle(h) {
+  const A = arr.A.slice();
+  if (A[h] != null) { arr.prev[h] = A[h]; A[h] = null; }
+  else {
+    const empty = arr.cs.list.findIndex((_, c) => !A.includes(c));
+    A[h] = arr.prev[h] != null && arr.cs.list[arr.prev[h]] ? arr.prev[h] : empty >= 0 ? empty : arr.cs.cur;
+  }
+  arrCommit(A);
+}
+function arrTileAt(x, y) {
+  for (const t of [...arr.host, ...arr.client]) {
+    const r = t.el.getBoundingClientRect();
+    if (x >= r.left - 10 && x <= r.right + 10 && y >= r.top - 6 && y <= r.bottom + 6) return t;
+  }
+  return null;
+}
+function arrDragMove(x, y, copy) {
+  const d = arr.drag;
+  if (!d) return;
+  if (!d.moved) {
+    if (Math.hypot(x - d.x0, y - d.y0) < 6) return;
+    d.moved = true;
+    d.tile.el.classList.add('lift');
+    const g = (d.ghost = document.createElement('div'));
+    g.id = 'arrGhost';
+    const r = d.tile.lcd.getBoundingClientRect();
+    g.style.width = Math.round(r.width * 0.8) + 'px'; g.style.height = Math.round(r.height * 0.8) + 'px';
+    if (d.tile.kind === 'host' && monitors[d.tile.i] && monitors[d.tile.i].stream) {
+      const v = document.createElement('video');
+      v.muted = true; v.autoplay = true; v.playsInline = true; v.srcObject = monitors[d.tile.i].stream;
+      g.appendChild(v); v.play().catch(() => {});
+    } else g.textContent = d.tile.kind === 'host' ? `호스트 ${d.tile.i + 1}` : `내 모니터 ${d.tile.i + 1}`;
+    g.appendChild(document.createElement('b')).textContent = '+ 함께 표시';
+    document.body.appendChild(g);
+  }
+  d.x = x; d.y = y; d.copy = copy;
+  d.ghost.style.left = x + 'px'; d.ghost.style.top = y + 'px';
+  d.ghost.lastChild.style.display = copy ? 'block' : 'none';
+  const t = arrTileAt(x, y);
+  d.aim = t && t !== d.tile ? t : null;
+  arrPaint(d.aim ? arrOp(arr.A, d.tile, d.aim, copy) : arr.A, d.aim);
+}
+function arrDragEnd(commit) {
+  const d = arr.drag;
+  if (!d) return;
+  arr.drag = null;
+  d.tile.el.classList.remove('lift');
+  if (d.ghost) d.ghost.remove();
+  if (!d.moved) { if (commit && d.tile.kind === 'host') arrToggle(d.tile.i); return; }
+  if (commit && d.aim) arrCommit(arrOp(arr.A, d.tile, d.aim, d.copy)); else arrPaint(arr.A);
+}
+$('arr').addEventListener('pointerdown', (ev) => {
+  const el = ev.target.closest && ev.target.closest('.mon');
+  if (!el || ev.button !== 0 || arr.drag) return;
+  ev.preventDefault();
+  const tile = (el.dataset.kind === 'host' ? arr.host : arr.client)[Number(el.dataset.i)];
+  arr.drag = { tile, x0: ev.clientX, y0: ev.clientY, x: ev.clientX, y: ev.clientY, moved: false, ghost: null, aim: null, copy: ev.ctrlKey };
+  try { $('arr').setPointerCapture(ev.pointerId); } catch {}
+});
+$('arr').addEventListener('pointermove', (ev) => arrDragMove(ev.clientX, ev.clientY, ev.ctrlKey));
+$('arr').addEventListener('pointerup', (ev) => { if (arr.drag) { arr.drag.copy = ev.ctrlKey; arrDragEnd(true); } });
+$('arr').addEventListener('pointercancel', () => arrDragEnd(false));
+for (const type of ['keydown', 'keyup']) window.addEventListener(type, (ev) => {
+  if (!arr.open) return;
+  if (ev.key === 'Control' && arr.drag && arr.drag.moved) arrDragMove(arr.drag.x, arr.drag.y, type === 'keydown');
+  if (type === 'keydown' && ev.key === 'Escape') { if (arr.drag) arrDragEnd(false); else arrClose(); }
+});
+window.addEventListener('resize', () => { if (arr.open && !arr.drag) { arrBuild(); arrPaint(arr.A); } });
+$('arrBtn').onclick = arrOpen;
+$('arrClose').onclick = arrClose;
+$('arrReset').onclick = () => {
+  const N = monitors.length, M = arr.cs.list.length, map = planLayout(N, M, arr.cs.cur, Math.max(0, monitors.findIndex((m) => m.primary)));
+  const A = monitors.map(() => null);
+  for (const [k, e] of Object.entries(map)) A[e.sel] = Number(k);
+  arrCommit(A);
+};
+$('arrPerm').onclick = async () => { try { await window.getScreenDetails(); } catch {} arrOpen(); };
+$('arrGo').onclick = async () => { arrClose(); if (shell) await shell.fullscreenAll(); else await goFullscreen(window); };
 
 window.addEventListener('pagehide', () => { for (const v of liveViews()) if (!v.isMain) v.win.close(); });
 
@@ -714,10 +1093,16 @@ async function onOffer(m) {
   const primary = Math.max(0, monitors.findIndex((mon) => mon.primary));
   for (const v of [...liveViews()]) {
     if (!ever && v.isMain) v.sel = primary;
-    if (v.sel !== 'all' && !monitors[v.sel]) { if (v.isMain) v.sel = primary; else { v.win.close(); continue; } }
+    if (v.sel !== 'none' && v.sel !== 'all') {
+      // Monitors that no longer exist drop out; a window left with none shows the primary (main) or closes.
+      const left = normSel(selList(v.sel));
+      if (left !== 'none') v.sel = left; else if (v.isMain) v.sel = primary; else { v.win.close(); continue; }
+    }
     render(v);
   }
   renderBar();
+  if (arr.open) { arr.A = currentAssign(arr.cs); arr.prev = arr.A.slice(); arrBuild(); arrPaint(arr.A); }
+  for (const mon of monitors) if (mon.hdr && !hdrTold.has(mon.idx)) { hdrTold.add(mon.idx); toast(mainView, `호스트의 모니터 ${mon.idx + 1}은 HDR이 켜져 있어 색이 실제보다 밝게 보입니다 (호스트 PC의 디스플레이 설정에서 끄면 해결)`, 9000); }
   $('snd').style.display = m.audio ? '' : 'none';
   offerInfo = { codec: m.codec, cursorHidden: !!m.cursorHidden };
 
@@ -888,8 +1273,8 @@ function buildReport() {
   L.push(`My Remote 진단 — ${new Date().toLocaleString()}`);
   L.push(`구간: 최근 ${Math.round((b.t - a.t) / 1000)}초`);
   L.push(`브라우저: ${(navigator.userAgent.match(/(Edg|Chrome)\/[\d.]+/g) || ['?']).pop()} · 이 화면 ${screen.width}x${screen.height} 배율 ${window.devicePixelRatio}`);
-  L.push('창: ' + liveViews().map((v) => `[${v.sel === 'all' ? '전체 보기' : '모니터 ' + (v.sel + 1)} ${v.fit} ${v.root.clientWidth}x${v.root.clientHeight}${v.win.document.fullscreenElement ? ' 전체화면' : ''}]`).join(' '));
-  L.push('호스트 모니터: ' + monitors.map((m) => `${m.width}x${m.height}`).join(', '));
+  L.push('창: ' + liveViews().map((v) => `[${label(v.sel)} ${v.fit} ${v.root.clientWidth}x${v.root.clientHeight}${v.win.document.fullscreenElement ? ' 전체화면' : ''}]`).join(' '));
+  L.push('호스트 모니터: ' + monitors.map((m) => `${m.width}x${m.height}${m.hdr ? ' (HDR 켜짐)' : ''}`).join(', '));
   L.push(`연결: ${b.relay ? 'TURN 중계' : 'P2P 직접'} · 왕복 지연 평균 ${Math.round(avg(samples.map((x) => x.rtt)))} ms, 최대 ${Math.round(Math.max(0, ...num(samples.map((x) => x.rtt))))} ms`);
   const h = b.host;
   L.push(`코덱: ${h ? h.codec : offerInfo.codec || '?'} · 인코더 ${h ? h.enc : '?'} · 디코더 ${b.decoder || '?'}`);

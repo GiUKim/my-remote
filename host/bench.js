@@ -79,13 +79,17 @@ function format(r) {
   const d = (x) => (x && x.n ? `${x.p50}/${x.p95}/${x.max}` : '-');
   L.push(`${r.name}: ${r.ok ? '' : 'FAILED - ' + String(r.error).split('\n')[0]}`);
   if (!r.ok) return L;
-  const h = r.host, s = r.scroll, sp = r.sparse, c = r.client || {};
+  const h = r.host, s = r.scroll, sp = r.sparse, c = r.client || {}, q = r.quality;
   L.push(`  setup    ${h.codec} ${h.encoder} ${h.res}, picture ${r.setup.picture} on display ${r.setup.display} (${r.setup.monitor}), link ${r.config.net ? JSON.stringify(r.config.net) : 'direct'}`);
-  L.push(`  scroll   shown ${s.shownFps} of ${s.drawnFps} fps drawn | delay ms p50/p95/max ${d(s.lat)} (first 0.5 s ${d(s.latHead)}) | gaps >25/>50/>100 ms: ${s.gap.over25}/${s.gap.over50}/${s.gap.over100}, longest ${s.gap.max} ms`);
-  L.push(`  sparse   delay ms p50/p95/max ${d(sp.lat)} over ${sp.events} changes, ${sp.missed} never shown`);
-  L.push(`  where    until received p50 ${s.toRecv.p50} ms (scroll) ${sp.toRecv.p50} ms (sparse) | received to screen p50 ${s.clientSide.p50} / ${sp.clientSide.p50} ms | jitter buffer ${c.jitterBufferMs} ms, decode ${c.decodeMs} ms`);
-  const hs = h.scroll || {}, hp = h.sparse || {};
-  L.push(`  host     scroll: capture ${hs.captureFps} fps, encode ${hs.encodeFps} fps, ${hs.mbps} Mbps, QP ${hs.qp}, encode ${hs.encodeMs} ms, pacer ${hs.pacerMs} ms | sparse: ${hp.mbps} Mbps, QP ${hp.qp}`);
+  if (s.lat.n) L.push(`  scroll   shown ${s.shownFps} of ${s.drawnFps} fps drawn | delay ms p50/p95/max ${d(s.lat)} (first 0.5 s ${d(s.latHead)}) | gaps >25/>50/>100 ms: ${s.gap.over25}/${s.gap.over50}/${s.gap.over100}, longest ${s.gap.max} ms`);
+  if (sp.events) L.push(`  sparse   delay ms p50/p95/max ${d(sp.lat)} over ${sp.events} changes, ${sp.missed} never shown`);
+  if (s.lat.n || sp.events) L.push(`  where    until received p50 ${s.toRecv.p50} ms (scroll) ${sp.toRecv.p50} ms (sparse) | received to screen p50 ${s.clientSide.p50} / ${sp.clientSide.p50} ms | jitter buffer ${c.jitterBufferMs} ms, decode ${c.decodeMs} ms`);
+  if (q && q.open) L.push(`  open     new picture first shown after ${q.open.firstMs} ms at ${q.open.firstDb} dB | dB at 150/300/500/1000/2000 ms: ${Object.values(q.open.at).map((x) => (x == null ? '-' : x)).join('/')} | settles at ${q.open.finalDb} dB | good (36 dB) after ${q.open.goodMs} ms, settled after ${q.open.settledMs} ms (${q.open.events} changes)`);
+  if (q && (q.drag || q.scroll)) L.push(`  moving   dB p10/p50: drag ${q.drag ? q.drag.p10 + '/' + q.drag.p50 : '-'}, scroll ${q.scroll ? q.scroll.p10 + '/' + q.scroll.p50 : '-'}   (30 = soft but readable, 35 = good, 40+ = like the original)`);
+  for (const type of Object.keys(h).filter((k) => ['scroll', 'sparse', 'open', 'drag'].includes(k) && h[k])) {
+    const x = h[type];
+    L.push(`  host     ${type}: capture ${x.captureFps} fps, encode ${x.encodeFps} fps, ${x.mbps} Mbps, QP ${x.qp}, encode ${x.encodeMs} ms, pacer ${x.pacerMs} ms`);
+  }
   if (r.cpu) L.push(`  cpu      host ${r.cpu.host}% of the machine, client side ${r.cpu.client}% (includes drawing the test picture)`);
   L.push(`  network  estimate min/median/max ${h.bwe.min}/${h.bwe.p50}/${h.bwe.max} Mbps, target ${h.targetMbps} Mbps, rtt ${h.rttMs} ms, limited by cpu ${h.limitedSecs.cpu}s bandwidth ${h.limitedSecs.bandwidth}s | client lost ${c.lost}/${c.packets}, nack ${c.nack}, pli ${c.pli}, dropped ${c.dropped}, freezes ${c.freezes}`);
   if (r.link) L.push(`  emulator to client: ${r.link.toClient.packets} packets, ${r.link.toClient.lost} lost, ${r.link.toClient.overflow} over the queue, longest wait ${Math.round(r.link.toClient.maxQueueMs)} ms | timer ${r.link.tickAvgMs.toFixed(2)} ms avg, ${r.link.tickWorstMs.toFixed(1)} ms worst`);
@@ -98,6 +102,8 @@ exports.run = async ({ cfg, bench, buildClientHtml, app }) => {
   const { BrowserWindow } = require('electron');
   const B = { name: 'run', secs: 24, warmup: 6, mode: 'sharp', codec: '', net: null, ...bench };
   const P = { w: 1280, h: 720, sparse: 4000, scroll: 4000, speed: 24, every: 500, cell: 20, ...(bench.pattern || {}) };
+  if (!P.phases) P.phases = [{ type: 'sparse', ms: P.sparse }, { type: 'scroll', ms: P.scroll }];
+  P.phases = P.phases.filter((x) => x.ms > 0);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-bench-'));
   const hostWin = BrowserWindow.getAllWindows()[0];
   let link = null, peer = null, done = false;

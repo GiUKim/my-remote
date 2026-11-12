@@ -32,7 +32,7 @@ function setupIpc() {
     return screen.getAllDisplays().map((d) => ({
       left: d.bounds.x, top: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
       availLeft: d.bounds.x, availTop: d.bounds.y, availWidth: d.bounds.width, availHeight: d.bounds.height,
-      current: d.id === here,
+      current: d.id === here, scale: d.scaleFactor,
     }));
   });
   // Fullscreen every window of this client, as if each had been clicked.

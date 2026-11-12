@@ -37,12 +37,18 @@ const CODECS = ['H264', 'VP9', 'AV1', 'VP8'];
 // bitrate. The graphics card's H.264 encoder costs almost no CPU, but when a still screen starts
 // moving it sends several times its bitrate for up to a second (lag or loss on a link without that
 // much room) and the engine then drops frames to make up for it.
+//
+// 'H264HQ' is H.264 on the graphics card with three times the bitrate. On a link with room for it
+// (tens of Mbps to spare) the picture is as good as the original from the first frame after a
+// change (50 dB and more in the bench, where AV1 levels off near 42 dB); on any slower link it is
+// the worst choice, because of the bursts described above.
 function pickCodec(hello) {
-  if (CODECS.includes(hello.codec)) return hello.codec;
-  if (CODECS.includes(cfg.codec)) return cfg.codec;
+  const want = [hello.codec, cfg.codec].find((c) => c === 'H264HQ' || CODECS.includes(c));
+  if (want === 'H264HQ') return { codec: 'H264', hq: true };
+  if (want) return { codec: want, hq: false };
   let av1 = false;
   try { av1 = RTCRtpSender.getCapabilities('video').codecs.some((c) => c.mimeType.toLowerCase() === 'video/av1'); } catch {}
-  return av1 && navigator.hardwareConcurrency >= 8 ? 'AV1' : 'H264';
+  return { codec: av1 && navigator.hardwareConcurrency >= 8 ? 'AV1' : 'H264', hq: false };
 }
 function preferCodec(pc, codec) {
   const want = 'video/' + codec.toLowerCase();
@@ -68,7 +74,7 @@ function encodingPlan(s) {
     const f = need.w > 0 && need.h > 0 ? Math.max(src.width / need.w, src.height / need.h) : 1;
     const scale = SCALE_STEPS.filter((x) => x <= f + 0.01).pop() || 1;
     const px = (src.width / scale) * (src.height / scale);
-    return { scale, mbps: Math.max(1.5, cfg.mbpsPer1080p * Math.pow(px / (1920 * 1080), 0.75)) };
+    return { scale, mbps: Math.max(1.5, cfg.mbpsPer1080p * (s.hq ? 3 : 1) * Math.pow(px / (1920 * 1080), 0.75)) };
   });
   const total = plan.reduce((a, p) => a + (p ? p.mbps : 0), 0);
   if (total > cfg.maxTotalMbps) for (const p of plan) if (p) p.mbps *= cfg.maxTotalMbps / total;
@@ -99,12 +105,20 @@ function applyEncoding(s) {
   return s.encQueue;
 }
 
-function capture(src, withAudio) {
+// refine: when the screen stops changing, the engine goes on sending the still picture until the
+// encoder reports that it is as good as it gets, then falls silent. Without it a still screen gets
+// a few frames a second, and a picture that changed all at once (a window opening) took 2.5 s to
+// become fully sharp in the bench; with it under a second. The price is about one frame of delay
+// while things move (the engine then releases frames on a fixed beat), hence the `refine` setting.
+// It needs an encoder that reports when it has settled: the AV1 encoder does; with the graphics
+// card's H.264 encoder it is left off.
+function capture(src, withAudio, refine) {
   const video = { mandatory: {
     chromeMediaSource: 'desktop', chromeMediaSourceId: src.id,
     minWidth: src.width, maxWidth: src.width, minHeight: src.height, maxHeight: src.height,
     maxFrameRate: cfg.maxFps,
   } };
+  if (refine) video.mandatory.minFrameRate = 0;
   return navigator.mediaDevices.getUserMedia({ audio: withAudio ? { mandatory: { chromeMediaSource: 'desktop' } } : false, video });
 }
 
@@ -164,6 +178,7 @@ async function startSession(hello) {
   status('연결 협상 중…', 'wait');
   const sources = await api.getSources();
   if (!sources.length) { log('캡처할 모니터를 찾지 못했습니다'); return; }
+  for (const src of sources) if (src.hdr) log(`주의: 모니터 ${src.idx + 1}은 Windows HDR이 켜져 있어 원격 화면에서 색이 밝게 날아갑니다. 이 PC의 설정 > 시스템 > 디스플레이에서 그 모니터의 HDR을 끄면 정상으로 보입니다.`);
   const pc = new RTCPeerConnection({ iceServers: cfg.iceServers });
   const s = (session = {
     sid: hello.sid, pc, sources, streams: [], timers: [], dropTimer: 0, videoSenders: [], clip: null,
@@ -177,16 +192,17 @@ async function startSession(hello) {
   // Hide this PC's cursor before capture starts, so the frames carry no cursor (see input.js).
   s.cursorHidden = await api.hideCursor(true);
   if (session !== s) return;
-  s.codec = pickCodec(hello);
+  Object.assign(s, pickCodec(hello));
+  const refine = cfg.refine !== false && s.codec === 'AV1';
 
   let audio = false;
   for (let i = 0; i < sources.length; i++) {
     let stream;
     if (i === 0 && cfg.audio) {
-      try { stream = await capture(sources[i], true); audio = true; }
+      try { stream = await capture(sources[i], true, refine); audio = true; }
       catch (e) { log('시스템 소리 캡처 불가 — 소리 없이 진행: ' + e.message); }
     }
-    if (!stream) stream = await capture(sources[i], false);
+    if (!stream) stream = await capture(sources[i], false, refine);
     if (session !== s) { stream.getTracks().forEach((t) => t.stop()); return; }
     s.streams.push(stream);
     s.videoSenders.push(pc.addTrack(stream.getVideoTracks()[0], stream));
@@ -217,7 +233,7 @@ async function startSession(hello) {
   await chan.send({
     app: appHash,
     t: 'offer', sid: s.sid, ts: Date.now(), sdp: pc.localDescription.sdp, ice: cfg.iceServers, audio, codec: s.codec, cursorHidden: s.cursorHidden,
-    monitors: sources.map((src, i) => ({ idx: i, mid: mids[i], x: src.x, y: src.y, width: src.width, height: src.height, primary: src.primary })),
+    monitors: sources.map((src, i) => ({ idx: i, mid: mids[i], x: src.x, y: src.y, width: src.width, height: src.height, primary: src.primary, hdr: src.hdr || undefined })),
   });
   log(`offer 전송 (모니터 ${sources.length}개${audio ? ', 소리 포함' : ''})`);
   // Give up if the client never completes the handshake.

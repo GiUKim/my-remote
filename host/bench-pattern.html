@@ -4,55 +4,119 @@
 <style>html, body { margin: 0; overflow: hidden; background: #fff; } canvas { display: block; }</style>
 <canvas id="c"></canvas>
 <script>
-// Test picture for the bench (bench.js). Two alternating phases:
-//   0 "sparse": the screen is still, one small change every EVERY ms   (typing, clicking)
-//   1 "scroll": a page of text scrolls at the display's refresh rate    (scrolling, dragging)
+// Test picture for the bench (bench.js). It cycles through phases (?phases=[{type,ms},...]):
+//   sparse  the screen is still, one small change every EVERY ms          (typing, clicking)
+//   scroll  a page of text scrolls at the display's refresh rate           (scrolling)
+//   open    the whole picture changes at once, then stays still            (a window opens)
+//   drag    a window moves around over a still page                        (dragging a window)
 // Every drawn frame carries, in a row of black/white cells at its top-left corner, the time it
 // was drawn and a frame number, so the receiving side can tell exactly which frame it is showing.
+// A frame is drawn from a small state record alone, so any frame can be drawn again later
+// (truth()) to compare what the client showed with what was really on screen.
 const q = new URLSearchParams(location.search);
 const num = (k, d) => (q.has(k) ? Number(q.get(k)) : d);
-const T0 = num('t0', 0), SPARSE = num('sparse', 4000), SCROLL = num('scroll', 4000), SPEED = num('speed', 24), EVERY = num('every', 500), CELL = num('cell', 20);
+const T0 = num('t0', 0), SPEED = num('speed', 24), EVERY = num('every', 500), CELL = num('cell', 20);
+const SEQ = JSON.parse(q.get('phases') || '[{"type":"sparse","ms":4000},{"type":"scroll","ms":4000}]').filter((p) => p.ms > 0);
+const CODE = { sparse: 0, scroll: 1, open: 2, drag: 3 };
+const TOTAL = SEQ.reduce((a, p) => a + p.ms, 0);
 const CELLS = 36; // white, black, 32 data bits, black, white
 const dpr = devicePixelRatio || 1;
 const W = Math.round(innerWidth * dpr), H = Math.round(innerHeight * dpr);
 const c = document.getElementById('c');
 c.width = W; c.height = H; c.style.width = innerWidth + 'px'; c.style.height = innerHeight + 'px';
 const g = c.getContext('2d', { alpha: false });
+const px = (v) => Math.round(v * dpr);
 
-// A tall page that looks like a document: lines of text and a few coloured blocks.
-const page = document.createElement('canvas');
-page.width = W; page.height = H * 3;
+let seed = 12345;
+const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+const words = 'the quick brown fox jumps over lazy dog remote desktop monitor window frame latency encoder network packet buffer screen cursor keyboard 원격 화면 지연 모니터 const return function await async value index'.split(' ');
+const sentence = (n) => { let s = ''; for (let i = 0; i < n; i++) s += words[Math.floor(rnd() * words.length)] + ' '; return s; };
+const canvas = (w, h) => { const x = document.createElement('canvas'); x.width = w; x.height = h; return x; };
+// Something photo-like without any file: smooth colour, soft shapes and fine grain.
+function photo(p, x, y, w, h) {
+  const img = p.createImageData(w, h), d = img.data;
+  const f = [rnd() * 0.02 + 0.006, rnd() * 0.02 + 0.006, rnd() * 0.05 + 0.02, rnd() * 6, rnd() * 6];
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const a = Math.sin(i * f[0] + f[3]) + Math.cos(j * f[1] + f[4]) + Math.sin((i + j) * f[2]) * 0.5;
+    const n = (rnd() - 0.5) * 26;
+    const o = (j * w + i) * 4;
+    d[o] = 128 + a * 50 + n; d[o + 1] = 120 + Math.sin(a * 2 + 1) * 70 + n; d[o + 2] = 140 + Math.cos(a * 1.7) * 80 + n; d[o + 3] = 255;
+  }
+  p.putImageData(img, x, y);
+}
+
+// Page 0: a document. Lines of text and a few coloured blocks.
+// Page 1: pictures, coloured text and interface-like shapes.
+const pages = [canvas(W, H * 3), canvas(W, H * 3)];
 {
-  const p = page.getContext('2d', { alpha: false });
-  p.fillStyle = '#fff'; p.fillRect(0, 0, page.width, page.height);
-  let seed = 12345;
-  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  const words = 'the quick brown fox jumps over lazy dog remote desktop monitor window frame latency encoder network packet buffer screen cursor keyboard 원격 화면 지연 모니터 const return function await async value index'.split(' ');
-  const lh = Math.round(18 * dpr);
+  const p = pages[0].getContext('2d', { alpha: false });
+  p.fillStyle = '#fff'; p.fillRect(0, 0, W, H * 3);
+  const lh = px(18);
   p.textBaseline = 'top';
-  for (let y = 0, n = 0; y < page.height - lh; y += lh, n++) {
+  for (let y = 0, n = 0; y < H * 3 - lh; y += lh, n++) {
     if (n % 23 === 22) {
       p.fillStyle = `hsl(${Math.floor(rnd() * 360)} 60% 70%)`;
-      p.fillRect(Math.round(40 * dpr), y, Math.round(W * 0.5), lh * 3);
+      p.fillRect(px(40), y, Math.round(W * 0.5), lh * 3);
       y += lh * 3;
       continue;
     }
-    p.font = `${Math.round((n % 11 === 0 ? 16 : 13) * dpr)}px ${n % 3 ? '"Segoe UI", "Malgun Gothic", sans-serif' : 'Consolas, monospace'}`;
+    p.font = `${px(n % 11 === 0 ? 16 : 13)}px ${n % 3 ? '"Segoe UI", "Malgun Gothic", sans-serif' : 'Consolas, monospace'}`;
     p.fillStyle = n % 7 === 3 ? '#0b57d0' : '#1f2328';
-    let line = '';
-    for (let i = 0, len = 6 + Math.floor(rnd() * 16); i < len; i++) line += words[Math.floor(rnd() * words.length)] + ' ';
-    p.fillText(String(n).padStart(4, ' ') + '  ' + line, Math.round(12 * dpr), y);
+    p.fillText(String(n).padStart(4, ' ') + '  ' + sentence(6 + Math.floor(rnd() * 16)), px(12), y);
   }
 }
+{
+  const p = pages[1].getContext('2d', { alpha: false });
+  p.fillStyle = '#20242b'; p.fillRect(0, 0, W, H * 3);
+  p.textBaseline = 'top';
+  const colours = ['#e6e8eb', '#ffb454', '#7fd1ff', '#c3e88d', '#ff7a90'];
+  for (let y = px(40), n = 0; y < H * 3 - px(260); y += px(250), n++) {
+    photo(p, px(30), y, px(300), px(210));
+    p.fillStyle = '#2f3640'; p.fillRect(px(350), y, W - px(380), px(210));
+    for (let k = 0; k < 9; k++) {
+      p.font = `${px(k === 0 ? 20 : k % 3 === 0 ? 11 : 14)}px ${k % 2 ? 'Consolas, monospace' : '"Segoe UI", "Malgun Gothic", sans-serif'}`;
+      p.fillStyle = colours[(n + k) % colours.length];
+      p.fillText(sentence(5 + Math.floor(rnd() * 9)), px(364), y + px(10 + k * 22));
+    }
+    for (let k = 0; k < 6; k++) { p.fillStyle = `hsl(${(n * 47 + k * 61) % 360} 70% 55%)`; p.fillRect(px(364 + k * 46), y + px(214), px(38), px(22)); }
+  }
+}
+// The window that is dragged around: title bar, text, a picture.
+const win = canvas(px(520), px(340));
+{
+  const p = win.getContext('2d', { alpha: false });
+  p.fillStyle = '#f6f8fa'; p.fillRect(0, 0, win.width, win.height);
+  p.fillStyle = '#2b6cff'; p.fillRect(0, 0, win.width, px(28));
+  p.textBaseline = 'top';
+  p.fillStyle = '#fff'; p.font = `${px(14)}px "Segoe UI", sans-serif`; p.fillText('Window being dragged - 끌고 있는 창', px(10), px(5));
+  for (let k = 0; k < 9; k++) {
+    p.font = `${px(k % 4 === 0 ? 15 : 12)}px ${k % 2 ? 'Consolas, monospace' : '"Segoe UI", "Malgun Gothic", sans-serif'}`;
+    p.fillStyle = k % 5 === 2 ? '#b3261e' : '#1f2328';
+    p.fillText(sentence(6 + Math.floor(rnd() * 6)), px(12), px(40 + k * 20));
+  }
+  photo(p, px(12), px(226), px(200), px(100));
+  p.strokeStyle = '#8b94a1'; p.lineWidth = Math.max(1, px(1)); p.strokeRect(0.5, 0.5, win.width - 1, win.height - 1);
+}
 
-const cell = Math.round(CELL * dpr), stripH = cell + Math.round(6 * dpr);
-let seq = 0, y = 0, lastEvent = -1e9;
-const drawn = []; // [time drawn, phase, cycle] of every frame drawn
-const pat = (window.__pat = { drawn, raf: 0, started: 0, cell, cells: CELLS, w: W, h: H });
-
-function strip(phase, t) {
+const cell = px(CELL), stripH = cell + px(6);
+// A frame is fully described by: page, scroll offset, the typed text (or -1), the window position (or -1).
+function paint(ctx, s) {
+  const pg = pages[s.p], y = ((s.y % pg.height) + pg.height) % pg.height;
+  ctx.drawImage(pg, 0, -y);
+  ctx.drawImage(pg, 0, pg.height - y);
+  if (s.typed >= 0) {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(px(20), stripH + px(20), px(460), px(40));
+    ctx.fillStyle = '#1f2328';
+    ctx.font = `${px(22)}px Consolas, monospace`;
+    ctx.textBaseline = 'top';
+    ctx.fillText('typed ' + s.typed + ' ' + '#'.repeat(s.typed % 12), px(24), stripH + px(26));
+  }
+  if (s.wx >= 0) ctx.drawImage(win, s.wx, s.wy);
+}
+function strip(phase, seq, t) {
   g.fillStyle = '#000';
-  g.fillRect(0, 0, cell * CELLS + Math.round(6 * dpr), stripH);
+  g.fillRect(0, 0, cell * CELLS + px(6), stripH);
   const v = phase * 2 ** 30 + (seq % 1024) * 2 ** 20 + (t % 2 ** 20);
   g.fillStyle = '#fff';
   for (let i = 0; i < CELLS; i++) {
@@ -61,31 +125,60 @@ function strip(phase, t) {
   }
 }
 
+let seq = 0, lastEvent = -1e9, inst = -1;
+const s = { p: 0, y: 0, typed: -1, wx: -1, wy: -1 };
+const drawn = [];          // [time drawn, phase code, cycle, page, scroll, typed, window x, window y] per frame drawn
+const byTime = new Map();
+const pat = (window.__pat = { drawn, raf: 0, started: 0, cell, cells: CELLS, w: W, h: H, seq: SEQ });
+
 function frame() {
   requestAnimationFrame(frame);
   pat.raf++;
   const now = performance.timeOrigin + performance.now() - T0;
   if (!pat.started) pat.started = now;
-  const el = now - pat.started, cyc = Math.floor(el / (SPARSE + SCROLL)), ph = el % (SPARSE + SCROLL) < SPARSE ? 0 : 1;
-  if (ph === 0) {
+  const el = now - pat.started, cyc = Math.floor(el / TOTAL);
+  let rest = el % TOTAL, idx = 0;
+  while (idx < SEQ.length - 1 && rest >= SEQ[idx].ms) rest -= SEQ[idx++].ms;
+  const type = SEQ[idx].type, first = inst !== cyc * SEQ.length + idx;
+  inst = cyc * SEQ.length + idx;
+  if (type === 'sparse') {
+    if (first) s.wx = s.wy = -1;
     if (now - lastEvent < EVERY) return; // nothing changes on screen in between
     lastEvent = now;
-    // One small change, like a typed character.
-    g.fillStyle = '#fff';
-    g.fillRect(Math.round(20 * dpr), stripH + Math.round(20 * dpr), Math.round(460 * dpr), Math.round(40 * dpr));
-    g.fillStyle = '#1f2328';
-    g.font = `${Math.round(22 * dpr)}px Consolas, monospace`;
-    g.textBaseline = 'top';
-    g.fillText('typed ' + seq + ' ' + '#'.repeat(seq % 12), Math.round(24 * dpr), stripH + Math.round(26 * dpr));
+    s.typed = seq;
+  } else if (type === 'scroll') {
+    if (first) { s.wx = s.wy = -1; s.typed = -1; }
+    s.y = (s.y + px(SPEED)) % pages[s.p].height;
+  } else if (type === 'open') {
+    if (!first) return; // one change, then still
+    s.p = (s.p + 1) % pages.length; s.typed = -1; s.wx = s.wy = -1;
+    s.y = (s.y + px(137)) % pages[s.p].height; // a part of the page that has not been shown
   } else {
-    y = (y + Math.round(SPEED * dpr)) % page.height;
-    g.drawImage(page, 0, -y);
-    g.drawImage(page, 0, page.height - y);
+    // A figure of eight around the top-left part of the picture, up to about 900 px/s.
+    if (first) s.typed = -1;
+    const a = rest / 1000 * 1.9;
+    s.wx = Math.round(px(170) + px(150) * Math.sin(a));
+    s.wy = Math.round(px(90) + px(60) * Math.sin(a * 2));
   }
+  paint(g, s);
   seq++;
   const t = Math.round(now);
-  strip(ph, t);
-  drawn.push([t, ph, cyc]);
+  strip(CODE[type], seq, t);
+  const e = [t, CODE[type], cyc, s.p, s.y, s.typed, s.wx, s.wy];
+  drawn.push(e);
+  byTime.set(t, e);
 }
 requestAnimationFrame(frame);
+
+// The brightness (0..255 per pixel, base64) of a rectangle of the frame that was drawn at time t.
+const again = canvas(W, H), ag = again.getContext('2d', { alpha: false });
+pat.truth = (t, r) => {
+  const e = byTime.get(t);
+  if (!e) return null;
+  paint(ag, { p: e[3], y: e[4], typed: e[5], wx: e[6], wy: e[7] });
+  const d = ag.getImageData(r.x, r.y, r.w, r.h).data;
+  let out = '';
+  for (let i = 0; i < d.length; i += 4) out += String.fromCharCode(Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]));
+  return btoa(out);
+};
 </script>
