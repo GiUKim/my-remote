@@ -67,6 +67,7 @@ const cursorCache = new Map(); // handle -> { img, hx, hy } | null
 let cursorGuard = null;
 function setCursorsHidden(on) {
   if (on === cursorsHidden) return;
+  if (on && !input.hidesCursors) return; // only Windows can swap the system cursors; elsewhere the engine's video keeps the pointer
   if (on) {
     // If this process dies without restoring, the guard process puts the cursors back.
     // One guard serves every session; it lives until this process ends.
@@ -104,7 +105,9 @@ function currentCursor() {
 // Something dragged out of the remote picture and let go over the client PC. The drag is ended
 // here without a drop (Escape), what was being dragged is still selected and gets copied
 // (Ctrl+C), and the result is handed over: text, or the names and sizes of files the client may
-// then fetch. Only files that this very step found on the clipboard can be fetched.
+// then fetch. Only files that this very step found on the clipboard can be fetched. On X11 the
+// dragging program hands over what it drags when asked (input.dragData()), so there the drag is
+// only ended and the clipboard is left alone; Ctrl+C is the fallback when it does not answer.
 const DRAG_MAX_BYTES = 2 * 1024 * 1024 * 1024, DRAG_MAX_FILES = 5000;
 const dragFiles = new Map(); // id -> { path, size, fd }
 // `rel`: the name the client gets, with the folders it sits in when a folder was dragged ('a/b/c.txt').
@@ -134,18 +137,31 @@ function closeDragFiles(id) {
 }
 async function dragOut(button) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const cls = input.captureClass();
-  if (cls !== 'CLIPBRDWNDCLASS') { input.buttonUp(button); console.log('drag out: no drag in progress' + (cls ? ' (mouse held by ' + cls + ')' : '')); return { kind: 'none', why: 'nodrag' }; }
-  const before = input.clipSeq();
-  input.tap(['Escape']);
-  await sleep(90);
-  input.tap(['ControlLeft', 'KeyC']);
-  let changed = false;
-  for (let i = 0; i < 40 && !changed; i++) { await sleep(25); changed = input.clipSeq() !== before; }
-  input.buttonUp(button);
-  if (!changed) return { kind: 'none', why: 'nocopy' };
-  await sleep(80); // the program may still be adding formats
-  const paths = input.clipboardFiles();
+  if (!input.dragging()) {
+    const cls = input.captureClass();
+    input.buttonUp(button); console.log('drag out: no drag in progress' + (cls ? ' (mouse held by ' + cls + ')' : '')); return { kind: 'none', why: 'nodrag' };
+  }
+  let paths = [], text = '';
+  const direct = await input.dragData(); // null on Windows
+  if (direct) {
+    input.tap(['Escape']);
+    await sleep(90);
+    input.buttonUp(button);
+    paths = direct.paths || [];
+    text = direct.text || '';
+  } else {
+    const before = input.clipSeq();
+    input.tap(['Escape']);
+    await sleep(90);
+    input.tap(['ControlLeft', 'KeyC']);
+    let changed = false;
+    for (let i = 0; i < 40 && !changed; i++) { await sleep(25); changed = input.clipSeq() !== before; }
+    input.buttonUp(button);
+    if (!changed) return { kind: 'none', why: 'nocopy' };
+    await sleep(80); // the program may still be adding formats
+    paths = input.clipboardFiles();
+    if (!paths.length) text = clipboard.readText();
+  }
   if (paths.length) {
     closeDragFiles();
     const files = [], room = { left: DRAG_MAX_FILES, cut: false };
@@ -167,7 +183,6 @@ async function dragOut(button) {
     if (room.cut) skipped++;
     return files.length ? { kind: 'files', files, skipped } : { kind: 'none', why: 'toobig' };
   }
-  const text = clipboard.readText();
   return text ? { kind: 'text', s: text.slice(0, CLIP_MAX), cut: text.length > CLIP_MAX } : { kind: 'none', why: 'empty' };
 }
 let cfg = null;
@@ -191,6 +206,13 @@ function loadConfig() {
   delete cfg.keyEnc;
   savedCfg = { ...saved };
   delete savedCfg.keyEnc;
+  // Linux without a keyring (no GNOME Keyring or KWallet running): Electron can then only obscure
+  // the key with a fixed password. The host keeps working that way, says so, and the file is
+  // readable by this user only.
+  if (process.platform === 'linux' && !safeStorage.isEncryptionAvailable()) {
+    safeStorage.setUsePlainTextEncryption(true);
+    console.warn(`[host] WARNING: no OS keyring (${safeStorage.getSelectedStorageBackend()}): the access key in ${cfgPath()} is not encrypted, only obscured; the file is readable by this user only`);
+  }
   let key = null;
   if (saved.keyEnc && safeStorage.isEncryptionAvailable()) {
     try { key = safeStorage.decryptString(Buffer.from(saved.keyEnc, 'base64')); } catch {}
@@ -203,6 +225,7 @@ function saveConfig(key) {
   const out = { ...savedCfg, keyEnc: safeStorage.encryptString(key).toString('base64') }; // DPAPI: only this Windows user can decrypt
   fs.mkdirSync(path.dirname(cfgPath()), { recursive: true });
   fs.writeFileSync(cfgPath(), JSON.stringify(out, null, 2));
+  if (process.platform !== 'win32') fs.chmodSync(cfgPath(), 0o600);
 }
 
 const builder = require('./build-client');
@@ -218,6 +241,13 @@ function getClientApp() {
   return clientApp;
 }
 
+// A display's rectangle in physical pixels. Electron converts only on Windows; on X11 every display
+// has the same scale factor, and physical pixels are the X server's root window coordinates.
+function physicalRect(d) {
+  if (process.platform === 'win32') return screen.dipToScreenRect(null, d.bounds);
+  const s = d.scaleFactor || 1, b = d.bounds;
+  return { x: Math.round(b.x * s), y: Math.round(b.y * s), width: Math.round(b.width * s), height: Math.round(b.height * s) };
+}
 async function getSources() {
   const displays = screen.getAllDisplays().sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
   const srcs = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
@@ -227,7 +257,7 @@ async function getSources() {
   displays.forEach((d, i) => {
     const src = srcs.find((s) => s.display_id === String(d.id)) || (srcs.length === displays.length ? srcs[i] : null);
     if (!src) return;
-    const r = screen.dipToScreenRect(null, d.bounds); // physical pixels
+    const r = physicalRect(d);
     const c = color.find((e) => e.x === r.x && e.y === r.y);
     out.push({ id: src.id, idx: rects.length, x: r.x, y: r.y, width: r.width, height: r.height, primary: d.id === primaryId, hdr: !!(c && c.hdr) });
     rects.push(r);
@@ -294,6 +324,8 @@ else {
   process.on('exit', () => { if (cursorsHidden) input.restoreCursors(); });
   app.whenReady().then(async () => {
     loadConfig();
+    cfg.viewOnly = input.viewOnlyReason(); // '' = input from the client is injected here
+    if (cfg.viewOnly) console.warn(`[host] WARNING: the host is view-only, input from the client is not injected: ${cfg.viewOnly}`);
     if (BENCH) Object.assign(cfg, benchCfg.cfg || {});
     if (process.argv.includes('--cursor-check')) cfg.capture = 'engine'; // that check is about the engine's capturer; the native one never has the pointer in its images
     if (ISOLATED) cfg.hideHostCursor = false; // local trials share this PC's cursor with the person using it
@@ -347,6 +379,7 @@ else {
     // windows are dragged as an outline only, which does not look like dragging at the real desk.
     ipcMain.handle('others', () => new Promise((resolve) => {
       const outline = !input.dragFullWindows();
+      if (process.platform !== 'win32') return resolve({ crd: false, outline }); // only checked for on Windows
       require('child_process').execFile('tasklist', ['/FI', 'IMAGENAME eq remoting_desktop.exe', '/NH', '/FO', 'CSV'], { windowsHide: true, timeout: 5000 },
         (err, out) => resolve({ crd: !err && /remoting_desktop\.exe/i.test(String(out)), outline }));
     }));
@@ -415,7 +448,16 @@ else {
     if (LOCALTEST) {
       const file = path.join(app.getPath('userData'), 'my-remote-localtest.html');
       fs.writeFileSync(file, buildLoaderHtml('k=' + cfg.key + '&auto&ro'));
-      setTimeout(() => shell.openPath(file), 2500); // after the host has subscribed
+      // Windows: the default browser (Edge or Chrome). Elsewhere that is often Firefox, which the client
+      // page is not made for, so the client app (client/main.js) shows it, with a profile of its own.
+      const open = () => {
+        if (process.platform === 'win32') return shell.openPath(file);
+        const env = { ...process.env };
+        delete env.ELECTRON_RUN_AS_NODE;
+        require('child_process').spawn(process.execPath, [path.join(__dirname, '..', 'client'), '--loader=' + file, ...process.argv.filter((a) => a === '--no-sandbox')],
+          { env, detached: true, stdio: 'ignore' }).unref();
+      };
+      setTimeout(open, 2500); // after the host has subscribed
     }
   });
 }

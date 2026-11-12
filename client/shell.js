@@ -31,20 +31,24 @@ function shellOf(sender) {
 //   files, let go over a folder window or the desktop  -> written into that folder; nothing is clicked or typed
 //   anything else, while the drop is still recent      -> onto the clipboard, one click at that spot, Ctrl+V
 //   otherwise                                          -> onto the clipboard; the page asks for Ctrl+V
-// Clicking and typing on this PC happen only here, only right after the person's own drop, and
-// only at the spot they chose. Win32 comes from the host's module (host/input.js, koffi); without
-// it things only reach the clipboard.
+// Clicking and typing on this PC happen only here, only on Windows, only right after the person's
+// own drop, and only at the spot they chose. On Linux (X11) only the desktop counts as a folder and
+// nothing is ever clicked or typed: everything else goes onto the clipboard. The window under the
+// pointer and the clipboard's file list come from the host's module (host/input.js: Win32 or X11
+// through koffi); without it things only reach the clipboard as text.
 const FRESH_MS = 8000;
 const FOLDERISH = new Set(['Progman', 'WorkerW', 'CabinetWClass', 'ExploreWClass']); // the desktop, Explorer windows
-const drops = new Map();  // id -> { at, x, y, hwnd, cls, own, folder: Promise<path | null> }
+const drops = new Map();  // id -> { at, x, y, hwnd, cls, desktop, own, folder: Promise<path | null> }
 const staged = new Map(); // id -> { path, fd, done }: files being received
 let dropSeq = 0, native;
-function win32() {
-  if (native === undefined) { try { native = require('../host/input'); } catch (e) { console.error('Win32 module not available:', e.message); native = null; } }
+function win32() { // Win32 on Windows, X11 on Linux
+  if (native === undefined) { try { native = require('../host/input'); } catch (e) { console.error('the input module is not available:', e.message); native = null; } }
   return native;
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const stageDir = () => path.join(os.tmpdir(), 'my-remote-drop');
+// Received files wait here until they are placed: this user's own folder (on Linux the temp folder is shared by all users).
+const stageDir = () => (process.platform === 'win32' ? path.join(os.tmpdir(), 'my-remote-drop')
+  : path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'my-remote-drop'));
 // A file name that is safe to create here, whatever the other side called the file.
 function safeName(name) {
   const n = String(name).replace(/[\\/]/g, '_').replace(/[<>:"|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(0, 200);
@@ -85,15 +89,16 @@ function explorerFolder(hwnd) {
   });
 }
 function targetFolder(p) {
-  if (p.cls === 'Progman' || p.cls === 'WorkerW') return Promise.resolve(app.getPath('desktop'));
+  if (p.desktop || p.cls === 'Progman' || p.cls === 'WorkerW') return Promise.resolve(app.getPath('desktop')); // X11 says `desktop`; Windows by class
   if (p.cls === 'CabinetWClass' || p.cls === 'ExploreWClass') return explorerFolder(p.hwnd);
   return Promise.resolve(null);
 }
 const hwndOf = (win) => { const b = win.getNativeWindowHandle(); return b.length >= 8 ? Number(b.readBigUInt64LE(0)) : b.readUInt32LE(0); };
-// One click where the thing was let go, then Ctrl+V. Not when the drop is old (the person has moved on).
+// One click where the thing was let go, then Ctrl+V. Not when the drop is old (the person has moved on),
+// and never other than on Windows.
 async function pasteAt(d) {
   const w = win32();
-  if (!w || !d || d.own || Date.now() - d.at > FRESH_MS) return false;
+  if (process.platform !== 'win32' || !w || !d || d.own || Date.now() - d.at > FRESH_MS) return false;
   try { w.clickAt(d.x, d.y); await sleep(160); w.tap(['ControlLeft', 'KeyV']); return true; } catch (e) { console.error('paste at the drop point', e); return false; }
 }
 // Received files (in the staging folder) go to where they were dropped. Returns { how, where }.
