@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>My Remote</title>
 <style>
-  html, body { height: 100%; margin: 0; background: #000; color: #e6e8eb; font: 14px/1.5 "Segoe UI", "Malgun Gothic", sans-serif; overflow: hidden; }
+  html, body { height: 100%; margin: 0; background: #000; color: #e6e8eb; font: 14px/1.5 "Segoe UI", "Malgun Gothic", sans-serif; overflow: hidden; user-select: none; }
+  input, textarea { user-select: text; }
+  video { -webkit-user-drag: none; }
   #bar { height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: #1d2229; border-bottom: 1px solid #2c333d; box-sizing: border-box; white-space: nowrap; overflow: hidden; }
   :fullscreen #bar { display: none; }
   #stage { position: absolute; inset: 34px 0 0 0; overflow: hidden; }
@@ -191,7 +193,8 @@ const samples = []; // rolling measurements for the diagnostics report
 $('mode').value = mode;
 $('hk').checked = hotkeysOn;
 
-window.__rd = { state: 'idle', monitors: 0, frames: 0, fps: {}, res: {}, cursor: '', clipRx: false, audio: false, connects: 0, pastes: 0, host: null, dragouts: 0, files: [], keepFiles: false };  // files/keepFiles: the self-test looks at received files instead of saving them
+window.__rd = { state: 'idle', monitors: 0, frames: 0, fps: {}, res: {}, cursor: '', clipRx: false, audio: false, connects: 0, pastes: 0, host: null, dragouts: 0, files: [], keepFiles: false,  // files/keepFiles: the self-test looks at received files instead of saving them
+  ptr: { cancel: 0, lost: 0, drag: 0, released: 0 }, others: null }; // ptr: pointer streams the browser broke off, and what was done about it
 let hostDrag = false; // the host says a drag-and-drop is under way there (a file, selected text, ...)
 let drop = null;      // the last thing dragged out to this PC: where it was let go, what has arrived
 
@@ -231,6 +234,13 @@ function makeView(win, root, isMain) {
   const t = (view.toastEl = win.document.createElement('div'));
   t.style.cssText = 'position:absolute;left:50%;top:28px;transform:translateX(-50%);z-index:4;display:none;padding:8px 16px;border-radius:8px;background:rgba(20,23,28,.92);border:1px solid #3a4350;color:#e6e8eb;font:14px "Segoe UI","Malgun Gothic",sans-serif;white-space:nowrap;pointer-events:none';
   root.appendChild(t);
+  // The browser's own text selection and drag-and-drop must never start in this window: a drag that
+  // the browser takes over cancels the pointer in the middle of the host's drag (the window being
+  // moved there stops, and the host never hears that the button was let go).
+  const doc = win.document;
+  const editable = (n) => { const el = n && (n.nodeType === 1 ? n : n.parentElement); return !!(el && el.closest('input, textarea, select')); };
+  doc.addEventListener('dragstart', (ev) => { if (!editable(ev.target)) { ev.preventDefault(); window.__rd.ptr.drag++; } }, true);
+  doc.addEventListener('selectstart', (ev) => { if (!editable(ev.target)) ev.preventDefault(); }, true);
   attachKeys(view);
   const relayout = () => { layout(view); scheduleView(); };
   win.addEventListener('resize', relayout);
@@ -442,9 +452,26 @@ function mapPoint(ev, view, pane) {
   const q = rel(pane, ev.clientX, ev.clientY);
   return q && { d: q.d, x: clamp(q.x, -8, 9), y: clamp(q.y, -8, 9) };
 }
-function queueMove(view, p) {
+// Mouse buttons. `held`: the ones this page pressed on the host and has not let go yet (bit b =
+// button b as sent in md/mu: 0 left, 1 middle, 2 right, 3 back, 4 forward). Every move also says
+// which buttons the pointer really holds (`h`, same bits), and the host lets go of any it still holds
+// that are not among them: a release that got lost on the way can then never leave a button down
+// there, which would make the next move drag whatever is under the pointer.
+let held = 0, lastAt = null;
+const hostMask = (buttons) => (buttons & 1) | (buttons & 4 ? 2 : 0) | (buttons & 2 ? 4 : 0) | (buttons & 24);
+function queueMove(view, p, buttons) {
   view.pending = null;
-  send({ t: 'mm', d: p.d, x: p.x, y: p.y });
+  lastAt = p;
+  send(buttons == null ? { t: 'mm', d: p.d, x: p.x, y: p.y } : { t: 'mm', d: p.d, x: p.x, y: p.y, h: hostMask(buttons) });
+}
+// The browser ended the pointer's events while buttons were held on the host: let go of them there.
+function releaseHeld() {
+  for (let b = 0; b < 5; b++) {
+    if (!(held & (1 << b)) || !lastAt) continue;
+    send({ t: 'mu', b, d: lastAt.d, x: lastAt.x, y: lastAt.y });
+    window.__rd.ptr.released++;
+  }
+  held = 0;
 }
 // ---- dragging something out of the remote picture onto this PC ----------------------
 // While a file or selected text is being dragged on the host and the pointer leaves our windows,
@@ -558,19 +585,28 @@ function attachPointer(view, pane) {
     const p = ev.buttons ? mapPoint(ev, view, pane) : here(ev);
     if (!p) return;
     view.lastPtr = { pane, cx: ev.clientX, cy: ev.clientY };
-    queueMove(view, p);
+    queueMove(view, p, ev.buttons);
     edgePan(view, ev);
   });
   v.addEventListener('pointerleave', () => { view.panDir = null; });
-  v.addEventListener('pointercancel', () => setOut(false));
+  v.addEventListener('pointercancel', () => {
+    setOut(false);
+    window.__rd.ptr.cancel++;
+    releaseHeld(); // no pointerup will come for this press
+  });
+  // Seen for diagnostics only: the capture went away while a button was still held here.
+  v.addEventListener('lostpointercapture', () => { if (held) window.__rd.ptr.lost++; });
   v.addEventListener('pointerdown', (ev) => {
     const p = here(ev); if (!p) return;
     ev.preventDefault(); v.focus();
     try { v.setPointerCapture(ev.pointerId); } catch {}
     view.pending = null;
+    if (ev.button >= 0 && ev.button < 5) held |= 1 << ev.button;
+    lastAt = p;
     send({ t: 'md', b: ev.button, d: p.d, x: p.x, y: p.y }); // 0 left, 1 middle, 2 right, 3 back, 4 forward
   });
   v.addEventListener('pointerup', (ev) => {
+    if (ev.button >= 0 && ev.button < 5) held &= ~(1 << ev.button);
     if (view.dragOut) {
       // Let go outside: the host ends its drag and sends what was being dragged (see gotDragData).
       setOut(false);
@@ -580,9 +616,10 @@ function attachPointer(view, pane) {
       send({ t: 'dragout', b: ev.button });
       return;
     }
-    const p = mapPoint(ev, view, pane); if (!p) return;
+    const p = mapPoint(ev, view, pane) || lastAt; if (!p) return;
     ev.preventDefault();
     view.pending = null;
+    lastAt = p;
     send({ t: 'mu', b: ev.button, d: p.d, x: p.x, y: p.y });
   });
   v.addEventListener('wheel', (ev) => {
@@ -651,7 +688,7 @@ function attachKeys(view) {
     flushPaste();
   });
   for (const t of ['copy', 'cut']) doc.addEventListener(t, (ev) => { if (!local()) ev.preventDefault(); });
-  win.addEventListener('blur', () => { view.swallow.clear(); flushPaste(); send({ t: 'reset' }); }); // never leave keys stuck on the host
+  win.addEventListener('blur', () => { view.swallow.clear(); flushPaste(); send({ t: 'reset' }); held = 0; }); // never leave keys or buttons stuck on the host
   win.addEventListener('focus', () => flushClip(win)); // host -> client text that arrived while we were away
   win.addEventListener('mouseup', (ev) => { if (ev.button > 2) ev.preventDefault(); }); // no browser back/forward
 }
@@ -705,7 +742,7 @@ function openView(sel, scr, screenIdx) {
   const d = w.document;
   d.title = 'My Remote';
   d.body.textContent = '';
-  d.body.style.cssText = 'margin:0;background:#000;overflow:hidden;height:100vh;font:14px "Segoe UI","Malgun Gothic",sans-serif;color:#e6e8eb';
+  d.body.style.cssText = 'margin:0;background:#000;overflow:hidden;height:100vh;font:14px "Segoe UI","Malgun Gothic",sans-serif;color:#e6e8eb;user-select:none';
   const root = d.createElement('div');
   root.style.cssText = 'position:absolute;inset:0;overflow:hidden';
   d.body.appendChild(root);
@@ -1177,6 +1214,13 @@ function onHostMessage(data) {
   }
   else if (m.t === 'hs') { hostStat = m; window.__rd.host = m; }
   else if (m.t === 'drag') hostDrag = !!m.on;
+  else if (m.t === 'others') {
+    const was = window.__rd.others || {};
+    window.__rd.others = { crd: !!m.crd, outline: !!m.outline };
+    const say = m.crd && !was.crd ? 'Chrome 원격 데스크톱도 이 호스트에 연결되어 있습니다 · 클릭과 창 끌기가 끊길 수 있으니 하나만 연결해 쓰세요'
+      : m.outline && !was.outline ? '호스트의 "창을 끄는 동안 내용 표시"가 꺼져 있어, 창을 끄는 동안에는 테두리만 움직입니다' : '';
+    if (say) for (const v of liveViews()) toast(v, say, 10000);
+  }
   else if (m.t === 'dragdata') gotDragData(m);
   else if (m.t === 'clip' && typeof m.s === 'string' && m.s.length <= CLIP_MAX) gotClip(m.s);
   else if (m.t === 'bye') disconnect('호스트에서 연결을 종료했습니다.');
@@ -1379,6 +1423,7 @@ setInterval(async () => {
       fps: pick(fps), res: pick(res), mbps: +mbps.toFixed(2), rtt: rtt != null ? Math.round(rtt * 1000) : null, buf: Math.round(buf), relay,
       lost, recv, freezes, freezeDur: +freezeDur.toFixed(2), dropped, nack, pli, dec: decoder, mode, shell: !!shell,
       views: liveViews().map((v) => `${v.sel}/${v.fit}/${v.root.clientWidth}x${v.root.clientHeight}@${v.win.devicePixelRatio}${v.win.document.fullscreenElement ? '/fs' : ''}`),
+      ...(Object.values(window.__rd.ptr).some(Boolean) ? { ptr: { ...window.__rd.ptr } } : {}),
     } });
   }
   last = { bytes, t: now, jb, jbn };

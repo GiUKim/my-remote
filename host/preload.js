@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('hostApi', {
   regenKey: () => ipcRenderer.invoke('regen-key'),
   exportClient: () => ipcRenderer.invoke('export-client'),
   nativeCapture: () => !!capturer(),
+  others: () => ipcRenderer.invoke('others'),
 });
 
 // ---- native screen capture (optional; native/capture.cpp) ---------------------------

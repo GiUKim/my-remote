@@ -51,11 +51,14 @@ const VK = {
 
 let monitors = []; // physical-pixel rects, index = monitor idx sent to the client
 const down = new Set(); // codes currently held, so we can release them on disconnect
-let buttonsDown = 0;
+let buttonsDown = 0; // bit b = BTN[b] is held down here
+let released = 0;    // buttons let go here because the client said it no longer held them (diagnostics)
+let dry = null;      // when set (self-test only), input is recorded here instead of being injected
 
 function setMonitors(rects) { monitors = rects; }
 
 function mouse(flags, dx = 0, dy = 0, data = 0) {
+  if (dry) { dry.push({ mouse: flags, data }); return; }
   SendMouse(1, [{ type: 0, mi: { dx, dy, mouseData: data, dwFlags: flags, time: 0, dwExtraInfo: 0 } }], SIZE);
 }
 // Maps (monitor, 0..1 position) to the virtual desktop. Positions outside 0..1
@@ -87,6 +90,7 @@ function key(code, keyName, up) {
   else if (SC[code]) { scan = SC[code][0]; flags |= KF.SCAN | (SC[code][1] ? KF.EXT : 0); }
   else return;
   if (up) down.delete(code); else down.add(code);
+  if (dry) { dry.push({ key: code, up }); return; }
   SendKey(1, [{ type: 1, ki: { wVk: vk, wScan: scan, dwFlags: flags, time: 0, dwExtraInfo: 0 }, pad: [0, 0, 0, 0, 0, 0, 0, 0] }], SIZE);
 }
 const BTN = [[MF.LD, MF.LU, 0], [MF.MD, MF.MU, 0], [MF.RD, MF.RU, 0], [MF.XD, MF.XU, 1], [MF.XD, MF.XU, 2]];
@@ -103,7 +107,17 @@ function handle(text) {
   try { m = JSON.parse(text); } catch { return; }
   if (!m || typeof m !== 'object') return;
   switch (m.t) {
-    case 'mm': moveTo(m.d | 0, +m.x, +m.y); break;
+    case 'mm': {
+      moveTo(m.d | 0, +m.x, +m.y);
+      // `h`: the buttons the client's pointer holds right now (same bits as buttonsDown). One held
+      // here that the client no longer holds lost its release on the way (the browser cancelled the
+      // pointer, the window changed under it, ...): let it go now, where the pointer is. Otherwise
+      // every later move would drag whatever is under the pointer. Never presses anything.
+      const lost = Number.isInteger(m.h) ? buttonsDown & ~m.h : 0;
+      for (let b = 0; b < BTN.length; b++) if (lost & (1 << b)) { mouse(BTN[b][1], 0, 0, BTN[b][2]); released++; }
+      buttonsDown &= ~lost;
+      break;
+    }
     case 'md':
     case 'mu': {
       const b = BTN[m.b | 0];
@@ -238,6 +252,10 @@ function hideCursors() {
   return ok;
 }
 function restoreCursors() { return SystemParametersInfoW(0x0057, 0, 0, 0); }
+// "Show window contents while dragging" (SPI_GETDRAGFULLWINDOWS, read only). When it is off, a
+// dragged window stays put and only an outline follows the pointer until it is let go.
+const SpiGetBool = user32.func('SystemParametersInfoW', 'bool', ['uint32', 'uint32', koffi.out(koffi.pointer('int32')), 'uint32']);
+function dragFullWindows() { const v = [1]; return SpiGetBool(0x0026, 0, v, 0) ? !!v[0] : true; }
 
 // Changes whenever the clipboard content changes; reading it does not open the clipboard.
 const GetClipboardSequenceNumber = user32.func('GetClipboardSequenceNumber', 'uint32', []);
@@ -386,4 +404,21 @@ function tap(codes) {
   for (const c of [...codes].reverse()) key(c, '', true);
 }
 
-module.exports = { handle, reset, setMonitors, target, cursorState, cursorBitmap, hideCursors, restoreCursors, displayColor, captureClass, dragging, clipboardFiles, buttonUp, tap, underPointer, clickAt, dropFilesBuffer, setClipboardFiles, clipSeq: () => GetClipboardSequenceNumber() };
+// Self-test: runs input messages through handle() against the given monitor rectangles and returns
+// what would have been injected, without injecting anything. The real state is put back afterwards.
+function simulate(rects, msgs) {
+  const saved = { monitors, buttonsDown, released, down: [...down] };
+  dry = [];
+  monitors = rects; buttonsDown = 0; released = 0; down.clear();
+  try {
+    for (const m of msgs) handle(JSON.stringify(m));
+    return { log: dry, held: buttonsDown, released };
+  } finally {
+    dry = null;
+    monitors = saved.monitors; buttonsDown = saved.buttonsDown; released = saved.released;
+    down.clear(); for (const c of saved.down) down.add(c);
+  }
+}
+function takeReleased() { const n = released; released = 0; return n; }
+
+module.exports = { handle, reset, setMonitors, target, simulate, takeReleased, dragFullWindows, MF, cursorState, cursorBitmap, hideCursors, restoreCursors, displayColor, captureClass, dragging, clipboardFiles, buttonUp, tap, underPointer, clickAt, dropFilesBuffer, setClipboardFiles, clipSeq: () => GetClipboardSequenceNumber() };

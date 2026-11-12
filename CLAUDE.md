@@ -83,6 +83,18 @@ self-test, opens a view-only client in their default browser).
   - A monitor in HDR mode or rotated, or any failure: the session is renegotiated with the engine's
     capturer (`nativeOff`). Not tried on such a monitor.
 
+- **Mouse buttons held on the host.** Reported from a real session (2026-11-12): a window dragged
+  across host monitors stopped half way, and after letting go the window still followed the pointer
+  until the next click, i.e. the host kept the button down. The cause was not pinned down. A browser
+  drag-and-drop or selection that takes over the pointer (`pointercancel`, no `pointerup`) would do
+  exactly this, so the client blocks `dragstart`/`selectstart` and lets go on `pointercancel`, and
+  every `mm` carries the held buttons (`h`) so the host can let go of one whose `mu` was lost. The
+  diagnostics log counts each of these (`ptr`, `released`): read it if it happens again.
+- **Another remote-control program connected at the same time.** In that session the host's main
+  thread stalled three times (57, 71, 19 s), each stall ending when a Chrome Remote Desktop session
+  to the same PC (re)connected (Windows Application log, source `chromoting`). Clicks did nothing
+  meanwhile and were then injected all at once. The host now tells the client (`others`).
+
 - **Dragging out of the remote picture.** A program that runs a drag-and-drop has handed the mouse to
   OLE's hidden window of class `CLIPBRDWNDCLASS`; `input.dragging()` reads that (`GetGUIThreadInfo`,
   read-only) and the host tells the client (`drag`). When the client's pointer then leaves every client
@@ -211,7 +223,7 @@ Data channel `input` (JSON text):
 
 | Direction | Message | Meaning |
 |---|---|---|
-| client -> host | `mm` `md` `mu` `mw` | Mouse move/down/up/wheel; `d` = monitor index, `x`,`y` = 0..1 within that monitor. During a drag they may leave 0..1, which continues onto the neighbouring monitor |
+| client -> host | `mm` `md` `mu` `mw` | Mouse move/down/up/wheel; `d` = monitor index, `x`,`y` = 0..1 within that monitor. During a drag they may leave 0..1, which continues onto the neighbouring monitor. `mm` carries `h`: the buttons the client's pointer holds (bit b = button b of `md`/`mu`); the host lets go of any button it holds that is not in `h`, so a lost `mu` cannot leave a button down. A move never presses anything |
 | client -> host | `kd` `ku` | Key down/up; `c` = `KeyboardEvent.code`, `k` = `key` |
 | client -> host | `reset` | Release every held key and button |
 | client -> host | `view` | `v` = `[{i, w, h}]`: monitors on screen and the size each is shown at, in device pixels (`0` = full size). The host pauses the rest, scales down to the shown size (never up) and splits bitrate by pixels sent |
@@ -223,6 +235,7 @@ Data channel `input` (JSON text):
 | host -> client | `hs` | Host-side statistics every 2 s (codec, encoder, bitrate, per-monitor capture/encode fps and limiting factor) for the client's diagnostics report |
 | host -> client | `drag` | `on`: whether a drag-and-drop is under way on the host |
 | host -> client | `dragdata` | Answer to `dragout`: `kind` `text` (`s`, `cut`), `files` (`files:[{id,name,size}]`, `skipped`; the bytes follow on the `file` channel) or `none` |
+| host -> client | `others` | `crd`: a Chrome Remote Desktop session is connected to the host as well (`remoting_desktop.exe` runs); `outline`: the host drags windows as an outline only. Checked every 10 s, sent when it changes; the client shows a warning |
 | host -> client | `bye` | Deliberate close; the client must not auto-reconnect |
 | host -> client | `renew` | Host monitors changed; the client reconnects at once and keeps its windows |
 
@@ -358,7 +371,15 @@ The client sends its measurements every 2 s (`cs` message) and the host appends 
 encoder statistics, to `%APPDATA%\my-remote-host\diag.log` (JSON lines, numbers only, rotated at 3 MB).
 Read this file when the user reports stutter or lag instead of guessing: compare host capture fps,
 encode fps and the limiting factor (`cpu`, `bandwidth`, `none`) with the client's received fps, freeze
-count, packet loss, round-trip time and jitter-buffer delay. It never contains the key; `config.json`
+count, packet loss, round-trip time and jitter-buffer delay. An entry may carry `slow`: main-process
+calls that took over 50 ms since the previous entry (`input mm`, `clip-read`, `cursor`, ...) and
+`paused` (the main thread itself did not run for over a second), each as count, total and longest ms.
+The client's input is injected on that thread, so a stall there is a stall of every click. Entries
+written many at once after a gap mean the same. `released`: buttons the host let go because the
+client's moves said they were no longer held. The client's part may carry `ptr`: `cancel` (the
+browser ended a pointer while a button was held), `lost` (pointer capture went away while held),
+`drag` (browser drag-and-drop starts that were blocked), `released` (host buttons let go after a
+cancel). It never contains the key; `config.json`
 in the same folder does, so do not read that one.
 
 ## Verified and unverified

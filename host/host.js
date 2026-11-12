@@ -266,6 +266,17 @@ function startChannelTasks(s, dc) {
     cur = c.k;
     tx(c.img ? { t: 'cur', img: c.img, hx: c.hx, hy: c.hy } : { t: 'cur', c: c.c });
   }, 33));
+  // Another remote-control program connected to this PC as well (see 'others' in main.js): tell the
+  // client when that starts or ends, so the person knows why dragging or clicking may misbehave.
+  let others = '';
+  const checkOthers = async () => {
+    const o = await api.others().catch(() => null);
+    if (!o || session !== s) return;
+    const k = JSON.stringify(o);
+    if (k !== others) { others = k; tx({ t: 'others', ...o }); log(`other remote session: ${o.crd ? 'Chrome Remote Desktop connected' : 'none'}${o.outline ? ', windows are dragged as an outline' : ''}`); }
+  };
+  checkOthers();
+  s.timers.push(setInterval(checkOthers, 10000));
   // Clipboard (text) host -> client.
   if (cfg.clipboard) {
     let seq = -1;

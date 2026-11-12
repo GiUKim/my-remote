@@ -76,6 +76,22 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile }) 
       `x=1.25 on monitor 1 -> desktop x ${past && Math.round(past.px)}`);
   }
 
+  // Mouse buttons: a release that got lost on the way is made up for by the next move, which says
+  // what the client's pointer really holds. Nothing is injected: input.simulate records what would be.
+  {
+    const R = [{ x: 0, y: 0, width: 1920, height: 1080 }], MF = input.MF;
+    const count = (r, bits) => r.log.filter((e) => e.mouse & bits).length, UP = MF.LU | MF.RU | MF.MU | MF.XU, DOWN = MF.LD | MF.RD | MF.MD | MF.XD;
+    const at = (t, x, extra) => ({ t, d: 0, x, y: 0.5, ...extra });
+    const lost = input.simulate(R, [at('md', 0.5, { b: 0 }), at('mm', 0.6, { h: 1 }), at('mm', 0.7, { h: 0 }), at('mm', 0.8, { h: 0 })]);
+    const normal = input.simulate(R, [at('md', 0.5, { b: 0 }), at('mm', 0.6, { h: 1 }), at('mu', 0.6, { b: 0 }), at('mm', 0.7, { h: 0 })]);
+    const right = input.simulate(R, [at('md', 0.5, { b: 2 }), at('mm', 0.6), at('mm', 0.7, { h: 1 })]);
+    const never = input.simulate(R, [at('mm', 0.5, { h: 7 })]);
+    check('a lost button release is made up for by the next move, nothing is ever pressed by it',
+      count(lost, UP) === 1 && lost.held === 0 && lost.released === 1 && count(normal, UP) === 1 && normal.released === 0 &&
+      count(right, MF.RU) === 1 && right.held === 0 && count(never, DOWN) === 0,
+      `lost: ${count(lost, UP)} up, normal: ${count(normal, UP)} up, right button: ${count(right, MF.RU)} up, presses from a move: ${count(never, DOWN)}`);
+  }
+
   // Picture of an app-specific cursor (read-only; uses the standard arrow as a stand-in).
   {
     const koffi = require('koffi');
@@ -151,6 +167,27 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile }) 
 
     [ok, s] = await until((x) => !!x.cursor, 5);
     check('cursor shape sync', ok && s.cursorCss === s.cursor, `host cursor = ${s.cursor}`);
+
+    // The browser must not be able to take a drag over (its own drag-and-drop or text selection),
+    // and when it does end the pointer's events, the button held on the host is let go.
+    {
+      const r = await js(`(() => {
+        const v = mainView.panes[0].video, b = v.getBoundingClientRect(), before = { ...window.__rd.ptr };
+        const drag = new DragEvent('dragstart', { bubbles: true, cancelable: true }), sel = new Event('selectstart', { bubbles: true, cancelable: true });
+        v.dispatchEvent(drag); v.dispatchEvent(sel);
+        const o = { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'mouse', button: 0, buttons: 1, clientX: b.left + b.width / 2, clientY: b.top + b.height / 2 };
+        v.dispatchEvent(new PointerEvent('pointerdown', o));
+        const heldAfterDown = held;
+        v.dispatchEvent(new PointerEvent('pointercancel', { ...o, buttons: 0 }));
+        return { drag: drag.defaultPrevented, sel: sel.defaultPrevented, heldAfterDown, held, cancel: window.__rd.ptr.cancel - before.cancel, released: window.__rd.ptr.released - before.released,
+          noSelect: getComputedStyle(document.body).userSelect === 'none' };
+      })()`);
+      check('the browser cannot take a drag over; a cancelled pointer lets go of the host button',
+        r.drag && r.sel && r.noSelect && r.heldAfterDown === 1 && r.held === 0 && r.cancel === 1 && r.released === 1, JSON.stringify(r));
+    }
+    [ok, s] = await until((x) => !!x.others, 12);
+    check('the host says whether another remote session is connected', ok,
+      ok ? `Chrome Remote Desktop ${s.others.crd ? 'connected' : 'not connected'}, windows dragged ${s.others.outline ? 'as an outline' : 'with their contents'}` : 'no message');
 
     // The client window is smaller than the monitor, so the host must send fewer pixels - but never fewer than shown.
     const main = s.sel;

@@ -286,17 +286,46 @@ else {
     ipcMain.handle('cfg', () => cfg);
     ipcMain.handle('sources', getSources);
     ipcMain.handle('client-app', getClientApp);
-    ipcMain.on('input', (_e, text) => { try { input.handle(String(text)); } catch (e) { console.error('input', e); } });
-    ipcMain.on('log', (_e, text) => console.log('[host]', text));
     // Measurements of each session (numbers only), for finding out why something felt slow.
     const diagFile = path.join(app.getPath('userData'), 'diag.log');
-    ipcMain.on('diag', (_e, entry) => {
+    const diagWrite = (entry) => {
       try {
         if (fs.existsSync(diagFile) && fs.statSync(diagFile).size > 3 * 1024 * 1024) fs.renameSync(diagFile, diagFile.replace(/\.log$/, '.old.log'));
         fs.appendFileSync(diagFile, JSON.stringify({ t: new Date().toISOString(), ...entry }) + '\n');
       } catch {}
+    };
+    // The handlers below and the client's input all run on this process's main thread: one call that
+    // blocks holds up every click behind it. Calls that took long, and pauses of the thread itself,
+    // are counted (names and milliseconds only) and written with the next diagnostics entry, so that a
+    // stall can be traced to its cause afterwards.
+    const slow = {};
+    const note = (what, ms) => { const e = slow[what] || (slow[what] = { n: 0, ms: 0, max: 0 }); e.n++; e.ms += ms; e.max = Math.max(e.max, ms); };
+    const timed = (what, fn) => { const t0 = performance.now(); try { return fn(); } finally { const ms = performance.now() - t0; if (ms > 50) note(what, ms); } };
+    let tick = performance.now();
+    setInterval(() => { const now = performance.now(), late = now - tick - 500; tick = now; if (late > 1000) note('paused', late); }, 500);
+    const takeSlow = () => {
+      const keys = Object.keys(slow);
+      if (!keys.length) return null;
+      const o = {};
+      for (const k of keys) { o[k] = { n: slow[k].n, ms: Math.round(slow[k].ms), max: Math.round(slow[k].max) }; delete slow[k]; }
+      return o;
+    };
+    ipcMain.on('input', (_e, text) => timed('input ' + ((/"t":"(\w{1,8})"/.exec(String(text)) || [])[1] || '?'), () => { try { input.handle(String(text)); } catch (e) { console.error('input', e); } }));
+    ipcMain.on('log', (_e, text) => console.log('[host]', text));
+    ipcMain.on('diag', (_e, entry) => {
+      const s = takeSlow(), r = input.takeReleased();
+      diagWrite({ ...entry, ...(s ? { slow: s } : {}), ...(r ? { released: r } : {}) });
     });
-    ipcMain.handle('cursor', () => { try { return { ...currentCursor(), drag: input.dragging() }; } catch { return { k: '0', c: 'default', drag: false }; } });
+    // Another remote-control program connected to this PC at the same time: Chrome Remote Desktop runs
+    // remoting_desktop.exe only while one of its sessions is connected. Stalls of this process's input
+    // were seen to end exactly when such a session (re)connected, so the client is told. Also whether
+    // windows are dragged as an outline only, which does not look like dragging at the real desk.
+    ipcMain.handle('others', () => new Promise((resolve) => {
+      const outline = !input.dragFullWindows();
+      require('child_process').execFile('tasklist', ['/FI', 'IMAGENAME eq remoting_desktop.exe', '/NH', '/FO', 'CSV'], { windowsHide: true, timeout: 5000 },
+        (err, out) => resolve({ crd: !err && /remoting_desktop\.exe/i.test(String(out)), outline }));
+    }));
+    ipcMain.handle('cursor', () => timed('cursor', () => { try { return { ...currentCursor(), drag: input.dragging() }; } catch { return { k: '0', c: 'default', drag: false }; } }));
     ipcMain.handle('drag-out', async (_e, button) => {
       if (ISOLATED) return { kind: 'none', why: 'not in a local trial' }; // those never send input to this PC
       try { return await dragOut(button | 0); } catch (e) { console.error('drag out', e); try { input.buttonUp(button | 0); } catch {} return { kind: 'none', why: 'error' }; }
@@ -311,14 +340,14 @@ else {
       } catch (e) { console.error('drag file read', e); return null; }
     });
     ipcMain.on('drag-file-done', (_e, id) => closeDragFiles(id == null ? null : String(id)));
-    ipcMain.handle('cursor-hide', (_e, on) => { try { setCursorsHidden(!!on && !!cfg.hideHostCursor); } catch (e) { console.error('cursor hide', e); } return cursorsHidden; });
+    ipcMain.handle('cursor-hide', (_e, on) => timed('cursor-hide', () => { try { setCursorsHidden(!!on && !!cfg.hideHostCursor); } catch (e) { console.error('cursor hide', e); } return cursorsHidden; }));
     // Only touch the clipboard when its content actually changed.
     ipcMain.handle('clip-read', (_e, lastSeq) => {
       if (!cfg.clipboard) return { seq: 0 };
       const seq = input.clipSeq();
-      return seq === lastSeq ? { seq } : { seq, text: clipboard.readText() };
+      return seq === lastSeq ? { seq } : { seq, text: timed('clip-read', () => clipboard.readText()) };
     });
-    ipcMain.on('clip-write', (_e, text) => { if (cfg.clipboard && typeof text === 'string' && text.length <= CLIP_MAX) clipboard.writeText(text); });
+    ipcMain.on('clip-write', (_e, text) => { if (cfg.clipboard && typeof text === 'string' && text.length <= CLIP_MAX) timed('clip-write', () => clipboard.writeText(text)); });
     ipcMain.on('session', (_e, live) => {
       if (tray) { tray.setImage(icon(!!live)); tray.setToolTip('My Remote Host — ' + (live ? '원격 접속 중' : '대기 중')); }
       if (live && !SELFTEST && !BENCH && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: '원격 접속이 시작되었습니다.' }).show();
