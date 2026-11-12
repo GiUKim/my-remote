@@ -15,7 +15,9 @@ const { performance } = require('perf_hooks');
 const C = JSON.parse(fs.readFileSync(process.argv[process.argv.length - 1], 'utf8'));
 const B = C.bench, P = C.pattern;
 
-app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-peer-')));
+const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-peer-'));
+app.setPath('userData', profile);
+require('./profile-cleanup').watch(profile); // removed once this process has ended
 app.commandLine.appendSwitch('disable-features', ['WebRtcHideLocalIpsWithMdns', ...(B.peerDisableFeatures || [])].join(','));
 if (B.peerTrials) app.commandLine.appendSwitch('force-fieldtrials', B.peerTrials);
 for (const [k, v] of Object.entries(B.peerSwitches || {})) app.commandLine.appendSwitch(k, String(v));

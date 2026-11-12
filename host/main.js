@@ -102,38 +102,65 @@ function currentCursor() {
   const e = cursorCache.get(st.key);
   return e ? { k: st.key, img: e.img, hx: e.hx, hy: e.hy } : { k: st.key, c: 'default' };
 }
+// The IPC handlers and the client's input all run on this process's main thread: one call that
+// blocks holds up every click behind it. Calls that took long, and pauses of the thread itself,
+// are counted (names and milliseconds only) and written with the next diagnostics entry, so that a
+// stall can be traced to its cause afterwards.
+const slow = {};
+const note = (what, ms) => { const e = slow[what] || (slow[what] = { n: 0, ms: 0, max: 0 }); e.n++; e.ms += ms; e.max = Math.max(e.max, ms); };
+const timed = (what, fn) => { const t0 = performance.now(); try { return fn(); } finally { const ms = performance.now() - t0; if (ms > 50) note(what, ms); } };
 // Something dragged out of the remote picture and let go over the client PC. The drag is ended
 // here without a drop (Escape), what was being dragged is still selected and gets copied
 // (Ctrl+C), and the result is handed over: text, or the names and sizes of files the client may
 // then fetch. Only files that this very step found on the clipboard can be fetched. On X11 the
 // dragging program hands over what it drags when asked (input.dragData()), so there the drag is
 // only ended and the clipboard is left alone; Ctrl+C is the fallback when it does not answer.
+// Files are looked at and read asynchronously: one on a network share, or one that OneDrive has yet
+// to download, can take seconds, and the client's input waits on this thread meanwhile.
 const DRAG_MAX_BYTES = 2 * 1024 * 1024 * 1024, DRAG_MAX_FILES = 5000;
-const dragFiles = new Map(); // id -> { path, size, fd }
+// id -> { path, size, open, xfer }. `open`: the file's handle once it is read (a promise). `xfer`: shared
+// by the files of one drag-out, { last }: when one of them was last read. Each transfer releases its
+// own files (drag-file-done); a second drag-out leaves those of one still running alone.
+const dragFiles = new Map();
+const DRAG_IDLE_MS = 10 * 60e3; // offers nobody has read for this long are dropped (their session ended first)
 // `rel`: the name the client gets, with the folders it sits in when a folder was dragged ('a/b/c.txt').
-function offerFile(file, rel) {
-  const st = fs.statSync(file);
+async function offerFile(file, rel, xfer = { last: Date.now() }) {
+  const st = await fs.promises.stat(file);
   if (!st.isFile()) return null;
   const id = crypto.randomBytes(8).toString('hex');
-  dragFiles.set(id, { path: file, size: st.size, fd: null });
+  dragFiles.set(id, { path: file, size: st.size, open: null, xfer });
   return { id, name: rel || path.basename(file), size: st.size };
 }
 // Everything inside a dragged folder: its files with their path in it, and its empty folders.
 // Links and junctions are not followed (one pointing at a parent would never end).
-function listFolder(dir, rel, out, room) {
+async function listFolder(dir, rel, out, room) {
   let entries;
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return; }
   if (!entries.length) out.push({ dir: true, rel });
   for (const e of entries) {
     if (out.length >= room.left) { room.cut = true; return; }
     if (e.isSymbolicLink()) continue;
     const p = path.join(dir, e.name), r = rel + '/' + e.name;
-    if (e.isDirectory()) listFolder(p, r, out, room);
+    if (e.isDirectory()) await listFolder(p, r, out, room);
     else if (e.isFile()) out.push({ path: p, rel: r });
   }
 }
+async function readDragFile(id, offset, len) {
+  const f = dragFiles.get(String(id));
+  if (!f || !Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(len) || len <= 0 || len > 1 << 20) return null;
+  f.xfer.last = Date.now();
+  if (!f.open) f.open = fs.promises.open(f.path, 'r');
+  const fh = await f.open, buf = Buffer.alloc(len), { bytesRead } = await fh.read(buf, 0, len, offset);
+  return bytesRead === len ? buf : buf.subarray(0, bytesRead);
+}
+// One file (id), or every one (null).
 function closeDragFiles(id) {
-  for (const [k, f] of [...dragFiles]) if (id == null || k === id) { try { if (f.fd != null) fs.closeSync(f.fd); } catch {} dragFiles.delete(k); }
+  for (const k of id == null ? [...dragFiles.keys()] : [id]) {
+    const f = dragFiles.get(k);
+    if (!f) continue;
+    dragFiles.delete(k);
+    if (f.open) f.open.then((fh) => fh.close()).catch(() => {}); // a read under way finishes first
+  }
 }
 async function dragOut(button) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -159,26 +186,28 @@ async function dragOut(button) {
     input.buttonUp(button);
     if (!changed) return { kind: 'none', why: 'nocopy' };
     await sleep(80); // the program may still be adding formats
-    paths = input.clipboardFiles();
-    if (!paths.length) text = clipboard.readText();
+    // Reading the clipboard waits for its owner to hand the data over.
+    paths = timed('drag clipboard', () => input.clipboardFiles());
+    if (!paths.length) text = timed('drag clipboard', () => clipboard.readText());
   }
   if (paths.length) {
-    closeDragFiles();
+    for (const [id, f] of [...dragFiles]) if (Date.now() - f.xfer.last > DRAG_IDLE_MS) closeDragFiles(id); // earlier transfers stay unless idle
+    const xfer = { last: Date.now() };
     const files = [], room = { left: DRAG_MAX_FILES, cut: false };
     let skipped = 0, total = 0;
-    const add = (file, rel) => {
+    const add = async (file, rel) => {
       let o = null;
-      try { o = files.length < DRAG_MAX_FILES ? offerFile(file, rel) : null; } catch {}
+      try { o = files.length < DRAG_MAX_FILES ? await offerFile(file, rel, xfer) : null; } catch {}
       if (o && total + o.size <= DRAG_MAX_BYTES) { files.push(o); total += o.size; } else { skipped++; if (o) dragFiles.delete(o.id); }
     };
     for (const f of paths) {
       let st = null;
-      try { st = fs.statSync(f); } catch { skipped++; continue; }
-      if (!st.isDirectory()) { add(f, path.basename(f)); continue; }
+      try { st = await fs.promises.stat(f); } catch { skipped++; continue; }
+      if (!st.isDirectory()) { await add(f, path.basename(f)); continue; }
       const list = [];
       room.left = DRAG_MAX_FILES - files.length;
-      listFolder(f, path.basename(f), list, room);
-      for (const e of list) if (e.dir) files.push({ id: '', name: e.rel, size: 0, dir: true }); else add(e.path, e.rel);
+      await listFolder(f, path.basename(f), list, room);
+      for (const e of list) if (e.dir) files.push({ id: '', name: e.rel, size: 0, dir: true }); else await add(e.path, e.rel);
     }
     if (room.cut) skipped++;
     return files.length ? { kind: 'files', files, skipped } : { kind: 'none', why: 'toobig' };
@@ -285,12 +314,36 @@ async function putDone(gid, at, mode) {
   if (mode === 'paste') { input.tap(input.isDown('ControlLeft') || input.isDown('ControlRight') ? ['KeyV'] : ['ControlLeft', 'KeyV']); return { how: 'pasted', n }; }
   return { how: 'clipboard', n };
 }
+
+// What this process did for the host page's session, undone. The page does this itself when a
+// session ends (teardown in host.js), but not when it goes away instead: its process crashed (it runs
+// the native capturer), or it reloads (after a new key). Without this, keys and buttons held for the
+// client stay down, the cursors stay hidden and the tray keeps saying someone is connected.
+function pageGone() {
+  try { input.reset(); } catch (e) { console.error('input reset', e); }
+  try { setCursorsHidden(false); } catch (e) { console.error('cursor restore', e); }
+  closeDragFiles(null);
+  for (const gid of [...puts.keys()]) putAbort(gid).catch(() => {});
+  setTray(false);
+}
+
 let cfg = null;
 let savedCfg = {}; // only what the user set; defaults are not frozen into the file
+// config.json holds the access key, and every client that has the key loses access when it changes.
+// So a key is made by itself only when there is no file at all (the first start). A file that is there
+// but cannot be used as it is - unreadable, not valid JSON (it is edited by hand: a trailing comma), no
+// key in it, or a key that cannot be decrypted (Windows: the profile was restored on another PC or the
+// password reset by an administrator; Linux: the keyring is locked) - is never replaced without asking,
+// and a copy of it (config.json.bad-<time>) is kept before it is.
+let cfgIssue = '';  // why the file cannot be used as it is, for the person at this PC; '' = it can
+let cfgBackup = ''; // that copy
 
 if (ISOLATED) {
   // Fully local: private profile dir, local relay, no STUN. Nothing leaves this PC.
-  app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-local-')));
+  // The profile is removed once this run has ended (profile-cleanup.js).
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-local-'));
+  app.setPath('userData', profile);
+  require('./profile-cleanup').watch(profile);
   app.commandLine.appendSwitch('disable-features', ['WebRtcHideLocalIpsWithMdns', ...((benchCfg && benchCfg.disableFeatures) || [])].join(','));
   // A bench run can try other engine switches before they are made the default.
   if (benchCfg) for (const [k, v] of Object.entries(benchCfg.switches || {})) app.commandLine.appendSwitch(k, String(v));
@@ -300,8 +353,27 @@ const cfgPath = () => path.join(app.getPath('userData'), 'config.json');
 function newKey() { return crypto.randomBytes(32).toString('base64url'); }
 
 function loadConfig() {
-  let saved = {};
-  try { saved = JSON.parse(fs.readFileSync(cfgPath(), 'utf8')); } catch {}
+  cfgIssue = '';
+  cfgBackup = '';
+  const problem = (ko, en) => { cfgIssue = cfgIssue || ko; console.warn(`[host] WARNING: ${cfgPath()} ${en}`); };
+  let text = null, saved = {}, keyEnc = '';
+  try { text = fs.readFileSync(cfgPath(), 'utf8'); } catch (e) { if (e.code !== 'ENOENT') problem(`설정 파일을 읽을 수 없습니다 (${e.code || e.message}).`, `cannot be read (${e.code || e.message})`); }
+  if (text !== null) {
+    const body = text.replace(/^\uFEFF/, ''); // Notepad and PowerShell 5.1 (Set-Content -Encoding UTF8) start the file with a BOM
+    try {
+      saved = JSON.parse(body);
+      if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('not an object');
+      keyEnc = typeof saved.keyEnc === 'string' ? saved.keyEnc : '';
+      if (!keyEnc) problem('설정 파일에 접속 키가 없습니다.', 'has no access key');
+    } catch (e) {
+      saved = {};
+      // Only where the mistake is: the parser's message can quote the file, and the file holds the key.
+      const at = /position (\d+)/.exec(e.message), line = at ? body.slice(0, Number(at[1])).split('\n').length : 0;
+      problem(`설정 파일이 올바른 JSON 형식이 아닙니다${line ? ` (${line}번째 줄 근처)` : ''}.`, `is not valid JSON${line ? ` (near line ${line})` : ''}`);
+      // The key alone can usually still be found, and remote access then goes on as before.
+      keyEnc = (/"keyEnc"\s*:\s*"([A-Za-z0-9+/=]+)"/.exec(body) || [])[1] || '';
+    }
+  }
   cfg = { ...DEFAULTS, ...saved };
   delete cfg.keyEnc;
   savedCfg = { ...saved };
@@ -314,18 +386,81 @@ function loadConfig() {
     console.warn(`[host] WARNING: no OS keyring (${safeStorage.getSelectedStorageBackend()}): the access key in ${cfgPath()} is not encrypted, only obscured; the file is readable by this user only`);
   }
   let key = null;
-  if (saved.keyEnc && safeStorage.isEncryptionAvailable()) {
-    try { key = safeStorage.decryptString(Buffer.from(saved.keyEnc, 'base64')); } catch {}
+  if (keyEnc) {
+    try { if (safeStorage.isEncryptionAvailable()) key = safeStorage.decryptString(Buffer.from(keyEnc, 'base64')); } catch {}
+    if (!/^[A-Za-z0-9_-]{43}$/.test(key || '')) { // 32 bytes, base64url, as newKey() makes them
+      key = null;
+      problem(process.platform === 'win32'
+        ? '설정 파일의 접속 키를 이 Windows 계정으로 풀 수 없습니다 (다른 PC에서 옮겨 온 프로필이거나, 관리자가 계정 암호를 초기화한 경우 등).'
+        : '설정 파일의 접속 키를 풀 수 없습니다 (키링이 잠겨 있으면 잠금을 푼 뒤 호스트를 다시 시작하세요).', 'holds an access key that cannot be decrypted');
+    }
   }
-  if (!key) { key = newKey(); saveConfig(key); }
-  cfg.key = key;
+  if (!key && text === null && !cfgIssue) { // the first start: no file yet
+    try { const k = newKey(); saveConfig(k); key = k; } catch (e) { problem(`새 접속 키를 저장하지 못했습니다 (${e.code || e.message}).`, `could not be written (${e.code || e.message})`); }
+  }
+  if (cfgIssue && text !== null) { try { cfgBackup = backupConfig(); } catch (e) { console.error('config backup', e.message); } }
+  cfg.key = key; // null: there is no usable key (askForKey)
+}
+// A copy of the config file as it is now, unless one with the same content is there already. Throws
+// when the file is there but cannot be read: then it must not be replaced either.
+function backupConfig() {
+  let bytes;
+  try { bytes = fs.readFileSync(cfgPath()); } catch (e) { if (e.code === 'ENOENT') return ''; throw e; }
+  const dir = path.dirname(cfgPath());
+  for (const n of fs.readdirSync(dir)) {
+    if (!n.startsWith('config.json.bad-')) continue;
+    try { if (fs.readFileSync(path.join(dir, n)).equals(bytes)) return path.join(dir, n); } catch {}
+  }
+  const file = `${cfgPath()}.bad-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  fs.writeFileSync(file, bytes, { flag: 'wx', mode: 0o600 }); // it holds the key just as the file does
+  return file;
+}
+// Written to a new file that then takes the old one's place: a crash, a full disk or a power cut
+// midway leaves the old file as it was, never half of one (which would cost the key).
+function writeConfigFile(text) {
+  const file = cfgPath(), tmp = file + '.tmp';
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  try { fs.unlinkSync(tmp); } catch {}
+  const fd = fs.openSync(tmp, 'wx', 0o600);
+  try { fs.writeFileSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  if (process.platform !== 'win32') fs.chmodSync(tmp, 0o600);
+  for (let i = 0; ; i++) {
+    try { fs.renameSync(tmp, file); return; } catch (e) {
+      // Windows refuses while another program (a virus scanner) has the old file open for a moment.
+      if (i >= 10 || !['EPERM', 'EACCES', 'EBUSY'].includes(e.code)) { try { fs.unlinkSync(tmp); } catch {} throw e; }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    }
+  }
 }
 function saveConfig(key) {
   if (!safeStorage.isEncryptionAvailable()) throw new Error('OS 암호화 저장소(DPAPI)를 사용할 수 없습니다');
+  if (cfgIssue) cfgBackup = backupConfig(); // the file as it was, before it is replaced
   const out = { ...savedCfg, keyEnc: safeStorage.encryptString(key).toString('base64') }; // DPAPI: only this Windows user can decrypt
-  fs.mkdirSync(path.dirname(cfgPath()), { recursive: true });
-  fs.writeFileSync(cfgPath(), JSON.stringify(out, null, 2));
-  if (process.platform !== 'win32') fs.chmodSync(cfgPath(), 0o600);
+  writeConfigFile(JSON.stringify(out, null, 2));
+  cfgIssue = '';
+}
+// There is no usable key (cfgIssue says why): ask the person at this PC. A new key is made only when
+// they ask for one, since every client that has the old key then loses access.
+async function askForKey() {
+  for (;;) {
+    const { response } = await dialog.showMessageBox({
+      type: 'error', title: 'My Remote Host', noLink: true, buttons: ['다시 시도', '새 키 발급', '종료'], defaultId: 0, cancelId: 2,
+      message: '접속 키를 불러오지 못했습니다',
+      detail: `${cfgIssue}\n\n${cfgPath()}${cfgBackup ? `\n원래 파일의 사본: ${path.basename(cfgBackup)}` : ''}\n\n` +
+        "원인을 고쳤으면 '다시 시도'를 누르세요. '새 키 발급'은 새 접속 키를 만들어 저장합니다. 기존 키로는 더 이상 접속할 수 없으므로 새 키를 클라이언트에 다시 알려 주어야 합니다.",
+    });
+    if (response === 0) { loadConfig(); if (cfg.key) return true; continue; }
+    if (response !== 1) return false;
+    try {
+      const key = newKey();
+      saveConfig(key);
+      cfg.key = key;
+      return true;
+    } catch (e) {
+      cfgIssue = `새 키를 저장하지 못했습니다 (${e.code || e.message}).`;
+      console.error('[host] saving a new key failed:', e.code || e.message);
+    }
+  }
 }
 
 const builder = require('./build-client');
@@ -379,7 +514,19 @@ function icon(live) {
   }
   return nativeImage.createFromBitmap(buf, { width: n, height: n });
 }
+function setTray(live) {
+  if (tray) { tray.setImage(icon(live)); tray.setToolTip('My Remote Host — ' + (live ? '원격 접속 중' : '대기 중')); }
+}
 function showWindow() { if (win) { win.show(); win.focus(); } }
+// 키 복사 puts the key on the clipboard. A minute later it is taken off again if it is still there (it
+// is only compared, never logged), so that it does not go along with whatever is pasted next.
+let keyOnClip = null; // { key, timer }
+function clearKeyClip() {
+  if (!keyOnClip) return;
+  clearTimeout(keyOnClip.timer);
+  try { if (clipboard.readText() === keyOnClip.key) clipboard.clear(); } catch {}
+  keyOnClip = null;
+}
 
 // A running host keeps the code it started with. Launching it again while it is
 // running only reaches the old process, so compare the code on disk with what
@@ -403,6 +550,25 @@ function createWindow() {
   win.loadFile('host.html');
   // Closing the window keeps the host running in the tray; quit from the tray menu.
   win.on('close', (e) => { if (!quitting && !ISOLATED) { e.preventDefault(); win.hide(); } });
+  // The page goes away without its own teardown when it reloads or its process ends (see pageGone).
+  // The signaling channel lives in the page, so after a crash the page is loaded again, or the host
+  // could not be reached until someone at this PC restarted it; when it keeps crashing, after a pause
+  // that doubles each time (1 s, 2 s, 4 s, ... at most a minute; crashes counted over ten minutes).
+  win.webContents.on('did-start-navigation', (e) => { if (e.isMainFrame && !e.isSameDocument) pageGone(); });
+  win.webContents.on('render-process-gone', (_e, d) => {
+    console.error(`[host] the host page's process ended (${d.reason}, exit code ${d.exitCode})`);
+    pageGone();
+    if (quitting || win.isDestroyed()) return;
+    const now = Date.now();
+    crashes = crashes.filter((t) => now - t < 10 * 60e3).concat(now);
+    clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(reloadCrashedPage, Math.min(60e3, 1000 * 2 ** (crashes.length - 1)));
+  });
+}
+let crashes = [], reloadTimer = null;
+function reloadCrashedPage() {
+  clearTimeout(reloadTimer);
+  if (win && !win.isDestroyed() && win.webContents.isCrashed()) win.loadFile('host.html');
 }
 function createTray() {
   tray = new Tray(icon(false));
@@ -419,11 +585,13 @@ function createTray() {
 
 if (!ISOLATED && !app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('second-instance', () => { if (codeStamp() !== startedStamp) restart(); else showWindow(); });
-  app.on('before-quit', () => { quitting = true; input.reset(); setCursorsHidden(false); });
+  // Started again: after an update restart; while the page waits to be loaded again after a crash, at once.
+  app.on('second-instance', () => { if (codeStamp() !== startedStamp) restart(); else { reloadCrashedPage(); showWindow(); } });
+  app.on('before-quit', () => { quitting = true; input.reset(); setCursorsHidden(false); clearKeyClip(); });
   process.on('exit', () => { if (cursorsHidden) input.restoreCursors(); });
   app.whenReady().then(async () => {
     loadConfig();
+    if (!cfg.key && !(await askForKey())) { quitting = true; app.quit(); return; }
     cfg.viewOnly = input.viewOnlyReason(); // '' = input from the client is injected here
     if (cfg.viewOnly) console.warn(`[host] WARNING: the host is view-only, input from the client is not injected: ${cfg.viewOnly}`);
     if (BENCH) Object.assign(cfg, benchCfg.cfg || {});
@@ -451,13 +619,7 @@ else {
         fs.appendFileSync(diagFile, JSON.stringify({ t: new Date().toISOString(), ...entry }) + '\n');
       } catch {}
     };
-    // The handlers below and the client's input all run on this process's main thread: one call that
-    // blocks holds up every click behind it. Calls that took long, and pauses of the thread itself,
-    // are counted (names and milliseconds only) and written with the next diagnostics entry, so that a
-    // stall can be traced to its cause afterwards.
-    const slow = {};
-    const note = (what, ms) => { const e = slow[what] || (slow[what] = { n: 0, ms: 0, max: 0 }); e.n++; e.ms += ms; e.max = Math.max(e.max, ms); };
-    const timed = (what, fn) => { const t0 = performance.now(); try { return fn(); } finally { const ms = performance.now() - t0; if (ms > 50) note(what, ms); } };
+    // Pauses of the main thread itself (see timed() above).
     let tick = performance.now();
     setInterval(() => { const now = performance.now(), late = now - tick - 500; tick = now; if (late > 1000) note('paused', late); }, 500);
     const takeSlow = () => {
@@ -490,14 +652,8 @@ else {
       if (ISOLATED && !process.argv.includes('--dragout-check')) return { kind: 'none', why: 'not in a local trial' };
       try { return await dragOut(button | 0); } catch (e) { console.error('drag out', e); try { input.buttonUp(button | 0); } catch {} return { kind: 'none', why: 'error' }; }
     });
-    ipcMain.handle('drag-file-read', (_e, id, offset, len) => {
-      const f = dragFiles.get(String(id));
-      if (!f || !(offset >= 0) || !(len > 0) || len > 1 << 20) return null;
-      try {
-        if (f.fd == null) f.fd = fs.openSync(f.path, 'r');
-        const buf = Buffer.alloc(len), n = fs.readSync(f.fd, buf, 0, len, offset);
-        return n === len ? buf : buf.subarray(0, n);
-      } catch (e) { console.error('drag file read', e); return null; }
+    ipcMain.handle('drag-file-read', async (_e, id, offset, len) => {
+      try { return await readDragFile(id, offset, len); } catch (e) { console.error('drag file read', e.message); return null; }
     });
     ipcMain.on('drag-file-done', (_e, id) => closeDragFiles(id == null ? null : String(id)));
     const guard = (what, fn, none) => async (...a) => { try { return await fn(...a); } catch (e) { console.error(what, e.message); return none; } };
@@ -517,19 +673,33 @@ else {
     });
     ipcMain.on('clip-write', (_e, text) => { if (cfg.clipboard && typeof text === 'string' && text.length <= CLIP_MAX) timed('clip-write', () => clipboard.writeText(text)); });
     ipcMain.on('session', (_e, live) => {
-      if (tray) { tray.setImage(icon(!!live)); tray.setToolTip('My Remote Host — ' + (live ? '원격 접속 중' : '대기 중')); }
+      setTray(!!live);
       if (live && !SELFTEST && !BENCH && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: '원격 접속이 시작되었습니다.' }).show();
     });
-    ipcMain.handle('copy-key', () => { clipboard.writeText(cfg.key); return true; });
+    ipcMain.handle('copy-key', () => {
+      if (keyOnClip) clearTimeout(keyOnClip.timer);
+      clipboard.writeText(cfg.key);
+      keyOnClip = { key: cfg.key, timer: setTimeout(clearKeyClip, 60e3) };
+      return true;
+    });
     ipcMain.handle('regen-key', async () => {
       const r = await dialog.showMessageBox(win, {
         type: 'warning', buttons: ['취소', '새 키 발급'], defaultId: 0, cancelId: 0,
-        message: '접속 키를 새로 발급할까요?', detail: '기존 키로는 더 이상 접속할 수 없게 됩니다.',
+        message: '접속 키를 새로 발급할까요?',
+        detail: '기존 키로는 더 이상 접속할 수 없게 됩니다.' + (cfgIssue ? '\n\n설정 파일을 읽지 못한 상태라 새 파일에는 접속 키만 저장됩니다. 원래 파일은 사본으로 남겨 둡니다.' : ''),
       });
       if (r.response !== 1) return false;
-      cfg.key = newKey();
-      saveConfig(cfg.key);
-      win.reload();
+      const key = newKey();
+      try { saveConfig(key); } catch (e) {
+        console.error('[host] saving a new key failed:', e.code || e.message);
+        dialog.showMessageBox(win, { type: 'error', message: '새 키를 저장하지 못했습니다', detail: `${e.code || e.message}\n\n기존 키를 그대로 씁니다.` }).catch(() => {});
+        return false;
+      }
+      cfg.key = key; // only once it is saved
+      // The session under way ends first, and its client is told not to come back (its key no longer
+      // works); then the page starts over with the new key.
+      win.webContents.send('kick');
+      setTimeout(() => { if (win && !win.isDestroyed()) win.reload(); }, 400);
       return true;
     });
     ipcMain.handle('export-client', async () => {
@@ -541,6 +711,14 @@ else {
     });
 
     createWindow();
+    // A config file with a mistake in it that still held a usable key: this host runs on the default
+    // settings until it is fixed, and says so. (Without a usable key it asked before starting.)
+    if (cfgIssue) {
+      dialog.showMessageBox({
+        type: 'warning', title: 'My Remote Host', noLink: true, message: '설정 파일을 읽지 못해 기본 설정으로 실행합니다',
+        detail: `${cfgIssue}\n\n접속 키는 파일에서 찾아 그대로 쓰므로 원격 접속은 계속 됩니다. 파일은 바꾸지 않았습니다. 고친 뒤 트레이 메뉴의 '다시 시작'을 누르면 설정이 적용됩니다.\n\n${cfgPath()}`,
+      }).catch(() => {});
+    }
     // Monitor plugged/unplugged or resolution changed: the renderer renegotiates the session.
     let displayTimer = null;
     const displaysChanged = () => {
