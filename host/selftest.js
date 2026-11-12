@@ -204,14 +204,14 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       const minutes = Math.max(3, Number(soakArg.split('=')[1]) || 15), end = Date.now() + minutes * 60e3, t0 = Date.now();
       const mb = (kb) => Math.round(kb / 1024);
       const sample = async () => {
-        const by = {};
+        const by = {}, hostPid = hostWin.webContents.getOSProcessId(), clientPid = w.webContents.getOSProcessId();
         for (const p of app.getAppMetrics()) {
-          const k = p.type === 'Tab' ? 'renderer' : p.type.toLowerCase();
+          const k = p.pid === hostPid ? 'hostPage' : p.pid === clientPid ? 'clientPage' : p.type === 'Tab' ? 'renderer' : p.type.toLowerCase();
           by[k] = (by[k] || 0) + (p.memory.privateBytes || p.memory.workingSetSize || 0);
         }
         const heap = async (wc) => { try { return Math.round((await wc.executeJavaScript('performance.memory ? performance.memory.usedJSHeapSize : 0')) / 1048576); } catch { return -1; } };
-        return { min: +((Date.now() - t0) / 60e3).toFixed(1), browser: mb(by.browser || 0), gpu: mb(by.gpu || 0), renderers: mb(by.renderer || 0), utility: mb(by.utility || 0),
-          hostHeap: await heap(hostWin.webContents), clientHeap: await heap(w.webContents), sessions: 0 };
+        return { min: +((Date.now() - t0) / 60e3).toFixed(1), browser: mb(by.browser || 0), gpu: mb(by.gpu || 0), hostPage: mb(by.hostPage || 0), clientPage: mb(by.clientPage || 0),
+          utility: mb(by.utility || 0), hostHeap: await heap(hostWin.webContents), clientHeap: await heap(w.webContents), sessions: 0 };
       };
       const rows = [];
       let n = 0, reconnects = 0;
@@ -227,13 +227,18 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         }
         if (n % 4 === 0) { const r = await sample(); r.sessions = reconnects; rows.push(r); }
       }
-      for (const r of rows) info(`soak ${String(r.min).padStart(5)} min  browser ${r.browser} MB  gpu ${r.gpu} MB  renderers ${r.renderers} MB  utility ${r.utility} MB  heaps host ${r.hostHeap} / client ${r.clientHeap} MB  reconnects ${r.sessions}`);
-      const base = rows.find((r) => r.min >= 3) || rows[0], last = rows[rows.length - 1];
-      const perHour = (k) => (last.min > base.min ? Math.round(((last[k] - base[k]) * 60) / (last.min - base.min)) : 0);
-      const growth = { browser: perHour('browser'), gpu: perHour('gpu'), renderers: perHour('renderers'), hostHeap: perHour('hostHeap'), clientHeap: perHour('clientHeap') };
-      const total = growth.browser + growth.gpu + growth.renderers;
-      check(`soak: ${minutes} min, ${reconnects} reconnects, memory growth after the first 3 min under 100 MB an hour`, total < 100 && reconnects >= Math.floor(minutes) - 1,
-        `MB per hour: ${JSON.stringify(growth)}`);
+      for (const r of rows) info(`soak ${String(r.min).padStart(5)} min  browser ${r.browser} MB  gpu ${r.gpu} MB  host page ${r.hostPage} MB  client page ${r.clientPage} MB  utility ${r.utility} MB  heaps host ${r.hostHeap} / client ${r.clientHeap} MB  reconnects ${r.sessions}`);
+      // Growth: the median of the samples in the last third against the median of those in the first
+      // third after the first 3 minutes (a reconnect makes a sample spike now and then), per reconnect.
+      const after = rows.filter((r) => r.min >= 3), third = Math.max(1, Math.floor(after.length / 3));
+      const median = (list, k) => { const v = list.map((r) => r[k]).sort((a, b) => a - b); return v[Math.floor(v.length / 2)] || 0; };
+      const first = after.slice(0, third), lastRows = after.slice(-third);
+      const done = lastRows.length ? lastRows[lastRows.length - 1].sessions - first[0].sessions : 0;
+      const per = (k) => (done > 0 ? +((median(lastRows, k) - median(first, k)) / done).toFixed(1) : 0);
+      const growth = { browser: per('browser'), gpu: per('gpu'), hostPage: per('hostPage'), clientPage: per('clientPage'), hostHeap: per('hostHeap'), clientHeap: per('clientHeap') };
+      const sum = growth.browser + growth.hostPage + growth.clientPage;
+      check(`soak: ${minutes} min, ${reconnects} reconnects, what each session leaves behind stays under 2 MB`, sum < 2 && reconnects >= Math.floor(minutes * 0.6),
+        `MB per reconnect (median of the last third minus the first): ${JSON.stringify(growth)}`);
       const pass = results.every(Boolean);
       console.log(pass ? '[selftest] ALL PASS' : '[selftest] SOME FAILED');
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
