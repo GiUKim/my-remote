@@ -877,6 +877,19 @@ the keyring path in the host itself (a throwaway gnome-keyring was tried with a 
 `npm install` itself, Ubuntu 23.10+ (the sandbox message). macOS: no input backend; the view-only path
 was not run anywhere.
 
+Verified for the one-step Linux install (2026-11-13, the server, Ubuntu 22.04 with its own Node 12 on PATH,
+a GitHub-style zip from `git archive` unzipped into a fresh folder, HOME pointed into that folder, Xvfb):
+`./start-host.sh --localtest` in a terminal downloaded Node 22.23.5 into `tools/node` (SHA-256 checked),
+ran npm install and Electron's download, added the two app menu entries and started the host (11 s on that
+network); the same with no terminal and no session bus ran the setup into its log and started; with a
+session bus (`dbus-run-session`) gnome-terminal opened and ran the setup; `./setup.sh` afterwards passed
+the self-test; and a Windows client controlled that freshly installed host over the LAN (below: video,
+pointer, click, keys, Korean text). With a session bus and an empty HOME the host then waited on GNOME
+keyring's "new keyring password" prompt (gcr-prompter): the asynchronous safeStorage calls use the Secret
+Service when one answers, even where `getSelectedStorageBackend()` said `basic_text` (no
+XDG_CURRENT_DESKTOP). On a real desktop the login keyring is unlocked at a password login; with
+auto-login it asks once. Not tried: a real Ubuntu desktop, 24.04, the file manager's "Run as a Program".
+
 Verified across the two OSes over the LAN (2026-11-13, Electron 45): a Windows client (this PC, the real
 page in a hidden window, throwaway profile) controlling a Linux host (the server: `--localtest` on Xvfb,
 its local relay tunnelled over ssh, its own client app stopped): a direct connection (host candidates,

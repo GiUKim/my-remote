@@ -227,6 +227,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 | Ubuntu 23.10 이후(24.04 포함)의 Chromium 샌드박스 제한 | 설치 중에 sudo로 샌드박스 도우미를 한 번 설치할지 묻습니다(권장). 설치하지 않으면 `MY_REMOTE_NO_SANDBOX=1 ./start-host.sh`로 실행합니다 |
 | 데스크톱 라이브러리(GTK 3 등)가 빠진 최소 설치 | 빠진 것과 설치 명령(예: `sudo apt install libgtk-3-0 libnss3 libasound2`)이 나옵니다 |
 | curl과 wget이 모두 없음 | `sudo apt install wget`을 안내합니다(Ubuntu 데스크톱에는 wget이 기본으로 있습니다) |
+| 자동 로그인을 쓰는 PC | 접속 키를 키링에 암호화해 두므로, 시작할 때 "로그인 키링 잠금 해제" 창이 뜰 수 있습니다. 로그인 비밀번호를 넣으면 이어서 뜹니다(비밀번호로 로그인하면 이미 열려 있어 뜨지 않습니다) |
 
 ```bash
 ./start-host.sh       # 호스트 (처음엔 설치부터). 백그라운드로 뜨고, 출력은 $XDG_RUNTIME_DIR/my-remote-host.log
