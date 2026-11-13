@@ -198,7 +198,7 @@ $('hk').checked = hotkeysOn;
 window.__rd = { state: 'idle', monitors: 0, frames: 0, fps: {}, res: {}, cursor: '', clipRx: false, audio: false, connects: 0, pastes: 0, host: null, dragouts: 0, files: [], keepFiles: false,  // files/keepFiles: the self-test looks at received files instead of saving them
   ptr: { cancel: 0, lost: 0, drag: 0, released: 0 }, others: null, // ptr: pointer streams the browser broke off, and what was done about it
   xfer: { out: 0, late: 0, files: 0, placed: 0, text: 0, none: 0, failed: 0, why: '', how: '', inStart: 0, inDone: 0, inFailed: 0, inHow: '', clipNotes: 0, clipGets: 0 }, trace: null,
-  stillOver: false }; // stillOver: files dragged over the picture do not move the host's pointer (a test on one PC, where both pointers are one) // xfer: things dragged out; trace: the self-test sees what would be sent
+  stillOver: false, lock: '' }; // lock: what the host says about its screen ('', 'lock', 'secure'); stillOver: files dragged over the picture do not move the host's pointer (a test on one PC, where both pointers are one) // xfer: things dragged out; trace: the self-test sees what would be sent
 let hostDrag = false; // the host says a drag-and-drop is under way there (a file, selected text, ...)
 let drop = null;      // the last thing dragged out to this PC: where it was let go, what has arrived
 
@@ -245,6 +245,7 @@ function makeView(win, root, isMain) {
   const t = (view.toastEl = win.document.createElement('div'));
   t.style.cssText = 'position:absolute;left:50%;top:28px;transform:translateX(-50%);z-index:4;display:none;padding:8px 16px;border-radius:8px;background:rgba(20,23,28,.92);border:1px solid #3a4350;color:#e6e8eb;font:14px "Segoe UI","Malgun Gothic",sans-serif;white-space:nowrap;pointer-events:none';
   root.appendChild(t);
+  if (hostLock) setTimeout(showLock); // a window opened while the host's screen is locked says so too
   // The browser's own text selection and drag-and-drop must never start in this window: a drag that
   // the browser takes over cancels the pointer in the middle of the host's drag (the window being
   // moved there stops, and the host never hears that the button was let go).
@@ -1610,8 +1611,36 @@ window.addEventListener('pagehide', () => { for (const v of liveViews()) if (!v.
 // session ends, and a new session reports a drag only once one starts: a drag, a held button or a
 // drop left over from this one would mislead the next (moves stopping at the window edge, a release
 // for a button pressed in the old session, "nothing to bring over").
+// The host's screen is locked, or a secure prompt (UAC) has it: those cannot be seen or controlled from
+// here, and the picture stops at what was there before. Every window says so over the picture.
+let hostLock = ''; // '', 'lock' or 'secure' (see 'lock' in the host's host.js)
+const LOCK_TEXT = {
+  lock: ['호스트 PC가 잠겨 있습니다', '잠금 화면은 원격으로 보이지도 조작되지도 않습니다. 호스트 PC 앞에서 잠금을 풀면 화면이 이어집니다.'],
+  secure: ['지금은 호스트 화면을 볼 수 없습니다', '권한 확인 창(UAC)이나 잠금 화면 같은 보안 화면은 원격으로 보이지도 조작되지도 않습니다. 호스트 PC 앞에서 직접 응답해야 합니다.'],
+};
+function showLock() {
+  const text = LOCK_TEXT[hostLock];
+  for (const view of liveViews()) {
+    let el = view.lockEl;
+    if (!el && !text) continue;
+    if (!el) {
+      const d = view.win.document;
+      el = view.lockEl = d.createElement('div');
+      el.style.cssText = 'position:absolute;inset:0;z-index:3;display:none;align-items:center;justify-content:center;background:rgba(8,10,14,.55);pointer-events:none';
+      const box = d.createElement('div'), head = d.createElement('div'), body = d.createElement('div');
+      box.style.cssText = 'max-width:min(88%,560px);padding:16px 22px;border-radius:10px;background:rgba(20,23,28,.94);border:1px solid #3a4350;color:#e6e8eb;font:14px/1.6 "Segoe UI","Malgun Gothic",sans-serif;text-align:center';
+      head.style.cssText = 'font-size:18px;font-weight:600;margin-bottom:6px';
+      box.append(head, body);
+      el.appendChild(box);
+      view.root.insertBefore(el, view.toastEl); // under the toasts
+    }
+    el.style.display = text ? 'flex' : 'none';
+    if (text) { el.firstChild.firstChild.textContent = text[0]; el.firstChild.lastChild.textContent = text[1]; }
+  }
+}
 function forgetSession() {
   hostDrag = false; held = 0; lastAt = null;
+  if (hostLock) { hostLock = ''; window.__rd.lock = ''; showLock(); } // the next session says how the screen is
   for (const v of views) { v.leftAt = 0; v.dragOut = false; v.cmdKeys.clear(); }
   applyCursor();
   const r = receiving;
@@ -1670,6 +1699,13 @@ function onHostMessage(data) {
   }
   else if (m.t === 'hs') { hostStat = m; window.__rd.host = m; }
   else if (m.t === 'drag') hostDrag = !!m.on;
+  else if (m.t === 'lock') {
+    const was = hostLock;
+    hostLock = m.on ? (m.why === 'secure' ? 'secure' : 'lock') : '';
+    window.__rd.lock = hostLock;
+    showLock();
+    if (was && !hostLock) toast(mainView, '호스트 화면이 다시 보입니다', 2500);
+  }
   else if (m.t === 'others') {
     const was = window.__rd.others || {};
     window.__rd.others = { crd: !!m.crd, outline: !!m.outline };

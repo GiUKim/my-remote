@@ -1,4 +1,4 @@
-const { app, shell, BrowserWindow, ipcMain, desktopCapturer, screen, safeStorage, dialog, powerSaveBlocker, clipboard, Tray, Menu, Notification, nativeImage } = require('electron');
+const { app, shell, BrowserWindow, ipcMain, desktopCapturer, screen, safeStorage, dialog, powerSaveBlocker, powerMonitor, clipboard, Tray, Menu, Notification, nativeImage } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -684,6 +684,13 @@ else {
       try { outline = !input.dragFullWindows(); crd = (await input.processRunning('remoting_desktop.exe')) === true; } catch (e) { console.error('others', e.message); }
       return { crd, outline };
     });
+    // The lock screen is on a desktop this program cannot see or control; the client is told
+    // ('lock' in host.js). Windows and macOS report locking; elsewhere it is never reported.
+    let screenLocked = false;
+    const lockChanged = (on) => { screenLocked = on; if (win && !win.isDestroyed()) win.webContents.send('host-lock', on); };
+    powerMonitor.on('lock-screen', () => lockChanged(true));
+    powerMonitor.on('unlock-screen', () => lockChanged(false));
+    ipcMain.handle('host-locked', () => { try { return powerMonitor.getSystemIdleState(1) === 'locked'; } catch { return screenLocked; } });
     ipcMain.handle('dragging', () => timed('dragging', () => { try { return input.dragging(); } catch { return false; } }));
     // Asked about 30 times a second while a client is connected. `last`: the cursor the page already
     // has; then its picture (a data URL of up to tens of KB) is not copied over again.

@@ -674,6 +674,27 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       else if (!h.native) info('sound take-over not checked: native capture is not in use');
       else check('a new session takes the system sound over instead of capturing again', h.reused > 0 && h.audio, JSON.stringify(h));
     }
+    // The host's screen locked and unlocked (what main sends on Windows' lock events), and a screen the
+    // native capturer cannot read for a while (a UAC prompt): the client says so over the picture.
+    {
+      const lockShown = () => js(`!!(mainView.lockEl && mainView.lockEl.style.display === 'flex')`);
+      hostWin.webContents.send('host-lock', true);
+      const [on] = await until((x) => x.lock === 'lock', 6);
+      const shown = await lockShown();
+      hostWin.webContents.send('host-lock', false);
+      const [off] = await until((x) => x.lock === '', 6);
+      const gone = !(await lockShown());
+      let secure = 'not checked (native capture not in use)';
+      if (await hostWin.webContents.executeJavaScript('!!(session && session.native && session.native[0])')) {
+        await hostWin.webContents.executeJavaScript(`nativePort.onmessage({ data: { t: 'paused', i: 0, on: true, error: 'self-test' } }); 1`);
+        const [sec] = await until((x) => x.lock === 'secure', 6);
+        await hostWin.webContents.executeJavaScript(`nativePort.onmessage({ data: { t: 'paused', i: 0, on: false, error: '' } }); 1`);
+        const [back] = await until((x) => x.lock === '', 6);
+        secure = sec && back ? 'secure prompt shown and cleared' : `secure prompt ${sec ? 'shown' : 'not shown'}, ${back ? 'cleared' : 'not cleared'}`;
+      }
+      check('the client says when the host screen is locked or behind a secure prompt, and when it is back', on && shown && off && gone && !/not (shown|cleared)/.test(secure),
+        `lock ${on && shown ? 'shown' : 'not shown'}, ${off && gone ? 'cleared' : 'not cleared'}; ${secure}`);
+    }
 
     if (INPUT_CHECK) {
       if (process.platform === 'linux') await require('./inputcheck').run({ check, info, js, until, dragOut });

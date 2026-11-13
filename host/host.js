@@ -11,6 +11,30 @@ function log(s) {
 }
 function status(text, cls) { $('status').textContent = text; $('dot').className = 'dot ' + cls; }
 
+// ---- the screen locked or behind a secure prompt ---------------------------------------------
+// The lock screen and UAC prompts are on a desktop this page can neither see nor control. The client
+// is told ('lock'), so that a picture that stopped is not taken for a hang. `lock`: Windows reports
+// the session locked (powerMonitor in main.js); `paused`: native capture loops that could not read
+// their screen for more than a moment (the lock screen, a UAC prompt, another user's session; a
+// mode change for a moment).
+const screenGone = { lock: false, paused: new Set(), timers: new Map(), sentFor: null, sent: null };
+const lockReason = () => (screenGone.lock ? 'lock' : screenGone.paused.size ? 'secure' : '');
+function sendLock(force) {
+  const s = session, dc = s && s.dc;
+  if (!dc || dc.readyState !== 'open') return;
+  const why = lockReason();
+  if (!force && screenGone.sentFor === s && screenGone.sent === why) return;
+  screenGone.sentFor = s; screenGone.sent = why;
+  try { dc.send(JSON.stringify(why ? { t: 'lock', on: true, why } : { t: 'lock', on: false })); } catch {}
+}
+function screenPaused(i, on) {
+  clearTimeout(screenGone.timers.get(i));
+  screenGone.timers.delete(i);
+  if (on) screenGone.timers.set(i, setTimeout(() => { screenGone.paused.add(i); sendLock(); }, 1500));
+  else if (screenGone.paused.delete(i)) sendLock();
+}
+function forgetPaused() { for (const t of screenGone.timers.values()) clearTimeout(t); screenGone.timers.clear(); screenGone.paused.clear(); }
+
 // ---- native capture (optional) -----------------------------------------------------
 // The preload script runs the native capturer and sends each monitor's frames over a message
 // port (see preload.js); here they go into a MediaStreamTrackGenerator, which the engine encodes
@@ -34,6 +58,7 @@ function nativeChannel() {
       // after a mode change or a reset of the graphics card. It keeps trying by itself: the session
       // stays and the client keeps the last picture meanwhile.
       log(m.on ? `모니터 ${m.i + 1}: 지금은 화면을 읽을 수 없습니다 (${m.error}) — 다시 읽을 수 있게 되면 이어서 보냅니다` : `모니터 ${m.i + 1}: 화면을 다시 읽습니다`);
+      screenPaused(m.i, !!m.on); // the client is told when it lasts (see sendLock)
     } else if (m.t === 'failed' && session && session.native && session.native[m.i]) {
       // A monitor in HDR mode, or one the capturer could not get back (GIVE_UP_MS in
       // native/capture.cpp): go on with the engine's capturer. Only a loop of this session counts:
@@ -89,6 +114,7 @@ function teardown(reason, silent) {
   if (!session) return;
   const s = session;
   session = null;
+  forgetPaused(); // the next session's capture loops report for themselves
   if (s.native && nativePort) nativePort.postMessage({ t: 'close' });
   for (const t of s.timers) clearInterval(t);
   clearTimeout(s.dropTimer);
@@ -398,6 +424,8 @@ async function sendFiles(s, files) {
 
 function startChannelTasks(s, dc) {
   const tx = (o) => { if (dc.readyState === 'open') dc.send(JSON.stringify(o)); };
+  // Whether the screen is locked right now (the session may have started on a locked PC).
+  api.hostLocked().then((v) => { screenGone.lock = !!v; }, () => {}).then(() => { if (session === s) sendLock(true); });
   // Cursor shape (or picture) -> the client draws the cursor itself.
   // Also whether something is being dragged here, so the client knows what leaving its window means.
   let cur = null;
@@ -690,6 +718,12 @@ async function onMessage(m) {
   $('regen').onclick = () => api.regenKey();
   $('kick').onclick = () => teardown('사용자가 끊음');
   api.onKick(() => teardown('사용자가 끊음'));
+  api.onHostLock((on) => {
+    if (screenGone.lock === on) return;
+    screenGone.lock = on;
+    log(on ? '이 PC가 잠겼습니다 — 잠금 화면은 원격으로 보이지 않습니다' : '이 PC의 잠금이 풀렸습니다');
+    sendLock();
+  });
   api.onDisplaysChanged(async () => {
     const s = session;
     if (!s) return;
