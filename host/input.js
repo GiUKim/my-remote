@@ -22,6 +22,9 @@ const NEUTRAL = {
   displayColor: () => [],
   captureClass: () => '',
   dragging: () => false,
+  // The pointer a pixel aside and back while a button is held, so that a program that starts its drag only
+  // on motion (GTK 4) can, while the client holds the pointer still (dragq). X11 only; Explorer needs none.
+  nudge() {},
   dragData: async () => null, // what the drag under way carries, where the platform can ask the dragging program
   dropFiles: async () => -1, // files dropped on what is under the pointer (X11; Windows does this in shellops.dll): 1 taken, 0 not, -1 cannot
   clipboardFiles: () => [],
@@ -227,6 +230,7 @@ module.exports = {
   displayColor: backend.displayColor,
   captureClass: backend.captureClass,
   dragging: backend.dragging,
+  nudge: backend.nudge,
   dragData: backend.dragData,
   dropFiles: backend.dropFiles,
   clipboardFiles: backend.clipboardFiles,

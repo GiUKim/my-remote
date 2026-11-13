@@ -391,13 +391,16 @@ async function dragOut(s, button) {
 // The client's pointer left its windows with a button held. Whether a drag-and-drop is under way
 // here decides what that means, and a program may take a few hundred ms to start one (Explorer:
 // about 0.35 s on the test PC), so look often for a while and tell the client the moment it starts.
+// Meanwhile the client holds the host's pointer still, and a program that starts its drag only on
+// motion (GTK 4) would then never start it: every other look moves the pointer a pixel aside and back
+// first (input.nudge; X11 only).
 async function pollDrag(s, ms) {
   if (s.dragPoll) return;
   s.dragPoll = true;
   try {
     const end = performance.now() + ms;
-    while (session === s && performance.now() < end) {
-      const on = !!(await api.dragging());
+    for (let i = 0; session === s && performance.now() < end; i++) {
+      const on = !!(await api.dragging(i % 2 === 1));
       if (on !== !!s.drag) { s.drag = on; txTo(s, { t: 'drag', on }); }
       if (on) break;
       await new Promise((r) => setTimeout(r, 15));

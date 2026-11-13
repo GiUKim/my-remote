@@ -802,7 +802,9 @@ else {
     powerMonitor.on('lock-screen', () => lockChanged(true));
     powerMonitor.on('unlock-screen', () => lockChanged(false));
     ipcMain.handle('host-locked', () => { try { return powerMonitor.getSystemIdleState(1) === 'locked'; } catch { return screenLocked; } });
-    ipcMain.handle('dragging', () => timed('dragging', () => { try { return input.dragging(); } catch { return false; } }));
+    // `nudge`: the pointer a pixel aside and back first (see input.nudge), while the client waits to learn
+    // whether its drag became a drag-and-drop here.
+    ipcMain.handle('dragging', (_e, nudge) => timed('dragging', () => { try { if (nudge) input.nudge(); return input.dragging(); } catch { return false; } }));
     // Asked about 30 times a second while a client is connected. `last`: the cursor the page already
     // has; then its picture (a data URL of up to tens of KB) is not copied over again.
     ipcMain.handle('cursor', (_e, last) => timed('cursor', () => {

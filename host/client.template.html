@@ -644,6 +644,11 @@ const canDrop = () => !!(shell && shell.dropPoint && shell.dropText && shell.dro
 // every client window with a button held and the host has not yet said whether a drag-and-drop is
 // under way, the host's pointer waits where it was instead of running off along the screen edge.
 const LEAVE_WAIT = 700;
+// Until when a drag-out is being decided or carried out (let go outside every window). The host still
+// holds the button then and ends its drag itself; a move back into a window meanwhile would say that no
+// button is held, and the host would let go where its pointer waited: a drop there, onto whatever lies
+// under it (a folder: the file moved into it). So no moves are sent until the host has answered.
+let outPending = 0;
 // Note at once, before the pointer moves on, what it was let go over (the app only).
 function noteDrop(view) {
   const d = { id: null, ready: null, view };
@@ -673,6 +678,7 @@ function dropFailed(d, text) {
 }
 let receiving = null; // the files being received now: { d, abort() } (see receiveFiles)
 async function gotDragData(m) {
+  outPending = 0; // the host has ended its drag: moves may say again which buttons are held
   const d = drop;
   if (!d) return;
   if (m.kind === 'text' && typeof m.s === 'string' && m.s.length <= CLIP_MAX) {
@@ -993,6 +999,7 @@ function attachPointer(view, pane) {
     if (on) toast(view, canDrop() ? '놓으면 이 PC로 복사됩니다 (폴더·바탕화면·프로그램 위에 놓으세요)' : '놓으면 다운로드로 받습니다', 3000);
   };
   v.addEventListener('pointermove', (ev) => {
+    if (outPending > performance.now()) return; // a drag-out is being decided or carried out (see outPending)
     // A button is held and the pointer is over this PC's own desktop or programs - or, with Ctrl held,
     // anywhere off the host's picture: Ctrl takes the pointer over to this PC at once (crossed) instead
     // of on to the host's neighbouring monitor, also over this window's bar or another window of ours.
@@ -1027,6 +1034,7 @@ function attachPointer(view, pane) {
   v.addEventListener('pointerdown', (ev) => {
     const p = here(ev); if (!p) return;
     ev.preventDefault(); v.focus();
+    if (outPending > performance.now()) return; // the host still holds the button of the drag being carried out
     try { v.setPointerCapture(ev.pointerId); } catch {}
     view.pending = null;
     if (ev.button >= 0 && ev.button < 5) held |= 1 << ev.button;
@@ -1048,6 +1056,7 @@ function attachPointer(view, pane) {
       view.pending = null; view.leftAt = 0; view.crossed = false;
       startDrop(noteDrop(view));
       send({ t: 'dragout', b });
+      outPending = performance.now() + 3000; // until its answer (gotDragData)
       return;
     }
     if (outside && view.leftAt && (view.crossed || performance.now() - view.leftAt < LEAVE_WAIT)) {
@@ -1058,10 +1067,11 @@ function attachPointer(view, pane) {
       view.pending = null;
       const d = noteDrop(view), until = view.crossed ? performance.now() + 1000 : view.leftAt + LEAVE_WAIT + 300;
       view.leftAt = 0; view.crossed = false;
+      outPending = until + 3000;
       const decide = () => {
-        if (hostDrag) { window.__rd.xfer.late++; startDrop(d); send({ t: 'dragout', b }); }
+        if (hostDrag) { window.__rd.xfer.late++; startDrop(d); send({ t: 'dragout', b }); outPending = performance.now() + 3000; }
         else if (performance.now() < until) setTimeout(decide, 25);
-        else if (lastAt && was) send({ t: 'mu', b, d: lastAt.d, x: lastAt.x, y: lastAt.y });
+        else { outPending = 0; if (lastAt && was) send({ t: 'mu', b, d: lastAt.d, x: lastAt.x, y: lastAt.y }); }
       };
       decide();
       return;
@@ -2034,7 +2044,7 @@ function showLock() {
   }
 }
 function forgetSession() {
-  hostDrag = false; held = 0; lastAt = null;
+  hostDrag = false; held = 0; lastAt = null; outPending = 0;
   if (hostLock) { hostLock = ''; window.__rd.lock = ''; showLock(); } // the next session says how the screen is
   clipSeqSeen = null; // the next session starts from the clipboard as it is then (the host's text counts)
   for (const v of views) { v.leftAt = 0; v.dragOut = false; v.cmdKeys.clear(); }

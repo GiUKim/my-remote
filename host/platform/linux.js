@@ -327,6 +327,21 @@ function move(t) {
   x.f.XTestFakeMotionEvent(x.dpy, -1, Math.round(t.px), Math.round(t.py), 0);
   x.f.XFlush(x.dpy);
 }
+// While the client waits to learn whether its drag became a drag-and-drop here (dragq in host.js), the
+// pointer goes a pixel aside and back. GTK 4 (Nautilus 46) starts its drag only after a few more motion
+// events than a quick drag out of the client's window gives it before the client holds the pointer still
+// (measured: 1 or 2 moves inside the window, then out: no drag ever; 4: a drag), while Explorer starts
+// its own on a timer. Only while a button pressed through here is held.
+let nudged = 0;
+function nudge() {
+  const x = open();
+  if (!x || !held) return;
+  const r = [0], c = [0], rx = [0], ry = [0], wx = [0], wy = [0], m = [0];
+  if (!x.f.XQueryPointer(x.dpy, x.root, r, c, rx, ry, wx, wy, m)) return;
+  nudged ^= 1;
+  x.f.XTestFakeMotionEvent(x.dpy, -1, rx[0] + (nudged ? 1 : -1), ry[0], 0);
+  x.f.XFlush(x.dpy);
+}
 const XBUTTON = [1, 2, 3, 8, 9]; // left, middle, right, back, forward
 function button(b, isDown) {
   const x = open(), xb = XBUTTON[b];
@@ -651,7 +666,7 @@ function underPointer() {
 
 module.exports = {
   viewOnlyReason, hidesCursors: false, // X11 has no way to swap every program's cursor for a transparent one
-  move, button, wheel, keyOf, sendKey, typeText, maskKey,
+  move, nudge, button, wheel, keyOf, sendKey, typeText, maskKey,
   cursorState, cursorBitmap, dragging, dragData, dropFiles, lastDropInfo, clipSeq, clipboardFiles, setClipboardFiles, underPointer,
   keyCodes: Object.keys(EVDEV), // for the self-test's --input-check
 };

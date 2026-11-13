@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld('hostApi', {
   dragFileRead: (id, offset, len) => ipcRenderer.invoke('drag-file-read', id, offset, len),
   dragFileDone: (id) => ipcRenderer.send('drag-file-done', id),
   cursor: (last) => ipcRenderer.invoke('cursor', last),
-  dragging: () => ipcRenderer.invoke('dragging'),
+  dragging: (nudge) => ipcRenderer.invoke('dragging', !!nudge),
   putBegin: () => ipcRenderer.invoke('put-begin'),
   putDir: (gid, name) => ipcRenderer.invoke('put-dir', gid, name),
   putFile: (gid, name, size) => ipcRenderer.invoke('put-file', gid, name, size),

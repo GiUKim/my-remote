@@ -161,7 +161,11 @@ the client app instead).
   (`dragq`; the host then polls `input.dragging()` every 15 ms). Let go in that time, it waits for the
   answer: a drag shows up -> `dragout`, else `mu` where the host's pointer waited. The old behaviour
   (moves past the edge at once) clamped the host's drag at the screen edge and, on release, let go
-  there - the failure the user reported. **Ctrl crosses at once** (the user's wish, 2026-11-13): with a
+  there - the failure the user reported. While a drag-out is being decided or carried out (let go
+  outside, until the host's `dragdata`, at most 3 s: `outPending`), the page sends no moves and no
+  presses: a move back into a window would say that no button is held, and the host would let go where
+  its pointer waited - a drop there, onto whatever lies under it. (A real session's log showed two such
+  releases, at the times of the person's failed drags out of a Linux host.) **Ctrl crosses at once** (the user's wish, 2026-11-13): with a
   button held and Ctrl pressed, leaving the host's picture - even onto this window's own bar or another
   client window - takes the pointer over to this PC (`view.crossed`): no wait, never on to the host's
   neighbouring monitor; let go there, what the host drags is carried out (a drag may still show up for
@@ -332,6 +336,18 @@ the client app instead).
     Chrome or VS Code on a Windows host behave the same way was not checked. With real Nautilus 42.6
     (the server, Xvfb, a session bus; the item found with AT-SPI, `pyatspi`) the drag of a file was seen
     142 ms after the press and its path read from the selection.
+  - GTK 4 (Nautilus 46, Ubuntu 24.04) starts its drag only after a few more motion events than a quick
+    drag out of the client window gives it: reported from a real session (Windows 11 client, a GNOME 46
+    desktop on a virtual display), "the pointer is blocked at the window's edge", and reproduced end to
+    end on a test display (GNOME Shell 46 + Nautilus 46, the real client page with synthetic pointer
+    events, the selftest's relay): 1 or 2 moves inside the window, then out and held still (the client
+    holds the host's pointer, see above) -> no drag ever, the button let go where the pointer waited;
+    4 moves -> a drag. Explorer starts its drag on a timer instead. So while the client asks (`dragq`,
+    `pollDrag` in `host.js`), every other look moves the pointer a pixel aside and back (`input.nudge`,
+    X11 only, only while a button pressed through us is held): afterwards 1 or 2 moves gave a drag in
+    50-100 ms and the file was carried out. For test harnesses: GTK 4's AT-SPI gives 0,0 as desktop
+    coordinates; its window coordinates count from inside the client-side shadow, which
+    `_GTK_FRAME_EXTENTS` on the X window gives (left, right, top, bottom).
   - Drop-in (files from the client): `dropFiles` in `platform/linux.js` is an XDND source, as
     `shellops.dll` does with OLE on Windows: the program under the pointer that takes drops is found from
     the root down (`XdndAware` on the program's window inside the window manager's frame; `XdndProxy`
