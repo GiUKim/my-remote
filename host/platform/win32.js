@@ -235,10 +235,13 @@ function dragFullWindows() { const v = [1]; return SpiGetBool(0x0026, 0, v, 0) ?
 
 // Whether what is on the clipboard was marked as private: password managers put a format of one of
 // these names next to a password they copy, asking clipboard tools not to keep or pass it on. Checked
-// without opening the clipboard.
+// without opening the clipboard. The last two are Windows' own opt-outs of the clipboard history and
+// the cloud clipboard; they carry a value (0 = keep out), and are counted by their presence alone, as
+// nobody is known to set them to 1.
 const RegisterClipboardFormatW = user32.func('RegisterClipboardFormatW', 'uint32', ['str16']);
 const IsClipboardFormatAvailable = user32.func('IsClipboardFormatAvailable', 'bool', ['uint32']);
-const PRIVATE_FORMATS = ['ExcludeClipboardContentFromMonitorProcessing', 'Clipboard Viewer Ignore'].map((n) => RegisterClipboardFormatW(n)).filter(Boolean);
+const PRIVATE_FORMATS = ['ExcludeClipboardContentFromMonitorProcessing', 'Clipboard Viewer Ignore', 'CanIncludeInClipboardHistory', 'CanUploadToCloudClipboard']
+  .map((n) => RegisterClipboardFormatW(n)).filter(Boolean);
 const clipboardPrivate = () => PRIVATE_FORMATS.some((f) => IsClipboardFormatAvailable(f));
 // Changes whenever the clipboard content changes; reading it does not open the clipboard.
 const GetClipboardSequenceNumber = user32.func('GetClipboardSequenceNumber', 'uint32', []);

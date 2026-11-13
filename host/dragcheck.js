@@ -106,9 +106,9 @@ async function itemRect(hwnd, prefix) {
   return m ? { x: +m[1], y: +m[2], w: +m[3], h: +m[4], px: +m[5], py: +m[6] } : null;
 }
 
-// A point of empty space inside a folder window's list of items. Not a fixed spot of the window: with
-// the preview or details pane on (an Explorer setting of the person's, for every window), the right
-// side of the window is that pane, which takes no drop (seen: the drop point was a SysLink there).
+// A point of empty space inside a folder window's list of items, seen there by UI Automation (a point
+// another window covers is not: once a dialog of the person's lay over the target window, and the drop
+// point was a SysLink of it).
 async function emptySpot(hwnd) {
   const out = await ps(`Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes,WindowsBase; $A=[System.Windows.Automation.AutomationElement]; $root=$A::FromHandle([IntPtr]${hwnd});
     $v=New-Object System.Windows.Automation.PropertyCondition($A::ClassNameProperty,'UIItemsView'); $w=[System.Windows.Automation.TreeWalker]::ControlViewWalker;
@@ -190,6 +190,10 @@ exports.runIn = async ({ check, info, cfg, buildClientHtml }) => {
       cw.moveTop();
       await sleep(150);
       if (rootAt(s) !== Number(hwndS)) { check(`${label}: nothing covers the source item`, false, classOf(rootAt(s)) + '; nothing was pressed'); return; }
+      // Where the host will drop (the same screen here) must be the target window, or the files would be
+      // dropped into whatever program is there (once a dialog of the person's covered it: a SysLink of it
+      // was under the point, and luckily took nothing).
+      if (rootAt({ x: hostX, y: hostY }) !== Number(hwndT)) { check(`${label}: nothing covers the point the host drops onto`, false, `${classOf(rootAt({ x: hostX, y: hostY }))} is there; nothing was pressed`); return; }
       // The drop point must be this test's client window, or a real drop would land in whatever program is there.
       if (rootAt(c) !== cwHwnd) { check(`${label}: the client window is where the file is to be let go`, false, `${classOf(rootAt(c))} is there; nothing was pressed`); return; }
       const x0 = await cj(`({ ...window.__rd.xfer })`);

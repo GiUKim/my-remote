@@ -812,7 +812,16 @@ function dropEntries(dt) {
     names: window.__rd.keepFiles ? entries.map((e) => e && e.name + (e.isDirectory ? '/' : '') + ' ' + e.fullPath) : null,
     plainNames: window.__rd.keepFiles ? plain.map((f) => f.name + ' ' + f.size + (shell && shell.pathFor ? ' ' + shell.pathFor(f) : '')) : null });
   return (async () => {
-    const flat = () => ({ files: plain.filter((f) => f.size > 0 || f.type).map((f) => ({ file: f, rel: f.name })), dirs: [] });
+    // The plain files only. A folder among them comes as a File of 0 bytes and no type that cannot be
+    // read (an empty file can): it is left out, and named in last.skipped for the person to be told.
+    const flat = async () => {
+      const files = [];
+      for (const f of plain) {
+        if (!(f.size > 0 || f.type)) { try { await f.slice(0, 1).arrayBuffer(); } catch { (last.skipped = last.skipped || []).push(f.name); continue; } }
+        files.push({ file: f, rel: f.name });
+      }
+      return { files, dirs: [] };
+    };
     if (handles.length && handles.every(Boolean)) {
       try {
         // The handles may never come (seen for folders in the client app, which grants no file-system permission).
@@ -832,7 +841,7 @@ function dropEntries(dt) {
         return { files, dirs };
       } catch (e) { last.error = 'handles: ' + String(e && (e.name || e.message) || 'error').slice(0, 40); }
     }
-    if (!entries.length || entries.some((e) => !e)) return flat();
+    if (!entries.length || entries.some((e) => !e)) return flat(); // also a paste: no entries there (Chromium)
     // The older entries API, only when it shows the items the browser listed for the drop.
     if (entries.some((e, i) => plain[i] && e.name !== plain[i].name)) { last.error += ' entries: names differ'; return flat(); }
     const files = [], dirs = [];
@@ -852,12 +861,20 @@ function dropEntries(dt) {
     } catch (e) {
       // The entries could not be read (seen with some folders): take the plain files, if there are any.
       last.error = String(e && (e.name || e.message) || 'error').slice(0, 40);
-      if (flat().files.length) return flat();
+      const fl = await flat();
+      if (fl.files.length) return fl;
       throw e;
     }
     last.files = files.length; last.dirs = dirs.length;
     return { files, dirs };
   })();
+}
+// Folders the browser handed over only as unreadable files (see flat in dropEntries): said, not sent.
+function tellSkipped(view, pasted) {
+  const s = (window.__rd.lastDrop || {}).skipped;
+  if (!s || !s.length) return;
+  const names = `${s.slice(0, 2).join(', ')}${s.length > 2 ? ` 외 ${s.length - 2}개` : ''}`;
+  toast(view, pasted ? `폴더는 붙여넣기로 보낼 수 없어 빼고 보냅니다: ${names} · 폴더는 호스트 화면에 끌어다 놓으면 통째로 갑니다` : `폴더를 읽지 못해 빼고 보냅니다: ${names}`, 7000);
 }
 async function upload(view, mode, at, got) {
   if (READONLY || !pc || !got) return false;
@@ -1063,7 +1080,7 @@ function attachPointer(view, pane) {
     const p = here(ev);
     if (!p) return;
     if (!window.__rd.stillOver) queueMove(view, p, 0);
-    dropEntries(ev.dataTransfer).then((got) => upload(view, 'drop', p, got)).catch((e) => {
+    dropEntries(ev.dataTransfer).then((got) => { tellSkipped(view); if (got.files.length || got.dirs.length) upload(view, 'drop', p, got); }).catch((e) => {
       window.__rd.xfer.inFailed++;
       window.__rd.xfer.inWhy = String(e && (e.name || e.message) || 'error').slice(0, 40);
       toast(view, '놓은 파일을 읽지 못했습니다', 5000);
@@ -1366,10 +1383,14 @@ function attachKeys(view) {
     }
     if (pasted.length && !READONLY) {
       // Files on this PC's clipboard: they go onto the host's clipboard and the host presses Ctrl+V
-      // itself once they are there, so the held paste key is not sent.
+      // itself once they are there, so the held paste key is not sent. Read like a drop (taken from the
+      // event now): a folder goes whole where the browser shows it as one, else it is left out and said.
       clearTimeout(view.pasteTimer);
       view.pasteKey = null;
-      upload(view, 'paste', null, { files: pasted.map((f) => ({ file: f, rel: f.name })), dirs: [] });
+      dropEntries(ev.clipboardData).then((got) => { tellSkipped(view, true); if (got.files.length || got.dirs.length) upload(view, 'paste', null, got); }).catch(() => {
+        window.__rd.xfer.inFailed++;
+        toast(view, '붙여 넣은 파일을 읽지 못했습니다', 5000);
+      });
       return;
     }
     const text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';

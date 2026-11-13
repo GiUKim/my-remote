@@ -704,6 +704,19 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
           await input.setClipboardFiles([c]);
           const [echoed] = await until((x) => x.xfer.clipNotes > notes1, 3);
           check('files the client sent are not announced back to it', !echoed);
+          // Files pasted into the picture: read like a drop; a folder the browser hands over as an
+          // unreadable file is left out and named, the file goes (staged here: a local trial drops nothing).
+          const pdir = path.join(cdir, 'pasted-folder'), pfile = path.join(cdir, 'pasted.txt');
+          fs.mkdirSync(pdir); fs.writeFileSync(path.join(pdir, 'inner.txt'), 'inside\n'); fs.writeFileSync(pfile, 'pasted file\n');
+          await input.setClipboardFiles([pfile, pdir]);
+          const px0 = (await state()).xfer;
+          await js(`READONLY = false; window.__rd.lastDrop = null; 1`);
+          w.webContents.focus(); w.webContents.paste();
+          const [pasted, ps] = await until((x) => x.xfer.inDone > px0.inDone || x.xfer.inFailed > px0.inFailed, 8);
+          const pl = await js(`(() => { READONLY = true; const l = window.__rd.lastDrop; return l && { plain: l.plain, skipped: l.skipped || [], files: l.files, error: l.error }; })()`);
+          info(`pasted a file and a folder: the browser listed ${pl ? pl.plain : '?'}, ${pl && pl.files === 2 ? 'the folder went whole (its file inside)' : 'left out ' + (pl ? JSON.stringify(pl.skipped) : '?')}`);
+          check('files pasted into the picture: the file goes, and the folder whole (or, where the browser hands it over as a file, left out and named)', pasted && ps.xfer.inHow === 'staged' && pl
+            && (pl.files === 2 || pl.skipped.includes('pasted-folder')), JSON.stringify({ how: ps.xfer.inHow, ...pl }));
           // Text from the client is on the clipboard before the input that follows it is injected: the
           // paste shortcut comes right after the text, and since Electron 44 a write completes later.
           if (process.platform === 'win32') {
@@ -746,7 +759,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     // arrived (with Electron 45 an unawaited clipboard read once sent nothing, and only an INFO line said so).
     {
       const { clipboard } = require('electron');
-      const text = String((await clipboard.readText().catch(() => '')) || '');
+      const text = String((await Promise.resolve().then(() => clipboard.readText()).catch(() => '')) || ''); // a promise since Electron 44
       if (text && text.length <= 60000 && !input.clipboardPrivate()) check('text on the host\'s clipboard reaches the client', s.clipRx, s.clipRx ? 'received' : 'not received');
       else info(`clipboard host->client: ${s.clipRx ? 'received' : 'not checked (the clipboard holds no text)'}`);
     }

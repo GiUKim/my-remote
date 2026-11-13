@@ -11,7 +11,9 @@ const NEUTRAL = {
   move() {}, button() {}, wheel() {}, keyOf: () => null, sendKey() {},
   typeText() {}, // characters as such (a phone's keyboard): Windows (KEYEVENTF_UNICODE) and X11 (keycodes lent to keysyms)
   maskKey() {}, // a key that keeps a lone Alt or Windows key release from opening a menu (Windows, X11)
-  clipboardPrivate: () => false, // whether a password manager marked the clipboard's content as private
+  // Whether a password manager marked the clipboard's content as private (Windows: its own formats;
+  // elsewhere, the macOS client app: NSPasteboard's concealed or transient types, KDE's hint). May be a promise.
+  clipboardPrivate: async () => { try { return (await require('electron').clipboard.read()).some((i) => i.types.some((t) => /ConcealedType|TransientType|passwordManagerHint/i.test(t))); } catch { return false; } },
   cursorState: () => ({ key: '0', name: 'default' }),
   cursorBitmap: () => null,
   hideCursors: () => 0,

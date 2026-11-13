@@ -188,7 +188,10 @@ the client app instead).
   Replace/Skip, and `so_drop` waits for that like a local drop would. When nothing takes the files
   (or the person clicked or typed since the drop), they go onto the host's clipboard instead; a paste
   (Ctrl+V with files on the client's clipboard; Chromium hands them over in the paste event) puts them
-  on the host's clipboard and presses Ctrl+V. Folders: `DataTransferItem.getAsFileSystemHandle()`
+  on the host's clipboard and presses Ctrl+V. A paste is read like a drop (`dropEntries`): in Electron
+  45 a pasted folder comes as an entry and goes whole (`--clip-check`: a file and a folder pasted, the
+  folder's file inside arrives); a folder a browser hands over only as an unreadable file of 0 bytes is
+  left out and the page names it (before, it was sent as such a file). Folders: `DataTransferItem.getAsFileSystemHandle()`
   never answered for a folder in the client app (no file-system permission is granted), so after
   1.5 s the older entries API is used; in one case that threw `InvalidStateError` (a real folder with
   a `.cache` inside), then only plain files go and the page says so.
@@ -226,7 +229,13 @@ the client app instead).
   the navigation pane, which showed the user's `서버` folders, and that folder was dragged (the read
   failed before anything was sent; nothing was changed). A second time the drop point was not the
   client window and a file was dropped onto an empty Notepad, which said "file not found". Hence the
-  verified press points and the window-handle check before letting go (`dragcheck.js`).
+  verified press points and the window-handle check before letting go (`dragcheck.js`). A third time
+  (2026-11-13) the point where the HOST drops was covered by a dialog of the person's on the primary
+  screen (UI Automation: a #32770 dialog with an edit field; under the point a SysLink of it), which took
+  nothing, and the not-taken fallback put the test files on the person's clipboard over the text they
+  had copied. So the host's drop point is checked too (the window there must be the target Explorer
+  window, else nothing is pressed), empty space is found in the target's list of items by UI Automation
+  (not a fixed spot of the window), and a local trial never falls back to the clipboard.
 
 - **A display with Windows HDR on is captured wrong.** Desktop Duplication hands over the desktop after
   Windows raised SDR content to HDR brightness and clipped it at SDR white, so the picture is brighter
@@ -328,7 +337,8 @@ the client app instead).
   over the picture until the screen is back. A lock learned by asking (at a session's start; Windows'
   idle check also calls a screensaver that does not lock "locked"; on Linux no lock events come at all)
   is asked about again every 2 s and cleared when it is over; a monitor whose capture loop is stopped
-  (nobody shows it) stops counting as paused, since a stopped loop can never report it back.
+  (nobody shows it) stops counting as paused, since a stopped loop can never report it back. For 2.5 s
+  after an unlock, loops that have not read the screen again yet do not count as a secure prompt.
 - **Fullscreen is the host, a window is this PC** (the user's first rule, `systemKey` in
   `client.template.html`). In fullscreen every key goes to the host, the system's shortcuts too (the
   Windows key and its combinations such as Win+Shift+S, Alt+Tab, Alt+F4, Ctrl+Esc, PrintScreen): the
@@ -350,9 +360,12 @@ the client app instead).
   the client app text at once (`shell:clipPoll` twice a second while connected: `clipSeq`, then the
   text; what was on the clipboard before the session began is not sent, the host's text counts then);
   files, and in a browser also text, when pasted into the picture (a browser lets a page read the
-  clipboard only in a paste event). Text a password manager marked as private
-  (`ExcludeClipboardContentFromMonitorProcessing`, `Clipboard Viewer Ignore`; `clipboardPrivate()`)
-  goes neither way. Echoes are cut by the last text on each side (`lastClip`, `s.clip`). Never passed to
+  clipboard only in a paste event). Text a password manager marked as private goes neither way
+  (`clipboardPrivate()`; Windows: `ExcludeClipboardContentFromMonitorProcessing`, `Clipboard Viewer
+  Ignore`, and Windows' own history/cloud opt-outs `CanIncludeInClipboardHistory` and
+  `CanUploadToCloudClipboard`, all by presence, without opening the clipboard; Linux and the macOS client
+  app: a type in Electron's `clipboard.read()` of KDE's `x-kde-passwordManagerHint` (KeePassXC; checked
+  on Xvfb) or NSPasteboard's `org.nspasteboard.ConcealedType`/`TransientType` (not tried)). Echoes are cut by the last text on each side (`lastClip`, `s.clip`). Never passed to
   the client: the access key that `키 복사` put on the host's clipboard (by change count, and any text
   that is the key), what a drag-out's Ctrl+C copied (the drag hands it over; announced again, the app
   would fetch the same files twice), and files the client sent itself (in the host's inbox). Every new
@@ -400,13 +413,23 @@ the client app instead).
   `loadConfig`/`saveConfig` use the async ones (`decryptStringAsync`, `encryptStringAsync`,
   `isAsyncEncryptionAvailable`), and `saveConfig` decrypts what it encrypted before it writes the file.
   When `decryptStringAsync` says `shouldReEncrypt`, a file that is fine otherwise is written again with
-  the same key (not seen yet). Measured risks of the upgrade, still to be benched
-  (Chromium 130 -> 156, WebRTC branch 6723 -> 8078): the libaom AV1 encoder now changes its speed
-  setting by itself (`WebRTC-EncoderSpeed`, `dynamic_speed`; in smooth mode it may go down to speed 7
-  where 130 used a fixed 10: more CPU; `dynamic_speed:false,av1_camera:normal` restores the old
-  speeds), the frame cadence adapter (`refine`) and the receiver's timing were rewritten, and probing
-  also happens outside ALR. The three field trials in `ENGINE_TRIALS` are still read under the same
-  names.
+  the same key (not seen yet). Code pulled without running setup runs on the Electron installed before
+  (33 on a PC set up earlier, also after the tray's "다시 시작"): there the synchronous calls are used
+  (`ASYNC_SAFE_STORAGE`), since a key that cannot be read makes the host ask for a new one and every
+  client would lose access; the host logs and shows that setup is still to be run (`updateNote`). What
+  changed underneath (Chromium 130 -> 156, WebRTC branch 6723 -> 8078): the libaom AV1 encoder changes
+  its speed setting by itself (`WebRTC-EncoderSpeed`, `dynamic_speed`), the frame cadence adapter
+  (`refine`) and the receiver's timing were rewritten, and probing also happens outside ALR. The three
+  field trials in `ENGINE_TRIALS` are still read under the same names. Benched on this PC (2026-11-13,
+  native capture, one run each, so read the spread as noise): the default (sharp, AV1) about the same
+  or better, scroll delay p50 direct 92-133 ms against 115 on 33, typing 66-80 against 79, quality equal
+  or better (settles at 42.0 against 41.2 dB, settled after 344 against 693 ms); H.264 shows 53 fps on
+  the direct link against 28. Smooth mode got worse: 33-37 fps shown against 47-59, the encoder at QP
+  ~200 and 33-35 fps (its `motion` content hint has 156 encode the screen as camera content); on the
+  direct link the bench could not even read its frames. `WebRTC-EncoderSpeed/dynamic_speed:false,
+  av1_camera:normal/` raised the encoder to 42-52 fps but not the frames shown or the delay, and made
+  no difference in the default mode: not adopted. Next to try: smooth mode with the `detail` hint and
+  only `maintain-framerate`.
 - **Cursor and the captured video.** Chromium always paints the cursor into captured frames
   (`cursor: 'never'` is ignored, and hiding it with the Magnification API does not affect capture). The
   host therefore swaps the system cursors for a transparent one (`SetSystemCursor`) *before* capture

@@ -347,6 +347,9 @@ async function putDone(gid, at, mode) {
     if (effect > 0) { later(); return { how: 'dropped', n }; }
     console.log(`drop not taken (${effect}): ${so.error()} ${so.debug()}`);
   }
+  // A test run (--dropin-check) never puts them on this PC's clipboard: it belongs to the person (once a
+  // drop that was not taken there replaced what they had copied).
+  if (ISOLATED) return { how: 'none', why: 'nottaken' };
   // A paste, or nothing under the pointer took them: onto the clipboard, and for a paste Ctrl+V.
   if (!(await input.setClipboardFiles(items))) return { how: 'none', why: 'clipboard' };
   if (mode === 'paste') { input.tap(input.isDown('ControlLeft') || input.isDown('ControlRight') ? ['KeyV'] : ['ControlLeft', 'KeyV']); return { how: 'pasted', n }; }
@@ -423,10 +426,16 @@ function hostOs() {
 // Electron 33 wrote and the reverse: checked on Windows, and on Linux with a keyring (gnome-libsecret,
 // 'v11') and without one ('v10', only obscured), where the asynchronous calls need no
 // setUsePlainTextEncryption. `again`: Electron asks for the key to be encrypted anew (its key changed).
+// An Electron before 45 (the code updated, setup.ps1 not run yet) has only the synchronous calls: the key
+// must still be read then, or the host would ask for a new one and every client would lose access.
+const ASYNC_SAFE_STORAGE = typeof safeStorage.decryptStringAsync === 'function';
 async function decryptKey(keyEnc) {
+  if (!ASYNC_SAFE_STORAGE) return { text: safeStorage.decryptString(Buffer.from(keyEnc, 'base64')), again: false };
   const r = await safeStorage.decryptStringAsync(Buffer.from(keyEnc, 'base64'));
   return typeof r === 'string' ? { text: r, again: false } : { text: r && r.result, again: !!(r && r.shouldReEncrypt) };
 }
+const encryptionReady = async () => (ASYNC_SAFE_STORAGE ? safeStorage.isAsyncEncryptionAvailable() : safeStorage.isEncryptionAvailable());
+const encryptKey = async (key) => (ASYNC_SAFE_STORAGE ? safeStorage.encryptStringAsync(key) : safeStorage.encryptString(key));
 async function loadConfig() {
   cfgIssue = '';
   cfgBackup = '';
@@ -457,6 +466,7 @@ async function loadConfig() {
   // the key with a fixed password. The host keeps working that way, says so, and the file is
   // readable by this user only.
   if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') {
+    if (!ASYNC_SAFE_STORAGE) safeStorage.setUsePlainTextEncryption(true); // the synchronous calls need it there
     console.warn(`[host] WARNING: no OS keyring (basic_text): the access key in ${cfgPath()} is not encrypted, only obscured; the file is readable by this user only`);
   }
   let key = null, again = false;
@@ -511,8 +521,8 @@ function writeConfigFile(text) {
 // The encrypted key is decrypted again before it is written: a file whose key cannot be read back would
 // cost every client its access.
 async function saveConfig(key) {
-  if (!(await safeStorage.isAsyncEncryptionAvailable())) throw new Error('OS 암호화 저장소(DPAPI)를 사용할 수 없습니다');
-  const enc = await safeStorage.encryptStringAsync(key); // Windows: DPAPI, only this Windows user can decrypt
+  if (!(await encryptionReady())) throw new Error('OS 암호화 저장소(DPAPI)를 사용할 수 없습니다');
+  const enc = await encryptKey(key); // Windows: DPAPI, only this Windows user can decrypt
   if ((await decryptKey(enc.toString('base64'))).text !== key) throw new Error('암호화한 키를 다시 풀 수 없습니다');
   if (cfgIssue) cfgBackup = backupConfig(); // the file as it was, before it is replaced
   writeConfigFile(JSON.stringify({ ...savedCfg, keyEnc: enc.toString('base64') }, null, 2));
@@ -681,9 +691,14 @@ else {
   app.on('before-quit', () => { quitting = true; input.reset(); setCursorsHidden(false); clearKeyClip(); });
   process.on('exit', () => { if (cursorsHidden) input.restoreCursors(); });
   app.whenReady().then(async () => {
+    // The code is newer than the Electron it runs on: it was updated (git pull) without setup.ps1/setup.sh.
+    const pkg = require('./package.json'), wanted = Number((/(\d+)/.exec((pkg.devDependencies || {}).electron || (pkg.dependencies || {}).electron || '') || [])[1]) || 0;
+    const oldElectron = wanted && Number(process.versions.electron.split('.')[0]) < wanted ? process.versions.electron : '';
+    if (oldElectron) console.warn(`[host] WARNING: this code expects Electron ${wanted}, but runs on ${oldElectron}: run setup.ps1 (Linux: ./setup.sh) to finish the update`);
     await loadConfig();
     if (!cfg.key && !(await askForKey())) { quitting = true; app.quit(); return; }
     cfg.hostOs = hostOs();
+    cfg.updateNote = oldElectron ? `업데이트가 덜 끝났습니다: 코드는 Electron ${wanted}용인데 ${oldElectron}에서 돌고 있습니다. 호스트를 끄고 ${process.platform === 'win32' ? 'setup.ps1' : './setup.sh'}을 실행한 뒤 다시 시작하세요.` : '';
     cfg.viewOnly = input.viewOnlyReason(); // '' = input from the client is injected here
     if (cfg.viewOnly) console.warn(`[host] WARNING: the host is view-only, input from the client is not injected: ${cfg.viewOnly}`);
     if (BENCH) Object.assign(cfg, benchCfg.cfg || {});
@@ -785,7 +800,7 @@ else {
       if ((keyOnClip && seq === keyOnClip.seq) || seq === dragCopySeq) return { seq };
       const files = await clipFilesNow(seq);
       if (files) return files.own ? { seq } : { seq, files };
-      if (input.clipboardPrivate()) return { seq }; // a password manager's: not passed on to the client
+      if (await input.clipboardPrivate()) return { seq }; // a password manager's: not passed on to the client
       const text = String((await timedAsync('clip-read', () => clipboard.readText())) || '');
       if (cfg.key && text.trim() === cfg.key) return { seq }; // the key however it got there (Linux counts changes late)
       return { seq, text: text.length <= CLIP_MAX ? text : '' }; // longer text is not sent to the client: not copied to the page either

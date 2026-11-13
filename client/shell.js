@@ -213,7 +213,7 @@ function setupIpc() {
     try {
       const seq = m.clipSeq();
       if (seq === lastSeq) return { seq };
-      if (m.clipboardPrivate()) return { seq, private: true };
+      if (await m.clipboardPrivate()) return { seq, private: true };
       if ((await m.clipboardFiles()).length) return { seq, files: true };
       const text = String((await clipboard.readText()) || '');
       return { seq, text: text.length <= 60000 ? text : '' };

@@ -17,8 +17,12 @@ function status(text, cls) { $('status').textContent = text; $('dot').className 
 // the session locked (powerMonitor in main.js); `paused`: native capture loops that could not read
 // their screen for more than a moment (the lock screen, a UAC prompt, another user's session; a
 // mode change for a moment).
-const screenGone = { lock: false, lockFrom: '', paused: new Set(), timers: new Map(), sentFor: null, sent: null };
-const lockReason = () => (screenGone.lock ? 'lock' : screenGone.paused.size ? 'secure' : '');
+const screenGone = { lock: false, lockFrom: '', paused: new Set(), timers: new Map(), sentFor: null, sent: null, unlockedAt: -1e9 };
+// Right after an unlock the capture loops need a moment to read the screen again: that is not taken
+// for a secure prompt (UNLOCK_GRACE_MS; sendLock looks again once it is over).
+const UNLOCK_GRACE_MS = 2500;
+const lockReason = () => (screenGone.lock ? 'lock' : screenGone.paused.size && performance.now() - screenGone.unlockedAt > UNLOCK_GRACE_MS ? 'secure' : '');
+function unlocked() { screenGone.unlockedAt = performance.now(); setTimeout(() => sendLock(), UNLOCK_GRACE_MS + 100); }
 function sendLock(force) {
   const s = session, dc = s && s.dc;
   if (!dc || dc.readyState !== 'open') return;
@@ -39,7 +43,7 @@ function forgetPaused() { for (const t of screenGone.timers.values()) clearTimeo
 // it lasts, ask again every 2 s. A lock reported by an event is ended by the matching event.
 setInterval(() => {
   if (!screenGone.lock || screenGone.lockFrom !== 'query' || !session) return;
-  api.hostLocked().then((v) => { if (!v && screenGone.lock && screenGone.lockFrom === 'query') { screenGone.lock = false; log('이 PC의 잠금이 풀렸습니다'); sendLock(); } }, () => {});
+  api.hostLocked().then((v) => { if (!v && screenGone.lock && screenGone.lockFrom === 'query') { screenGone.lock = false; unlocked(); log('이 PC의 잠금이 풀렸습니다'); sendLock(); } }, () => {});
 }, 2000);
 
 // ---- native capture (optional) -----------------------------------------------------
@@ -727,6 +731,7 @@ async function onMessage(m) {
   log('시그널링 서버: ' + cfg.server);
   log('호스트 시작: ' + new Date().toLocaleString());
   if (cfg.viewOnly) log('주의: 이 PC에서는 원격 입력을 넣을 수 없어 보기 전용으로 동작합니다 (' + cfg.viewOnly + ')');
+  if (cfg.updateNote) log('주의: ' + cfg.updateNote);
 
   let shown = false;
   $('show').onclick = () => { shown = !shown; $('key').textContent = shown ? cfg.key : '••••••••••••••••••••••••'; $('show').textContent = shown ? '숨기기' : '표시'; };
@@ -738,6 +743,7 @@ async function onMessage(m) {
     screenGone.lockFrom = 'event';
     if (screenGone.lock === on) return;
     screenGone.lock = on;
+    if (!on) unlocked();
     log(on ? '이 PC가 잠겼습니다 — 잠금 화면은 원격으로 보이지 않습니다' : '이 PC의 잠금이 풀렸습니다');
     sendLock();
   });
