@@ -4,7 +4,9 @@ Personal P2P remote desktop for Windows, and for Linux with an X11 session (see 
 Gotchas). `host/` is an Electron app that captures every monitor and
 injects input; the client is a single HTML file opened in Chrome/Edge on another PC. Media and input
 flow peer-to-peer over WebRTC; a public ntfy server is used only to exchange encrypted handshake
-messages. User-facing docs are in [README.md](README.md) (Korean). Reply to the user in Korean.
+messages. It runs from this source folder (the launchers below) or as an installed app that updates
+itself (`app/`, `release/`; see "The installed app, releases and updates"). User-facing docs are in
+[README.md](README.md) (Korean). Reply to the user in Korean.
 
 ## Setting up a host PC (the usual request)
 
@@ -78,6 +80,17 @@ the client app instead).
   pane and a real folder of the user's was dragged (nothing was changed; see Gotchas). So does
   `--input-check` (Linux: moves the pointer, clicks, scrolls and types into windows and a second
   program it opens itself): on a virtual display (Xvfb) only, or after the user agreed.
+- **Never read, print, copy or commit the release signing key** (`~/.my-remote-release/update-signing-key.pem`,
+  or wherever `--key` / `MY_REMOTE_RELEASE_KEY` points). Whoever has it can send code to every installed
+  app. `release/build.js` signs with it and `release/keygen.js` makes it; nothing else touches it, and
+  it stays on the machine that makes releases. The tests make keys of their own.
+- **Putting a release where apps fetch it is the user's step**, like starting a host: build it
+  (`release/build.js`), say what is in `dist/release`, and let them upload it. Never mark a release
+  `--critical` (it installs itself on every app, without asking) unless the user said so for that release.
+- **Keep `app/` small and stable.** It is the part an update cannot replace: a fault in `boot.js`,
+  `core.js`, `updater.js` or `guard.js` stays with every installed app until its user installs a new
+  package by hand. Change it only with `release/test-update.js` and `release/test-app.js --packaged`
+  passing, and raise `base` in `app/package.json` when the code needs something new of the shell.
 - Do not commit `node_modules/`, `tools/`, `dist/`, or any `config.json` (see `.gitignore`).
 
 ## Gotchas
@@ -556,6 +569,76 @@ the client app instead).
 - **Same-PC control is unusable** (the injected cursor jumps under the viewer window). That is why
   `--localtest` is view-only.
 
+## The installed app, releases and updates
+
+Besides running from a source folder (the launchers above), the program ships as an installed app for
+Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/core.js`'s header first.
+
+- **Two layers.** The *shell* (`app/`: Electron as npm installed it, `boot.js`, `updater.js`, `guard.js`,
+  koffi) changes rarely and has a generation number (`base` in `app/package.json`). The *code* it runs
+  (`host/`, `client/`, `my-remote-client.html`: about 0.5 MB) is a *bundle*: the one built into the
+  package (`resources/app/bundle`), or a newer one the updater put into the user's data folder
+  (`%LOCALAPPDATA%\my-remote\app\versions\<version>`, `~/.local/share/my-remote/app/...`). `boot.js`
+  picks one at every start (`core.choose`) and `require`s its `host/main.js` or `client/main.js`, which
+  are the same files a source folder runs. They see the shell as `global.__mrApp` (`version`, `ok()`,
+  `update`); from a source folder there is none, and updates come by git.
+- **Trust.** A bundle is described by a manifest (`latest.json`: version, `needsBase`, `minimum`,
+  `critical`, notes, the SHA-256 of every file) signed with Ed25519. The public keys are in
+  `app/update-config.json`, part of the shell. A manifest that does not verify, a bundle that is not the
+  manifest's, a file the manifest does not list, a file name that could leave the folder: never
+  installed. Installed files are checked against their signed manifest at every start. So the feed
+  (`feed` in `update-config.json`: any https folder with `latest.json`, `latest.json.sig` and the bundle
+  file) need not be trusted, and may be a public place while the repository is private. Never an older
+  version than the one running.
+- **The updater lives in the shell**, not in the bundle: a bad release cannot take away the means to
+  replace it. It looks at the feed 20 s after the start and every 6 h. An ordinary update is only
+  announced (the host window's card, `showUpdate` in `host.js`; the client app asks in a dialog) and
+  installed when the person says so. A *required* one (`critical`, or the running version is below the
+  release's `minimum`) is installed without asking and the app restarted when the code says the moment
+  fits (`setCanRestart`: the host when no session is on, 30 min at most; the client app after a notice).
+  `release/policy.json` carries `minimum` forward, so apps that missed a critical release are still
+  forced by later ordinary ones. A release with a higher `needsBase` than the shell is only announced
+  (`kind: 'package'`): a new package must be installed by hand. Updating the shell itself (a new
+  Electron) automatically is not built; it matters, since Electron needs security updates.
+- **Going back.** A version started for the first time is on trial until the code calls `ok()` (the
+  host: its page loaded and stayed 8 s; the client app: 4 s after its window loaded). It is marked bad
+  and the version before (at last the built-in one) runs again when it throws while starting, does not
+  say `ok()` in 2 min, or ends without a word twice (`guard.js`, a small process of its own, starts it
+  again; `boot.js` counts the starts in `state.json`). A bad version is never offered again. A remote
+  host that came back broken from an update could not be reached to be repaired. Starts beside a trial
+  that is still running (another click on the shortcut) do not count.
+- **Things that bit** (found by `release/test-app.js`, which runs the shell in real Electron against a
+  local feed, with made-up versions that behave well, throw, die or stay silent):
+  - The guard runs Electron as plain Node (`ELECTRON_RUN_AS_NODE=1`) and handed that on to the program
+    it restarted, which then ran as Node too and did nothing. It clears the variable.
+  - `win.loadFile('host.html')` is relative to the app's folder, which in the installed app is the
+    shell's: the host page was not found. It is `path.join(__dirname, 'host.html')` now. Likewise the
+    client app as a second program (`--localtest` on Linux, `--client-app-check`): from a source folder
+    Electron is given the `client` folder, the installed app is told `--client`.
+  - koffi belongs to the shell; the bundle finds it through `NODE_PATH` (set in `boot.js`, inherited by
+    the page's process, where the native capture loads it).
+  - `--selftest`, `--localtest`, `--bench`, `--show-key` and `--loader=` are errands: no updater, and no
+    start counted against a trial.
+- **Names.** The two faces keep the profile names they always had (`my-remote-host`: its config and
+  the key, encrypted under that name on Linux and macOS; `my-remote-client`), set in `boot.js` before
+  anything else, so an app installed over a source folder's use keeps the key.
+- **Packages** (`release/package.js`) are made on the platform they are for, from
+  `host/node_modules/electron/dist` (nothing else is downloaded): a folder to unpack and run
+  (`My Remote.exe`, `./my-remote.sh`), zipped. No installer, no code signing: Windows SmartScreen warns
+  at the first start. macOS is not built (an unsigned app does not run there). Started without `--host`
+  or `--client` the app asks which and offers the two shortcuts (`--shortcuts` makes them without asking).
+- **Making a release**: README "릴리스 만들기". `release/build.js` takes the files from the commit that is
+  checked out (`git show HEAD:...`: the same bundle on every machine, nothing uncommitted), signs with
+  the key outside the repository and checks the result the way an app will.
+
+Verified (2026-11-13): `release/test-update.js` (40 checks, plain Node) and `release/test-app.js
+--packaged` (12 checks) on Windows 10 and on Ubuntu 22.04 under Xvfb: the made-up versions as listed
+above, the real code as a package passing the self-test through the shell (Windows 44 checks with the
+native capturer; Linux 32 with the X11 one), the two shortcuts into a test folder. Not verified: a real
+update from a real feed (there is none yet), an update while a real session is connected, the dialog
+that asks host or client and the shortcuts in the real Start menu, the client app's update dialogs,
+`my-remote.sh` from an app menu entry, Ubuntu 24.04 as a package, anything on macOS.
+
 ## Commands
 
 Run from `host/` with Electron's env var cleared.
@@ -579,6 +662,11 @@ Run from `host/` with Electron's env var cleared.
 | `./setup.sh [--skip-selftest] [--hold]`, `./start-host.sh`, `./start-client.sh`, `./local-test.sh` | Linux counterparts of `setup.ps1` and the `.bat` files (shared code in `host/linux-launch.sh`); the launchers set the folder up on their first start (`ensure_setup`). Extra arguments go to Electron, e.g. `./start-host.sh --selftest`. `MY_REMOTE_NODE_DIST` points the Node download elsewhere (tests) |
 | `npm run bench -- --net=direct,home,narrow,wifi --try=old,base` | Measures delay and smoothness on this PC for the given link conditions and settings, prints a table (see "Performance"). `--picture-test=quality` measures picture quality instead (a window opening, a window being dragged, scrolling); `--snapshot` saves what the client showed next to what was drawn. About 45 s per run. Shows a test picture on one display and a small window on another for that time; they never take focus and no input is injected, but tell the user before a long series |
 | `npm run bench -- --remote=user@host --net=direct --try=base` | The same bench with the client page on another machine, reached over ssh: a real second machine and a real network instead of one PC. That machine needs `~/my-remote-dev/electron/` (an unpacked Electron release for its platform) and `xvfb-run`; signaling goes through an ssh tunnel, only the WebRTC traffic crosses the network directly. Add `--capture-probe` to split the delay into its parts. This sends the picture of one of this PC's displays to that machine, so the user must have agreed |
+| `node release/test-update.js` | The update logic (`app/core.js`, `app/updater.js`) in plain Node with made-up releases and feeds: signatures, file names, downgrades, the trial and going back, ordinary and required updates. A few seconds |
+| `node release/test-app.js [--packaged]` | The app's shell in real Electron against a feed on this machine (made-up versions; nothing leaves the PC, the real host is not started). `--packaged` also builds this folder's code as the real package (test key, temporary folder) and runs its self-test through the shell: about 4 minutes. On Linux under `xvfb-run`; `MR_TEST_ELECTRON_ARGS=--no-sandbox` where the sandbox cannot run |
+| `node release/build.js [--critical]` | Builds a release from the checked-out commit into `dist/release` (`latest.json`, its signature, the bundle, and `bundle/` for packaging). Signs with the key outside the repository |
+| `node release/package.js` | The installable app for this platform from `dist/release`, into `dist/pack` (a folder and a zip or tar.gz, about 110 MB) |
+| `<electron> release/make-icon.js` | Draws `app/icon.png` and `app/icon.ico` from `host/icon.svg` |
 | `npm run localtest` | Local trial: host window plus view-only client in the default browser |
 | `npm start` | The real host (connects to the signaling server). User-initiated only |
 | `npm run build-client` | Regenerates `../my-remote-client.html` (the loader) from `loader.template.html` and `signal.js` |
@@ -601,6 +689,12 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/linux-launch.sh` | Sourced by those: Electron's path, the first-start setup (`ensure_setup`), X11 session, library and sandbox checks, errors also as a dialog (`fail`: zenity or notify-send, when there is no terminal), starting Electron in the background |
 | `host/icon.svg` | The app's icon for the Linux app menu entries (the tray icon is drawn in `main.js`) |
 | `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js`: Win32 or X11, and `host/files.js`). Exposes `window.mrShell` (`fileAbort`, `pointerOwn`, `clipPoll` and `clipWrite` from 2026-11-13 on), and from 2026-11-13 on marks a minimized or hidden window's document (`data-mr-hidden`, event `mrshown`): its windows run with `backgroundThrottling` off, so `visibilityState` never says hidden there, and the page (`unseen()`) stops asking the host for what such a window shows. `main.js --loader=<file>` shows another loader with a profile of its own (self-test, local trial on Linux). These files are not updated through the loader: the page must feature-detect what an installed app offers |
+| `app/boot.js`, `app/core.js`, `app/updater.js`, `app/guard.js` | The installed app's shell: picks host or client and the code bundle to run, verifies it, keeps a new version on trial and goes back when it does not come up; finds and installs updates. See "The installed app, releases and updates" |
+| `app/update-config.json`, `app/package.json` | Where updates are fetched from and the public keys that may sign them; the shell's generation (`base`) |
+| `app/my-remote.sh`, `app/icon.png`, `app/icon.ico` | The installed app's launcher on Linux; its icons (drawn by `release/make-icon.js`) |
+| `release/build.js`, `release/package.js`, `release/keygen.js` | Make a release (bundle, signed manifest), the installable package for this platform, the signing key pair |
+| `release/test-update.js`, `release/test-app.js` | Tests of the shell: the logic in plain Node, and end to end in Electron |
+| `release/policy.json`, `release/notes/<version>.json` | The oldest version still allowed (set by a critical release); what changed, shown with an update |
 | `host/main.js` | Electron main: config and key storage, monitor enumeration, tray, IPC, isolated modes |
 | `host/preload.js` | The only bridge between the renderer and main (`window.hostApi`). Also runs the native capturer's loops and hands their frames to the page over a message port |
 | `host/host.html`, `host/host.js` | Host UI and the WebRTC side: capture, encoding control, data-channel routing |

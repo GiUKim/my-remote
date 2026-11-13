@@ -66,6 +66,8 @@ contextBridge.exposeInMainWorld('dragFile', () => ipcRenderer.send('drag-file'))
 `;
 
 exports.run = async ({ check, info, js, until, dragOut, native }) => {
+  // It starts a second program of its own with this Electron, which the installed app cannot be made to run.
+  if (global.__mrApp) { info('--input-check runs from a source folder only'); return; }
   const why = input.viewOnlyReason();
   if (why) { check('X11: input can be injected', false, why); return; }
   const mons = await js(`monitors.map((m) => ({ x: m.x, y: m.y, width: m.width, height: m.height }))`);

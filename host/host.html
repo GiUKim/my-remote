@@ -18,7 +18,16 @@
 </style>
 </head>
 <body>
-  <h1>My Remote Host</h1>
+  <h1>My Remote Host <small id="ver"></small></h1>
+  <div class="card" id="upd" style="display:none">
+    <div><b id="updTitle"></b></div>
+    <small id="updText"></small>
+    <ul id="updNotes" style="margin:6px 0 0; padding-left:20px; color:#c5ccd6"></ul>
+    <div class="row" style="margin-top:8px">
+      <button id="updGo">지금 업데이트</button>
+      <button id="updLater" class="sub">나중에</button>
+    </div>
+  </div>
   <div class="card">
     <div class="row"><span id="dot" class="dot"></span><b id="status">시작 중…</b></div>
     <small id="stats"></small>

@@ -2,7 +2,9 @@
 # Electron is the one npm installed under host/node_modules (setup.sh).
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-electron="$root/host/node_modules/electron/dist/electron"
+# The installed app (app/my-remote.sh) names its own program and has no folder to pass (mr_app).
+electron="${MY_REMOTE_ELECTRON:-$root/host/node_modules/electron/dist/electron}"
+mr_app=("$root/host")
 # Terminals inside VS Code / Cursor set this; with it Electron runs as plain Node and the app cannot start.
 unset ELECTRON_RUN_AS_NODE
 
@@ -151,7 +153,7 @@ desktop_env() {
 # and later restrict through AppArmor. Where neither is available Electron cannot start with the
 # sandbox; it then runs without it only when the person says so (MY_REMOTE_NO_SANDBOX=1).
 sandbox_args=()
-sandbox_helper="$root/host/node_modules/electron/dist/chrome-sandbox"
+sandbox_helper="$(dirname "$electron")/chrome-sandbox"
 sandbox_ok() { # 0: Chromium's sandbox can run here
   if [ -u "$sandbox_helper" ] && [ "$(stat -c %u "$sandbox_helper")" = 0 ]; then return 0; fi
   local clone restrict
@@ -193,7 +195,7 @@ show_key() {
   err="$(mktemp)"
   # The engine's own messages (no display, no GPU) are left out; the app's are marked [show-key].
   env -u DISPLAY -u WAYLAND_DISPLAY ${bus:+DBUS_SESSION_BUS_ADDRESS="$bus"} \
-    "$electron" "${sandbox_args[@]}" --ozone-platform=headless --disable-gpu "$root/host" --show-key 2>"$err" </dev/null || status=$?
+    "$electron" "${sandbox_args[@]}" --ozone-platform=headless --disable-gpu "${mr_app[@]}" --show-key 2>"$err" </dev/null || status=$?
   if grep -q '^\[show-key\] ' "$err"; then
     sed -n 's/^\[show-key\] //p' "$err" >&2
   elif [ "$status" != 0 ]; then

@@ -1,0 +1,14 @@
+{
+  "ko": [
+    "설치형 앱과 자동 업데이트: 새 버전을 알려 주고, 중요한 업데이트는 스스로 설치합니다. 새 버전이 시작되지 않으면 이전 버전으로 되돌아갑니다.",
+    "Linux(X11) 호스트: 포인터 잔상 없는 화면 캡처, 파일 끌어넣기와 끌어내기, SSH로 관리하는 PC 지원",
+    "끌어내는 동안 포인터 옆에 가져오는 파일을 표시(클라이언트 앱)",
+    "Electron 45, 클립보드·끌어 놓기·세션 안정성 수정 다수"
+  ],
+  "en": [
+    "An installable app with updates: new versions are announced, important ones install themselves, and a version that does not start is rolled back.",
+    "Linux (X11) hosts: capture without a trailing pointer, files dragged in and out, hosts managed over ssh",
+    "What is being dragged out is shown beside the pointer (client app)",
+    "Electron 45; many fixes to the clipboard, drag-and-drop and session handling"
+  ]
+}

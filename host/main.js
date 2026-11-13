@@ -706,13 +706,26 @@ function codeStamp() {
 const startedStamp = codeStamp();
 function restart() { quitting = true; app.relaunch(); app.quit(); }
 
+// ---- the installed app -----------------------------------------------------------------
+// Started by the app's shell (app/boot.js) this code is one version of an installed app: the shell
+// says which (global.__mrApp), finds and installs updates (app/updater.js), and wants to hear that this
+// version came up (ok()), or it goes back to the one before. Run from a source folder there is no
+// shell: the version is package.json's and updates come by git.
+const APP = global.__mrApp || null;
+let sessionLive = false;
+const appVersion = () => (APP ? APP.version : require('./package.json').version);
+const updateInfo = () => ({ version: appVersion(), installed: !!APP, rolledBack: APP ? APP.rolledBack : [], ...(APP && APP.update ? APP.update.status() : { state: 'none' }) });
+
 function createWindow() {
   win = new BrowserWindow({
     width: 560, height: 680, title: 'My Remote Host', autoHideMenuBar: true, show: !SELFTEST && !BENCH, icon: icon(false),
     // sandbox off: the preload script loads the native capturer (it still runs apart from the page's own scripts).
     webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false, sandbox: false },
   });
-  win.loadFile('host.html');
+  win.loadFile(path.join(__dirname, 'host.html')); // by this file's place: in the installed app the app's own folder is the shell's
+  // The installed app: this version counts as up once its page has loaded and stayed for a while (a
+  // page that keeps crashing never gets there, and the shell goes back to the version before).
+  if (APP && !ISOLATED) win.webContents.on('did-finish-load', () => setTimeout(() => { if (!win.isDestroyed() && !win.webContents.isCrashed()) APP.ok(); }, 8000));
   // Closing the window keeps the host running in the tray; quit from the tray menu.
   win.on('close', (e) => { if (!quitting && !ISOLATED) { e.preventDefault(); win.hide(); } });
   // The page goes away without its own teardown when it reloads or its process ends (see pageGone).
@@ -733,7 +746,7 @@ function createWindow() {
 let crashes = [], reloadTimer = null;
 function reloadCrashedPage() {
   clearTimeout(reloadTimer);
-  if (win && !win.isDestroyed() && win.webContents.isCrashed()) win.loadFile('host.html');
+  if (win && !win.isDestroyed() && win.webContents.isCrashed()) win.loadFile(path.join(__dirname, 'host.html'));
 }
 function createTray() {
   tray = new Tray(icon(false));
@@ -741,7 +754,8 @@ function createTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '열기', click: showWindow },
     { label: '원격 연결 끊기', click: () => win && win.webContents.send('kick') },
-    { label: '다시 시작 (업데이트 적용)', click: restart },
+    // From a source folder: the code on disk (git pull). The installed app: a look at the update feed.
+    APP && APP.update ? { label: '업데이트 확인', click: () => { showWindow(); APP.update.check(); } } : { label: '다시 시작 (업데이트 적용)', click: restart },
     { type: 'separator' },
     { label: '종료', click: () => { quitting = true; app.quit(); } },
   ]));
@@ -758,9 +772,13 @@ else {
   app.whenReady().then(async () => {
     // The code is newer than the Electron it runs on: it was updated (git pull) without setup.ps1/setup.sh.
     const pkg = require('./package.json'), wanted = Number((/(\d+)/.exec((pkg.devDependencies || {}).electron || (pkg.dependencies || {}).electron || '') || [])[1]) || 0;
-    const oldElectron = wanted && Number(process.versions.electron.split('.')[0]) < wanted ? process.versions.electron : '';
+    // (Not in the installed app: there a version only runs on a shell it was made for.)
+    const oldElectron = !APP && wanted && Number(process.versions.electron.split('.')[0]) < wanted ? process.versions.electron : '';
     if (oldElectron) console.warn(`[host] WARNING: this code expects Electron ${wanted}, but runs on ${oldElectron}: run setup.ps1 (Linux: ./setup.sh) to finish the update`);
     await loadConfig();
+    // Waiting for the person's answer about a key that cannot be read is this PC's trouble, not this
+    // version's: the installed app's shell must not take the wait for a version that does not come up.
+    if (!cfg.key && APP && !ISOLATED) APP.ok();
     if (!cfg.key && !(await askForKey())) { quitting = true; app.quit(); return; }
     cfg.hostOs = hostOs();
     cfg.updateNote = oldElectron ? `업데이트가 덜 끝났습니다: 코드는 Electron ${wanted}용인데 ${oldElectron}에서 돌고 있습니다. 호스트를 끄고 ${process.platform === 'win32' ? 'setup.ps1' : './setup.sh'}을 실행한 뒤 다시 시작하세요.` : '';
@@ -891,9 +909,20 @@ else {
       timedAsync('clip-write', () => clipboard.writeText(text)).catch((e) => console.error('clip write', e.message)).finally(() => releaseInput(id));
     });
     ipcMain.on('session', (_e, live) => {
+      sessionLive = !!live;
       setTray(!!live);
       if (live && !SELFTEST && !BENCH && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: '원격 접속이 시작되었습니다.' }).show();
     });
+    // Updates of the installed app (see updateInfo above). A required update restarts the host by
+    // itself: not in the middle of a remote session (the shell waits for it to end, half an hour at most).
+    ipcMain.handle('update-status', updateInfo);
+    ipcMain.handle('update-check', async () => { if (APP && APP.update) await APP.update.check(); return updateInfo(); });
+    ipcMain.handle('update-install', async () => { try { if (APP && APP.update) { quitting = true; await APP.update.install(); return true; } } catch (e) { quitting = false; console.error('[host] update:', e.message); } return false; });
+    ipcMain.handle('update-page', () => { if (APP && APP.downloads) shell.openExternal(APP.downloads).catch(() => {}); return true; });
+    if (APP && APP.update) {
+      APP.update.setCanRestart(() => { if (sessionLive) return false; quitting = true; return true; });
+      APP.update.onChange(() => { if (win && !win.isDestroyed()) win.webContents.send('update-changed', updateInfo()); });
+    }
     ipcMain.handle('copy-key', async () => {
       if (keyOnClip) clearTimeout(keyOnClip.timer);
       keyOnClip = null;
@@ -965,7 +994,8 @@ else {
         if (process.platform === 'win32') return shell.openPath(file);
         const env = { ...process.env };
         delete env.ELECTRON_RUN_AS_NODE;
-        require('child_process').spawn(process.execPath, [path.join(__dirname, '..', 'client'), '--loader=' + file, ...process.argv.filter((a) => a === '--no-sandbox')],
+        // (The installed app is one program with two faces: it is told which, not given a folder.)
+        require('child_process').spawn(process.execPath, [APP ? '--client' : path.join(__dirname, '..', 'client'), '--loader=' + file, ...process.argv.filter((a) => a === '--no-sandbox')],
           { env, detached: true, stdio: 'ignore' }).unref();
       };
       setTimeout(open, 2500); // after the host has subscribed

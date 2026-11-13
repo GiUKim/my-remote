@@ -226,6 +226,34 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     if (!ok) throw new Error('no connection');
     const N = s.monitors;
 
+    // The host window's word on updates of the installed app (showUpdate in host.js), with made-up ones:
+    // one on offer can be put off, a required one cannot, one that needs a new package says so.
+    {
+      const r = await hostWin.webContents.executeJavaScript(`(() => {
+        const vis = (id) => getComputedStyle(document.getElementById(id)).display !== 'none', text = (id) => document.getElementById(id).textContent;
+        const base = { version: '1.0.0', installed: true, rolledBack: [], error: '', checkedAt: 0, progress: 0 }, notes = { ko: ['고친 것 하나'], en: [] };
+        const offer = (version, required, kind) => showUpdate({ ...base, state: 'available', available: { version, required, kind, notes, size: 500000 } });
+        const out = {};
+        showUpdate({ ...base, state: 'idle', available: null });
+        out.none = !vis('upd') && text('ver') === 'v1.0.0';
+        offer('1.0.1', false, 'bundle');
+        out.offered = vis('upd') && /1\\.0\\.1/.test(text('updTitle')) && vis('updGo') && vis('updLater') && text('updNotes').includes('고친 것 하나');
+        document.getElementById('updLater').click();
+        offer('1.0.1', false, 'bundle');
+        out.putOff = !vis('upd');
+        offer('1.0.2', true, 'bundle');
+        out.required = vis('upd') && /중요/.test(text('updTitle')) && !vis('updGo') && !vis('updLater');
+        offer('2.0.0', false, 'package');
+        out.newPackage = vis('upd') && vis('updGo') && /내려받기/.test(text('updGo'));
+        showUpdate({ ...base, installed: false, state: 'none', available: null });
+        out.fromSource = !vis('upd') && /소스/.test(text('ver'));
+        updateLater = '';
+        api.update.status().then(showUpdate);
+        return out;
+      })()`);
+      check('the host window shows an update on offer, lets it be put off, and says when one is required or needs a new package', Object.values(r).every(Boolean), JSON.stringify(r));
+    }
+
     // --soak=<minutes>: a long session instead of the rest, to find what grows (no input injected).
     // The client keeps switching monitors and going to the overview and back, and every minute the
     // host drops the session so that the client connects again. Memory of every process and the two
@@ -1036,7 +1064,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       const from = fs.existsSync(diag) ? fs.statSync(diag).size : 0;
       const env = { ...process.env };
       delete env.ELECTRON_RUN_AS_NODE;
-      const args = [path.join(__dirname, '..', 'client'), '--loader=' + loader, ...process.argv.filter((a) => a === '--no-sandbox' || a === '--disable-gpu')];
+      const args = [global.__mrApp ? '--client' : path.join(__dirname, '..', 'client'), '--loader=' + loader, ...process.argv.filter((a) => a === '--no-sandbox' || a === '--disable-gpu')]; // the installed app: one program, told which face
       const child = require('child_process').spawn(process.execPath, args, { env, stdio: 'ignore' });
       let seen = null;
       for (let i = 0; i < 60 && !seen; i++) {

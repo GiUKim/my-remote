@@ -1,0 +1,9 @@
+{
+  "name": "my-remote",
+  "productName": "My Remote",
+  "version": "0.3.0",
+  "base": 1,
+  "description": "My Remote: the installed app's shell (boot, updater). The host and the client app are the code it runs.",
+  "main": "boot.js",
+  "private": true
+}

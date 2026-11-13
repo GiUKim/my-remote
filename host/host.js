@@ -736,6 +736,47 @@ async function onMessage(m) {
   }
 }
 
+// ---- the installed app's version and updates ------------------------------------------
+// The shell (app/updater.js) finds them; here the person at this PC is told and decides. An ordinary
+// update waits for "지금 업데이트"; a required one (a serious fault in this version) installs by itself
+// and restarts the host once no one is connected. From a source folder (state 'none') only the
+// version is shown.
+// (showUpdate is a function of its own so that the self-test can show it made-up updates.)
+let updateLater = '', updateTold = false; // the version the person put off (until the host starts again); a going back, said once
+function showUpdate(u) {
+  if (!u) return;
+  $('ver').textContent = 'v' + u.version + (u.installed ? '' : ' · 소스 폴더에서 실행 중');
+  $('ver').title = !u.installed ? '소스 폴더에서 실행 중입니다. 업데이트는 git pull과 설치 스크립트로 합니다.'
+    : u.error ? '업데이트를 확인하지 못했습니다: ' + u.error
+    : u.checkedAt ? '최신 버전입니다 · 확인 ' + new Date(u.checkedAt).toLocaleTimeString() : '';
+  const a = u.available, card = $('upd');
+  if (!updateTold) for (const r of u.rolledBack || []) log(`버전 ${r.version}은 이 PC에서 시작하지 못해 이전 버전으로 되돌렸습니다 (${r.why})`);
+  updateTold = true;
+  if (!a || (a.version === updateLater && !a.required && u.state === 'available')) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const pack = a.kind === 'package';
+  $('updTitle').textContent = a.required ? `중요 업데이트 ${a.version}` : `새 버전 ${a.version}이 있습니다`;
+  $('updText').textContent = u.state === 'downloading' ? `받는 중… ${Math.round((u.progress || 0) * 100)}%`
+    : u.state === 'ready' ? (a.required ? '설치했습니다. 원격 접속이 없을 때 호스트를 다시 시작합니다(늦어도 30분 뒤).' : '설치했습니다. 다시 시작합니다…')
+    : pack ? '이 버전은 새 설치 파일이 필요합니다. 내려받아 다시 설치해 주세요(접속 키와 설정은 그대로 남습니다).'
+    : a.required ? '이 버전의 심각한 문제를 고친 업데이트라 자동으로 설치합니다.' + (u.error ? ` (실패: ${u.error} — 다시 시도합니다)` : '')
+    : `현재 v${u.version} · ${(a.size / 1024 / 1024).toFixed(1)} MB` + (u.error ? ` · 실패: ${u.error}` : '');
+  const ul = $('updNotes');
+  ul.textContent = '';
+  for (const line of (a.notes && a.notes.ko) || []) { const li = document.createElement('li'); li.textContent = line; ul.append(li); }
+  const busy = u.state === 'downloading' || u.state === 'ready';
+  $('updGo').style.display = busy || (a.required && !pack) ? 'none' : '';
+  $('updGo').textContent = pack ? '내려받기 페이지 열기' : '지금 업데이트';
+  $('updGo').onclick = () => { if (pack) api.update.page(); else { if (session) log('업데이트를 설치하고 다시 시작합니다. 접속 중인 클라이언트는 잠시 뒤 다시 연결됩니다.'); api.update.install(); } };
+  $('updLater').style.display = busy || a.required ? 'none' : '';
+  $('updLater').onclick = () => { updateLater = a.version; card.style.display = 'none'; };
+}
+function watchUpdates() {
+  if (!api.update) return;
+  api.update.status().then(showUpdate, () => {});
+  api.update.onChange(showUpdate);
+}
+
 (async () => {
   cfg = await api.getConfig();
   keys = await RD.derive(cfg.key);
@@ -748,6 +789,7 @@ async function onMessage(m) {
   log('호스트 시작: ' + new Date().toLocaleString());
   if (cfg.viewOnly) log('주의: 이 PC에서는 원격 입력을 넣을 수 없어 보기 전용으로 동작합니다 (' + cfg.viewOnly + ')');
   if (cfg.updateNote) log('주의: ' + cfg.updateNote);
+  watchUpdates();
 
   let shown = false;
   $('show').onclick = () => { shown = !shown; $('key').textContent = shown ? cfg.key : '••••••••••••••••••••••••'; $('show').textContent = shown ? '숨기기' : '표시'; };

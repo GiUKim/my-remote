@@ -34,6 +34,14 @@ contextBridge.exposeInMainWorld('hostApi', {
   copyKey: () => ipcRenderer.invoke('copy-key'),
   regenKey: () => ipcRenderer.invoke('regen-key'),
   exportClient: () => ipcRenderer.invoke('export-client'),
+  // The installed app's version and updates (main.js: updateInfo). `state` is 'none' when run from a source folder.
+  update: {
+    status: () => ipcRenderer.invoke('update-status'),
+    check: () => ipcRenderer.invoke('update-check'),
+    install: () => ipcRenderer.invoke('update-install'),
+    page: () => ipcRenderer.invoke('update-page'),
+    onChange: (fn) => ipcRenderer.on('update-changed', (_e, s) => fn(s)),
+  },
   nativeCapture: () => !!capturer(),
   nativeOpen: () => { const c = capturer(); return c && c.openCount ? c.openCount() : -1; }, // X11: capturers not let go yet (the self-test)
   others: () => ipcRenderer.invoke('others'),
