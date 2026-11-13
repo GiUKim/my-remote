@@ -23,6 +23,7 @@
 struct Capturer {
   bool used;
   SRWLOCK lock;
+  int slot;            // its handle, which is also its place in g_kept
   int px, py;          // a point of the desktop inside the monitor, in physical pixels (from mc_open)
   IDXGIOutput1* output; ID3D11Device* device; ID3D11DeviceContext* context; IDXGIOutputDuplication* dup; ID3D11Texture2D* staging;
   int width, height;   // of the desktop image
@@ -33,6 +34,14 @@ struct Capturer {
   union { RECT dirty[256]; DXGI_OUTDUPL_MOVE_RECT moved[170]; } meta; // what changed with a frame
 };
 static Capturer g_caps[8];
+// The graphics device of each capturer handle outlives mc_close: the next mc_open of that handle (the
+// next session opens its monitors in the same order) takes it over while it is on the same adapter and
+// still works. Destroying a device that had received duplicated frames left one section and one mutex
+// behind in this process every time (150 open/close pairs, 150 of each; none when the device is kept),
+// and making a device costs time at every session start. Each handle has its own, so a device context
+// is never used by two capturers.
+struct Kept { LUID luid; ID3D11Device* device; ID3D11DeviceContext* context; };
+static Kept g_kept[8];
 static SRWLOCK g_table = SRWLOCK_INIT;
 static char g_error[200] = "";
 // A capture that keeps failing is tried again for this long before mc_next gives up (-4) and the
@@ -73,9 +82,15 @@ static HRESULT duplicate(Capturer& c) {
   c.width = (int)d.ModeDesc.Width; c.height = (int)d.ModeDesc.Height;
   return S_OK;
 }
-// Lets go of the duplication and the graphics device, to start over with new ones or for good.
+// Lets go of the duplication and of this capturer's hold on the graphics device (the device itself is
+// kept for the next capturer of this handle, see g_kept), to start over or for good.
 static void release(Capturer& c) { drop(c.staging); drop(c.dup); drop(c.context); drop(c.device); drop(c.output); }
-static void closeAll(Capturer& c) { release(c); c.used = false; }
+static void forget(Kept& k) { drop(k.context); drop(k.device); }
+static void closeAll(Capturer& c) {
+  if (c.context) { c.context->ClearState(); c.context->Flush(); } // the kept device holds on to nothing of this capturer's
+  release(c);
+  c.used = false;
+}
 
 // Finds the monitor at the capturer's point, makes a graphics device and starts the duplication.
 // What it made stays in c also when a later step failed.
@@ -95,8 +110,19 @@ static HRESULT start(Capturer& c) {
     if (!found) drop(adapter);
   }
   if (SUCCEEDED(hr) && !found) { hr = E_FAIL; fail("no monitor at that point", hr); }
-  // The device must be on the adapter the monitor hangs on (a PC can have several).
-  if (SUCCEEDED(hr)) { hr = D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &c.device, nullptr, &c.context); if (FAILED(hr)) fail("D3D11CreateDevice", hr); }
+  // The device must be on the adapter the monitor hangs on (a PC can have several). The one kept for
+  // this handle is taken when it is on that adapter and was not removed (a reset of the graphics card).
+  if (SUCCEEDED(hr)) {
+    DXGI_ADAPTER_DESC1 ad = {};
+    adapter->GetDesc1(&ad);
+    Kept& k = g_kept[c.slot];
+    if (k.device && (memcmp(&k.luid, &ad.AdapterLuid, sizeof ad.AdapterLuid) != 0 || k.device->GetDeviceRemovedReason() != S_OK)) forget(k);
+    if (!k.device) {
+      hr = D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &k.device, nullptr, &k.context);
+      if (FAILED(hr)) { fail("D3D11CreateDevice", hr); forget(k); } else k.luid = ad.AdapterLuid;
+    }
+    if (SUCCEEDED(hr)) { c.device = k.device; c.device->AddRef(); c.context = k.context; c.context->AddRef(); }
+  }
   if (SUCCEEDED(hr)) { hr = output->QueryInterface(__uuidof(IDXGIOutput1), (void**)&c.output); if (FAILED(hr)) fail("IDXGIOutput1", hr); }
   if (SUCCEEDED(hr)) hr = duplicate(c);
   drop(output); drop(adapter); drop(factory);
@@ -148,6 +174,7 @@ EXPORT int mc_open(int px, int py) {
   Capturer& c = g_caps[handle];
   memset(&c, 0, sizeof c);
   InitializeSRWLock(&c.lock);
+  c.slot = handle;
   c.px = px; c.py = py;
   if (FAILED(start(c))) { closeAll(c); handle = -1; } else c.used = true;
   ReleaseSRWLockExclusive(&g_table);
@@ -262,7 +289,7 @@ EXPORT void mc_test_lose(int handle, int what) {
   Capturer& c = g_caps[handle];
   AcquireSRWLockExclusive(&c.lock);
   if (c.used) {
-    if (what == 1) drop(c.dup); else release(c);
+    if (what == 1) drop(c.dup); else { release(c); forget(g_kept[handle]); } // a lost device is not kept either
     if (what == 3) { c.px = c.py = INT_MIN; c.failingSince = tick() - (LONGLONG)(GIVE_UP_MS / g_tickMs) - 1; }
   }
   ReleaseSRWLockExclusive(&c.lock);
