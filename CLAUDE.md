@@ -157,7 +157,13 @@ the client app instead).
   (`dragq`; the host then polls `input.dragging()` every 15 ms). Let go in that time, it waits for the
   answer: a drag shows up -> `dragout`, else `mu` where the host's pointer waited. The old behaviour
   (moves past the edge at once) clamped the host's drag at the screen edge and, on release, let go
-  there - the failure the user reported. A dragged folder is sent as its files with paths ('a/b/c')
+  there - the failure the user reported. **Ctrl crosses at once** (the user's wish, 2026-11-13): with a
+  button held and Ctrl pressed, leaving the host's picture - even onto this window's own bar or another
+  client window - takes the pointer over to this PC (`view.crossed`): no wait, never on to the host's
+  neighbouring monitor; let go there, what the host drags is carried out (a drag may still show up for
+  1 s), else the button is let go where the host's pointer waited. Carrying out shows "놓으면 이 PC로
+  복사됩니다" in the window (outside it the browser cannot show a drag image: the host's drag icon stays at
+  the edge, which is what looked "blocked" to the user). A dragged folder is sent as its files with paths ('a/b/c')
   plus `dir` entries for empty folders; links and junctions are not followed. This replaces the host's
   clipboard. Isolated modes never do the key presses. On the client the app (`client/shell.js`) saves
   files into the folder they were dropped on (desktop, or an Explorer window whose folder it asks the
@@ -176,7 +182,8 @@ the client app instead).
   events only, since the B/C events are made up). While carrying out, every window shows the `copy`
   cursor; whether it shows outside the windows depends on the browser (not checked).
 
-- **Files dragged or pasted in (client -> host).** The page uploads them on an `upload` channel;
+- **Files dragged or pasted in (client -> host).** (On a Linux host the drop is an XDND drag, see the
+  Linux notes; what follows is Windows.) The page uploads them on an `upload` channel;
   `main.js` writes them under `%TEMP%\my-remote-in\<id>` (asynchronously: input shares that thread)
   and then drops them for real where they were let go: `so_drop` in `host/bin/shellops.dll`
   (`native/shellops.cpp`) runs an OLE drag of the shell's own data object for the items, so a folder
@@ -296,7 +303,20 @@ the client app instead).
     `UTF8_STRING`), and the drag is ended with Escape and the release: no Ctrl+C, the host's clipboard
     stays as it was. Escape + Ctrl+C (still the fallback) does not work with Chromium-based sources:
     Chromium clears its text selection 3 ms after a cancelled drag, so Ctrl+C copies nothing. Whether
-    Chrome or VS Code on a Windows host behave the same way was not checked.
+    Chrome or VS Code on a Windows host behave the same way was not checked. With real Nautilus 42.6
+    (the server, Xvfb, a session bus; the item found with AT-SPI, `pyatspi`) the drag of a file was seen
+    142 ms after the press and its path read from the selection.
+  - Drop-in (files from the client): `dropFiles` in `platform/linux.js` is an XDND source, as
+    `shellops.dll` does with OLE on Windows: the program under the pointer that takes drops is found from
+    the root down (`XdndAware` on the program's window inside the window manager's frame; `XdndProxy`
+    followed), told `XdndEnter` (text/uri-list) and `XdndPosition` (resent every 150 ms until it accepts,
+    1.5 s at most), then `XdndDrop`; its `SelectionRequest` for the list is answered from `pump()`, and
+    `XdndFinished` ends it (5 s at most). Nothing taking the drop: the clipboard, as before. Checked on
+    Xvfb: a Chromium window and a GTK 3 window take the file (`--input-check` has the Chromium case), the
+    bare root window takes nothing. Nautilus on that server refused every external drop, also from
+    Chromium and from a real GTK 3 drag (its gvfs/document portal cannot start there: "fuse init
+    failed"), so Nautilus and the GNOME desktop as targets are not verified. Before this the host only put
+    the files on its clipboard, which the user saw as "copied to the clipboard" with nothing dropped.
   - The clipboard's change counter (`clipSeq`) counts XFixes owner changes of `CLIPBOARD`. Electron's
     `clipboard.writeBuffer` replaces the whole clipboard on each call, so a file list goes on in one
     format: `x-special/gnome-copied-files` (GNOME Files, Nemo, Caja, Thunar), `text/uri-list` when

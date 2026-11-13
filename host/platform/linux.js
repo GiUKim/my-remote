@@ -25,6 +25,14 @@ const SelectionEvent = koffi.struct('MrXSelectionEvent', { // XSelectionEvent: t
   type: 'int', serial: 'unsigned long', send_event: 'int', display: 'void *', requestor: 'unsigned long',
   selection: 'unsigned long', target: 'unsigned long', property: 'unsigned long', time: 'unsigned long',
 });
+const ClientMessage = koffi.struct('MrXClientMessageEvent', { // XClientMessageEvent, format 32
+  type: 'int', serial: 'unsigned long', send_event: 'int', display: 'void *', window: 'unsigned long',
+  message_type: 'unsigned long', format: 'int', l: koffi.array('long', 5),
+});
+const SelectionRequest = koffi.struct('MrXSelectionRequestEvent', {
+  type: 'int', serial: 'unsigned long', send_event: 'int', display: 'void *', owner: 'unsigned long',
+  requestor: 'unsigned long', selection: 'unsigned long', target: 'unsigned long', property: 'unsigned long', time: 'unsigned long',
+});
 const ErrorHandler = koffi.proto('int MrXErrorHandler(void *display, void *event)');
 
 let X = null; // { dpy, f, ... } once open, false when there is no usable display
@@ -58,6 +66,10 @@ function open() {
       XSetErrorHandler: x11.func('MrXErrorHandler *XSetErrorHandler(MrXErrorHandler *handler)'),
       XCreateSimpleWindow: x11.func('unsigned long XCreateSimpleWindow(void *dpy, unsigned long parent, int x, int y, unsigned int width, unsigned int height, unsigned int border, unsigned long borderColour, unsigned long background)'),
       XConvertSelection: x11.func('int XConvertSelection(void *dpy, unsigned long selection, unsigned long target, unsigned long property, unsigned long requestor, unsigned long time)'),
+      XSetSelectionOwner: x11.func('int XSetSelectionOwner(void *dpy, unsigned long selection, unsigned long owner, unsigned long time)'),
+      XSendEvent: x11.func('int XSendEvent(void *dpy, unsigned long w, int propagate, long mask, void *event)'),
+      XChangeProperty: x11.func('int XChangeProperty(void *dpy, unsigned long w, unsigned long property, unsigned long type, int format, int mode, const uint8_t *data, int count)'),
+      XTranslateCoordinates: x11.func('int XTranslateCoordinates(void *dpy, unsigned long src, unsigned long dest, int x, int y, _Out_ int *destX, _Out_ int *destY, _Out_ unsigned long *child)'),
       XTestQueryExtension: xtst.func('int XTestQueryExtension(void *dpy, _Out_ int *event, _Out_ int *error, _Out_ int *major, _Out_ int *minor)'),
       XTestFakeMotionEvent: xtst.func('int XTestFakeMotionEvent(void *dpy, int screen, int x, int y, unsigned long delay)'),
       XTestFakeButtonEvent: xtst.func('int XTestFakeButtonEvent(void *dpy, unsigned int button, int press, unsigned long delay)'),
@@ -78,6 +90,9 @@ function open() {
         _NET_WM_NAME: atom('_NET_WM_NAME'), _NET_WM_WINDOW_TYPE: atom('_NET_WM_WINDOW_TYPE'), _NET_WM_WINDOW_TYPE_DESKTOP: atom('_NET_WM_WINDOW_TYPE_DESKTOP'),
         TARGETS: atom('TARGETS'), INCR: atom('INCR'), URI_LIST: atom('text/uri-list'), UTF8_STRING: atom('UTF8_STRING'),
         TEXT_UTF8: atom('text/plain;charset=utf-8'), TEXT_PLAIN: atom('text/plain'), DATA: atom('MY_REMOTE_DND_DATA'),
+        XdndAware: atom('XdndAware'), XdndProxy: atom('XdndProxy'), XdndEnter: atom('XdndEnter'), XdndPosition: atom('XdndPosition'),
+        XdndStatus: atom('XdndStatus'), XdndLeave: atom('XdndLeave'), XdndDrop: atom('XdndDrop'), XdndFinished: atom('XdndFinished'),
+        XdndActionCopy: atom('XdndActionCopy'), ATOM: 4,
       },
       requestor: 0, // a window of ours that selection data is sent to (made when first needed)
       event: Buffer.alloc(24 * UL), // sizeof(XEvent)
@@ -138,6 +153,7 @@ function pump() {
       answers.push({ requestor: readUL(x.event, ANS.requestor), target: readUL(x.event, ANS.target), property: readUL(x.event, ANS.property) });
       if (answers.length > 16) answers.shift();
     }
+    if ((type === 33 || type === 30) && dnd) { dndEvent(type); continue; } // ClientMessage, SelectionRequest: a drop of ours
     if (!x.fixes || type !== x.fixes.event) continue;
     const sel = readUL(x.event, SEL.selection), owner = readUL(x.event, SEL.owner);
     if (sel === x.atoms.CLIPBOARD) clipChanges++;
@@ -190,6 +206,110 @@ async function dragData() {
   }
   return null;
 }
+// ---- dropping files where the pointer is (XDND, as the drag source) ---------------------------
+// Files from the client dropped on the program under the host's pointer the way a drag from another
+// program drops them: a folder window or a folder icon in it, the desktop, a mail or chat window each
+// do what they do with a local drop (on Windows so_drop in shellops.dll does this). The program that
+// takes drops is found from the root window down (a window manager's frame takes none; the program's
+// own window inside it says so with XdndAware, maybe through an XdndProxy); it is told of a drag that
+// enters with text/uri-list at the pointer's place, and when it answers that it takes it, of the drop;
+// it then asks for the list of files (a SelectionRequest on XdndSelection, answered from pump()) and
+// says when it is done (XdndFinished). Every message names another program's window: guarded.
+const CM = { window: koffi.offsetof(ClientMessage, 'window'), type: koffi.offsetof(ClientMessage, 'message_type'), format: koffi.offsetof(ClientMessage, 'format'), l: koffi.offsetof(ClientMessage, 'l') };
+const SR = { owner: koffi.offsetof(SelectionRequest, 'owner'), requestor: koffi.offsetof(SelectionRequest, 'requestor'), selection: koffi.offsetof(SelectionRequest, 'selection'), target: koffi.offsetof(SelectionRequest, 'target'), property: koffi.offsetof(SelectionRequest, 'property'), time: koffi.offsetof(SelectionRequest, 'time') };
+const SN = { requestor: ANS.requestor, selection: koffi.offsetof(SelectionEvent, 'selection'), target: ANS.target, property: ANS.property, time: koffi.offsetof(SelectionEvent, 'time') };
+const writeUL = (buf, off, v) => (UL === 8 ? buf.writeBigUInt64LE(BigInt(v), off) : buf.writeUInt32LE(v >>> 0, off));
+let dnd = null; // the drop under way: { src, target, version, data, status, finished, served, seen }
+let lastDrop = null; // what the last drop saw, for the log and the checks
+function sendClient(x, to, win, type, l) {
+  const ev = Buffer.alloc(24 * UL);
+  ev.writeInt32LE(33, 0); // ClientMessage
+  writeUL(ev, CM.window, win); writeUL(ev, CM.type, type); ev.writeInt32LE(32, CM.format);
+  l.forEach((v, i) => writeUL(ev, CM.l + i * UL, v));
+  x.f.XSendEvent(x.dpy, to, 0, 0, ev);
+}
+// An event of the drop under way (from pump): the target's answers, or its request for the files.
+function dndEvent(type) {
+  const x = open(), ev = x.event;
+  if (type === 33) {
+    const mt = readUL(ev, CM.type), l = [0, 1, 2, 3, 4].map((i) => readUL(ev, CM.l + i * UL));
+    dnd.seen.push((mt === x.atoms.XdndStatus ? 'status' : mt === x.atoms.XdndFinished ? 'finished' : 'msg' + mt) + ':' + l[0].toString(16) + ':' + l[1]);
+    if (mt === x.atoms.XdndStatus && l[0] === dnd.target) dnd.status = { accept: !!(l[1] & 1) };
+    else if (mt === x.atoms.XdndFinished && l[0] === dnd.target) dnd.finished = { accepted: dnd.version < 5 || !!(l[1] & 1) };
+    return;
+  }
+  dnd.seen.push('request:' + readUL(ev, SR.target) + (readUL(ev, SR.owner) === dnd.src ? '' : ':other-owner'));
+  if (readUL(ev, SR.selection) !== x.atoms.XdndSelection || readUL(ev, SR.owner) !== dnd.src) return;
+  const requestor = readUL(ev, SR.requestor), target = readUL(ev, SR.target), time = readUL(ev, SR.time);
+  let property = readUL(ev, SR.property) || target; // an old program may name none: then the target's name
+  guarded((x) => {
+    if (target === x.atoms.TARGETS) {
+      const list = [x.atoms.TARGETS, x.atoms.URI_LIST, x.atoms.TEXT_PLAIN], b = Buffer.alloc(list.length * UL);
+      list.forEach((a, i) => writeUL(b, i * UL, a));
+      x.f.XChangeProperty(x.dpy, requestor, property, x.atoms.ATOM, 32, 0, b, list.length);
+    } else if (target === x.atoms.URI_LIST || target === x.atoms.TEXT_PLAIN) {
+      x.f.XChangeProperty(x.dpy, requestor, property, target, 8, 0, dnd.data, dnd.data.length);
+      dnd.served = true;
+    } else property = 0; // not something we hand over
+    const reply = Buffer.alloc(24 * UL);
+    reply.writeInt32LE(31, 0); // SelectionNotify
+    writeUL(reply, SN.requestor, requestor); writeUL(reply, SN.selection, x.atoms.XdndSelection); writeUL(reply, SN.target, target);
+    writeUL(reply, SN.property, property); writeUL(reply, SN.time, time);
+    x.f.XSendEvent(x.dpy, requestor, 0, 0, reply);
+  }, null);
+}
+// The window under (px, py) that takes drops: { win, to (where the messages go), version } or null.
+function xdndTarget(x, px, py) {
+  let w = x.root;
+  for (let depth = 0; depth < 24; depth++) {
+    const dx = [0], dy = [0], child = [0];
+    if (!x.f.XTranslateCoordinates(x.dpy, x.root, w, px, py, dx, dy, child) || !child[0]) return null;
+    const c = child[0], aware = readProperty(x, c, x.atoms.XdndAware, 1);
+    if (aware && Array.isArray(aware.data) && aware.data.length) {
+      const proxy = readProperty(x, c, x.atoms.XdndProxy, 1);
+      return { win: c, to: proxy && Array.isArray(proxy.data) && proxy.data[0] ? proxy.data[0] : c, version: Math.min(5, aware.data[0]) };
+    }
+    w = c;
+  }
+  return null;
+}
+// -> 1: taken; 0: nothing under the pointer took the files; -1: no X11 (or a drop already under way).
+async function dropFiles(paths) {
+  const x = open();
+  if (!x || dnd || !paths.length) return -1;
+  x.f.XSync(x.dpy, 0); // the pointer has just been moved there
+  const at = guarded((x) => { const r = [0], c = [0], rx = [0], ry = [0], wx = [0], wy = [0], m = [0]; return x.f.XQueryPointer(x.dpy, x.root, r, c, rx, ry, wx, wy, m) ? { px: rx[0], py: ry[0] } : null; }, null);
+  const t = at && guarded((x) => xdndTarget(x, at.px, at.py), null);
+  lastDrop = { at, target: t && t.win.toString(16), to: t && t.to.toString(16), version: t && t.version, seen: [] };
+  if (!t) return 0;
+  if (!x.dndSrc) x.dndSrc = x.f.XCreateSimpleWindow(x.dpy, x.root, -20, -20, 1, 1, 0, 0, 0);
+  dnd = { src: x.dndSrc, target: t.win, version: t.version, status: null, finished: null, served: false, seen: lastDrop.seen,
+    data: Buffer.from(paths.map((p) => url.pathToFileURL(p).href).join('\r\n') + '\r\n') };
+  const send = (type, l) => guarded((x) => sendClient(x, t.to, t.win, type, l), null);
+  try {
+    x.f.XSetSelectionOwner(x.dpy, x.atoms.XdndSelection, dnd.src, 0);
+    send(x.atoms.XdndEnter, [dnd.src, t.version << 24, x.atoms.URI_LIST, 0, 0]);
+    const position = () => send(x.atoms.XdndPosition, [dnd.src, 0, (at.px << 16) | (at.py & 0xffff), 0, x.atoms.XdndActionCopy]);
+    position();
+    // A target may first say no (still looking at what is offered) or answer a later position only.
+    for (let end = Date.now() + 1500, last = Date.now(); Date.now() < end && !(dnd.status && dnd.status.accept);) {
+      await sleep(15);
+      pump();
+      if (Date.now() - last > 150) { position(); last = Date.now(); }
+    }
+    if (!(dnd.status && dnd.status.accept)) { send(x.atoms.XdndLeave, [dnd.src, 0, 0, 0, 0]); return 0; }
+    send(x.atoms.XdndDrop, [dnd.src, 0, 0, 0, 0]);
+    // It asks for the files now (pump answers); a name clash may keep it asking the person meanwhile.
+    for (let end = Date.now() + 5000; Date.now() < end && !dnd.finished;) { await sleep(15); pump(); }
+    return dnd.finished ? (dnd.finished.accepted ? 1 : 0) : dnd.served ? 1 : 0;
+  } finally {
+    Object.assign(lastDrop, { status: dnd.status, served: dnd.served, finished: dnd.finished, errors });
+    dnd = null;
+    x.f.XFlush(x.dpy);
+  }
+}
+const lastDropInfo = () => lastDrop;
+
 // Changes whenever someone takes the clipboard (as copying does). Without XFixes: always "changed".
 let unknownSeq = 0;
 function clipSeq() {
@@ -532,6 +652,6 @@ function underPointer() {
 module.exports = {
   viewOnlyReason, hidesCursors: false, // X11 has no way to swap every program's cursor for a transparent one
   move, button, wheel, keyOf, sendKey, typeText, maskKey,
-  cursorState, cursorBitmap, dragging, dragData, clipSeq, clipboardFiles, setClipboardFiles, underPointer,
+  cursorState, cursorBitmap, dragging, dragData, dropFiles, lastDropInfo, clipSeq, clipboardFiles, setClipboardFiles, underPointer,
   keyCodes: Object.keys(EVDEV), // for the self-test's --input-check
 };

@@ -23,6 +23,7 @@ const NEUTRAL = {
   captureClass: () => '',
   dragging: () => false,
   dragData: async () => null, // what the drag under way carries, where the platform can ask the dragging program
+  dropFiles: async () => -1, // files dropped on what is under the pointer (X11; Windows does this in shellops.dll): 1 taken, 0 not, -1 cannot
   clipboardFiles: () => [],
   underPointer: () => null,
   buttonsHeld: () => null, // the mouse buttons held right now (bit b = button b of md/mu); null: cannot tell here
@@ -227,6 +228,7 @@ module.exports = {
   captureClass: backend.captureClass,
   dragging: backend.dragging,
   dragData: backend.dragData,
+  dropFiles: backend.dropFiles,
   clipboardFiles: backend.clipboardFiles,
   underPointer: backend.underPointer,
   buttonsHeld: backend.buttonsHeld,

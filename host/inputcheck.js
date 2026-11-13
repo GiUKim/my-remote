@@ -32,6 +32,9 @@ for (const t of ['keydown', 'keyup']) addEventListener(t, (e) => { ev.push([t, e
 for (const t of ['mousedown', 'mouseup']) addEventListener(t, (e) => ev.push([t, e.button]), true);
 addEventListener('wheel', (e) => ev.push(['wheel', Math.sign(e.deltaX), Math.sign(e.deltaY)]), true);
 for (const t of ['contextmenu', 'auxclick']) addEventListener(t, (e) => e.preventDefault(), true);
+window.dropped = null;
+addEventListener('dragover', (e) => e.preventDefault());
+addEventListener('drop', (e) => { e.preventDefault(); window.dropped = [...e.dataTransfer.files].map((f) => f.name + ':' + f.size); });
 </script></body>`;
 // The second program: a window with selected text and an element that drags a file (Electron's
 // startDrag, which offers it as text/uri-list as file managers do). It says where both are, and logs
@@ -164,6 +167,21 @@ exports.run = async ({ check, info, js, until, dragOut }) => {
     const between = ev3.slice(ev3.indexOf('keydown:AltLeft') + 1, ev3.indexOf('keyup:AltLeft'));
     check('X11: a held Alt let go by a reset is not a lone Alt (a key of no meaning comes between)', ev3.includes('keydown:AltLeft') && ev3.includes('keyup:AltLeft') && between.some((e) => e.startsWith('keydown:')),
       ev3.join(' '));
+
+    // Files from the client dropped where the host's pointer is, as a drag from another program would
+    // (dropFiles: the XDND source of platform/linux.js); a GTK 3 window and Nautilus speak the same protocol.
+    const dropDir = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-dropin-x11-')), dropFile = path.join(dropDir, 'dropped-in.txt');
+    fs.writeFileSync(dropFile, 'dropped by the host\n');
+    try {
+      moveTo(mid.x, mid.y); await sleep(200);
+      const taken = await input.dropFiles([dropFile]);
+      await sleep(400);
+      const got = await tjs('window.dropped');
+      moveTo(c1.x + 150, c1.y + 150); await sleep(200); // the bare root window: nothing takes drops there
+      const none = await input.dropFiles([dropFile]);
+      check('X11: files from the client are dropped where the host pointer is (XDND); over nothing they are not taken', taken === 1 && JSON.stringify(got) === '["dropped-in.txt:20"]' && none === 0,
+        `taken ${taken}, the window got ${JSON.stringify(got)}, over the bare desktop ${none}`);
+    } finally { try { fs.rmSync(dropDir, { recursive: true, force: true }); } catch {} }
   } finally { tw.destroy(); }
 
   // ---- D ----

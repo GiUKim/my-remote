@@ -340,12 +340,13 @@ async function putDone(gid, at, mode) {
   if (ISOLATED && !process.argv.includes('--dropin-check')) return { how: 'staged', n };
   const later = () => setTimeout(() => fs.rm(p.dir, { recursive: true, force: true }, () => {}), 10 * 60e3); // the target may still be reading
   const so = shellOps();
-  if (mode === 'drop' && at && so) {
+  if (mode === 'drop' && at && (so || process.platform === 'linux')) {
     input.handle(JSON.stringify({ t: 'mm', d: at.d | 0, x: +at.x, y: +at.y }));
     await new Promise((r) => setTimeout(r, 60));
-    const effect = await new Promise((res) => so.drop.async(items.join('\n'), 1, 4000, (err, r) => res(err ? -3 : r)));
+    // Windows: an OLE drag of the shell's own data object (shellops.dll); X11: an XDND drag (platform/linux.js).
+    const effect = so ? await new Promise((res) => so.drop.async(items.join('\n'), 1, 4000, (err, r) => res(err ? -3 : r))) : await input.dropFiles(items);
     if (effect > 0) { later(); return { how: 'dropped', n }; }
-    console.log(`drop not taken (${effect}): ${so.error()} ${so.debug()}`);
+    console.log(`drop not taken (${effect})` + (so ? `: ${so.error()} ${so.debug()}` : ''));
   }
   // A test run (--dropin-check) never puts them on this PC's clipboard: it belongs to the person (once a
   // drop that was not taken there replaced what they had copied).

@@ -120,6 +120,11 @@
   </table>
   <p><small>이 조합들은 호스트로 전달되지 않습니다. 호스트의 프로그램에서 같은 조합을 써야 하면 아래를 끄세요.</small></p>
   <label><input id="hk" type="checkbox"> 단축키 사용</label>
+  <table style="margin-top:10px">
+    <tr><td>끌어서 창 밖에 놓기</td><td>호스트에서 끌던 파일·글자를 이 PC의 놓은 자리로 가져옵니다 (창 모드)</td></tr>
+    <tr><td><kbd>Ctrl</kbd> 누른 채 끌어서 나가기</td><td>기다리지 않고 바로 이 PC 쪽으로 넘어갑니다. 끌던 것이 없으면 호스트에서는 버튼만 놓습니다</td></tr>
+    <tr><td>이 PC의 파일을 원격 화면에 놓기</td><td>호스트에서 그 자리에 끌어다 놓은 것처럼 놓입니다</td></tr>
+  </table>
   <div style="margin-top:12px"><button id="helpClose">닫기</button></div>
 </div></div>
 <div id="diag"><div class="box" style="width:min(640px,92vw)">
@@ -976,22 +981,32 @@ function edgePan(view, ev) {
   };
   view.panRaf = view.win.requestAnimationFrame(tick);
 }
+// Over one of this window's pictures of the host (the pointer is captured in its window while held).
+const overPicture = (view, ev) => view.panes.some((p) => { const r = p.video.getBoundingClientRect(); return ev.clientX >= r.left && ev.clientX < r.right && ev.clientY >= r.top && ev.clientY < r.bottom; });
 function attachPointer(view, pane) {
   const v = pane.video;
   const here = (ev) => { const q = rel(pane, ev.clientX, ev.clientY); return q && { d: q.d, x: clamp(q.x, 0, 1), y: clamp(q.y, 0, 1) }; };
-  const setOut = (on) => { if (!!view.dragOut !== on) { view.dragOut = on; applyCursor(); } };
+  const setOut = (on) => {
+    if (!!view.dragOut === on) return;
+    view.dragOut = on;
+    applyCursor();
+    if (on) toast(view, canDrop() ? '놓으면 이 PC로 복사됩니다 (폴더·바탕화면·프로그램 위에 놓으세요)' : '놓으면 다운로드로 받습니다', 3000);
+  };
   v.addEventListener('pointermove', (ev) => {
-    if (ev.buttons && !READONLY && leftAll(ev)) {
-      // A button is held and the pointer is over this PC's own desktop or programs.
+    // A button is held and the pointer is over this PC's own desktop or programs - or, with Ctrl held,
+    // anywhere off the host's picture: Ctrl takes the pointer over to this PC at once (crossed) instead
+    // of on to the host's neighbouring monitor, also over this window's bar or another window of ours.
+    if (ev.buttons && !READONLY && (leftAll(ev) || ((ev.ctrlKey || view.crossed) && !overPicture(view, ev)))) {
       // Something is being dragged on the host: it is being carried out to this PC. The host's
       // pointer waits where it was until we know how this ends.
       if (hostDrag) { setOut(true); return; }
       // Not (yet) known to be a drag-and-drop: ask the host at once and hold the pointer meanwhile.
       if (!view.leftAt) { view.leftAt = performance.now(); send({ t: 'dragq' }); }
-      if (performance.now() - view.leftAt < LEAVE_WAIT) return;
+      if (ev.ctrlKey) view.crossed = true;
+      if (view.crossed || performance.now() - view.leftAt < LEAVE_WAIT) return;
       // No drag-and-drop after all (a window being moved, text being selected): carry on past the
       // edge, onto the host's neighbouring monitor, as at the real desk.
-    } else view.leftAt = 0;
+    } else { view.leftAt = 0; view.crossed = false; }
     setOut(false);
     const p = ev.buttons ? mapPoint(ev, view, pane) : here(ev);
     if (!p) return;
@@ -1003,6 +1018,7 @@ function attachPointer(view, pane) {
   v.addEventListener('pointerleave', () => { view.panDir = null; });
   v.addEventListener('pointercancel', () => {
     setOut(false);
+    view.leftAt = 0; view.crossed = false;
     window.__rd.ptr.cancel++;
     releaseHeld(); // no pointerup will come for this press
   });
@@ -1024,24 +1040,24 @@ function attachPointer(view, pane) {
     // host's pointer as a stray button-up, and a right one opens its context menu.
     const b = ev.button, bit = b >= 0 && b < 5 ? 1 << b : 0, was = !bit || !!(held & bit);
     held &= ~bit;
-    const outside = !READONLY && leftAll(ev);
+    const outside = !READONLY && (leftAll(ev) || (view.crossed && !overPicture(view, ev)));
     if (view.dragOut || (outside && hostDrag)) {
       // Let go outside: the host ends its drag and sends what was being dragged (see gotDragData).
       setOut(false);
       ev.preventDefault();
-      view.pending = null; view.leftAt = 0;
+      view.pending = null; view.leftAt = 0; view.crossed = false;
       startDrop(noteDrop(view));
       send({ t: 'dragout', b });
       return;
     }
-    if (outside && view.leftAt && performance.now() - view.leftAt < LEAVE_WAIT) {
-      // Let go outside before the host could say whether a drag-and-drop had started. Note where,
-      // and give the host a moment: a drag that shows up means "carry it out to here"; otherwise the
-      // button is let go where the host's pointer waited (never out along the screen edge).
+    if (outside && view.leftAt && (view.crossed || performance.now() - view.leftAt < LEAVE_WAIT)) {
+      // Let go outside before the host could say whether a drag-and-drop had started (or crossed over
+      // with Ctrl). Note where, and give the host a moment: a drag that shows up means "carry it out to
+      // here"; otherwise the button is let go where the host's pointer waited (never out along the edge).
       ev.preventDefault();
       view.pending = null;
-      const d = noteDrop(view), until = view.leftAt + LEAVE_WAIT + 300;
-      view.leftAt = 0;
+      const d = noteDrop(view), until = view.crossed ? performance.now() + 1000 : view.leftAt + LEAVE_WAIT + 300;
+      view.leftAt = 0; view.crossed = false;
       const decide = () => {
         if (hostDrag) { window.__rd.xfer.late++; startDrop(d); send({ t: 'dragout', b }); }
         else if (performance.now() < until) setTimeout(decide, 25);
@@ -1050,7 +1066,7 @@ function attachPointer(view, pane) {
       decide();
       return;
     }
-    view.leftAt = 0;
+    view.leftAt = 0; view.crossed = false;
     const p = mapPoint(ev, view, pane) || lastAt; if (!p) return;
     ev.preventDefault();
     view.pending = null;

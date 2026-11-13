@@ -566,10 +566,28 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
           res.pastTheEdgeAfterTheWait = sent('mm').length === 1 && sent('mm')[0].x < 0;
           fire('pointerup', outside, 0);
           await sleep(50);
+          // Ctrl held: off the picture - here onto this window's own bar above it - the pointer is over at
+          // this PC at once: no moves, not even after the wait, also when Ctrl is let go meanwhile; let go
+          // there with no drag on the host: the host lets go where its pointer waited.
+          window.__rd.trace = []; hostDrag = false; drop = null;
+          const off = b.left > 10 ? { clientX: b.left - 8, clientY: b.top + b.height / 2 } : b.top > 10 ? { clientX: b.left + 30, clientY: b.top - 8 } : { clientX: b.left + 30, clientY: Math.min(innerHeight - 2, b.bottom + 8) };
+          const bar = { ...off, screenX: w.screenX + 40, screenY: w.screenY + 40 }; // in this window, off its picture
+          fire('pointerdown', inside, 1); fire('pointermove', { ...bar, ctrlKey: true }, 1);
+          await sleep(${700 + 100});
+          fire('pointermove', bar, 1);
+          res.ctrlCrossedAtOnce = mainView.crossed === true && sent('mm').length === 0 && sent('dragq').length === 1;
+          fire('pointerup', bar, 0);
+          await sleep(1150);
+          res.ctrlLetGoWhereItWaited = sent('mu').length === 1 && sent('mu')[0].x >= 0 && sent('mu')[0].x <= 1 && sent('dragout').length === 0;
+          // ... and with a drag on the host, carried out to where it is let go.
+          window.__rd.trace = []; drop = null;
+          fire('pointerdown', inside, 1); fire('pointermove', { ...bar, ctrlKey: true }, 1);
+          hostDrag = true; fire('pointermove', { ...bar, ctrlKey: true }, 1); fire('pointerup', { ...bar, ctrlKey: true }, 0);
+          res.ctrlCarriedOut = sent('dragout').length === 1 && sent('mu').length === 0;
           } finally { READONLY = true; window.__rd.trace = null; hostDrag = false; drop = null; }
           return res;
         })()`);
-        check('drag out: the host pointer waits to learn whether a drag started, then carries it out or lets go where it waited', Object.values(leave).every(Boolean), JSON.stringify(leave));
+        check('drag out: the host pointer waits to learn whether a drag started, then carries it out or lets go where it waited; with Ctrl it is over at this PC at once', Object.values(leave).every(Boolean), JSON.stringify(leave));
       }
 
       const out = await js(`(() => { const w = window, at = (x, y) => leftAll({ screenX: x, screenY: y });
