@@ -698,8 +698,18 @@ The client sends its measurements every 2 s (`cs` message) and the host appends 
 encoder statistics, to `%APPDATA%\my-remote-host\diag.log` (Linux: `~/.config/my-remote-host/diag.log`;
 JSON lines, numbers only, rotated at 3 MB).
 Read this file when the user reports stutter or lag instead of guessing: compare host capture fps,
-encode fps and the limiting factor (`cpu`, `bandwidth`, `none`) with the client's received fps, freeze
-count, packet loss, round-trip time and jitter-buffer delay. An entry may carry `slow`: main-process
+encode fps and the limiting factor (`cpu`, `bandwidth`, `none`) with the client's received fps, late
+frames, packet loss, round-trip time and jitter-buffer delay. `late` is the stutter measure: shown
+frames (`f`) that came on screen more than 50 ms later after the frame before them than they were
+captured after it (`n`, together `ms`, `worst`; `watchFrames` in the page, from the frames' RTP
+timestamps), and of those the ones that also arrived late (`rn`, `rms`: the network's or the host's
+doing; the rest were drawn late on the client). A browser's hidden or minimized window is left out; the
+client app's windows always count as visible (it turns `backgroundThrottling` off), so there a
+minimized window shows up as frames drawn late, not received late. The self-test's hidden window draws
+seldom and its INFO line shows exactly that. The engine's `freezes`/`freezeDur` are no such measure:
+they count every pause of more than about 150 ms between shown frames, and the native capturer sends
+nothing while the screen stays the same (a real session of 2026-11-12: 627 "freezes", 385 s, in an
+hour of normal use). Counters run per connection. An entry may carry `slow`: main-process
 calls that took over 50 ms since the previous entry (`input mm`, `clip-read`, `clip-files`,
 `drag clipboard` (reading the clipboard waits for its owner), `cursor`, ...) and
 `paused` (the main thread itself did not run for over a second), each as count, total and longest ms.

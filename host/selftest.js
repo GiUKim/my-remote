@@ -719,6 +719,11 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
 
     [ok, s] = await until((x) => x.host && x.host.codec && Object.keys(x.host.mons || {}).length > 0, 8);
     check('host statistics reach the client', ok, ok ? `${s.host.codec} via ${s.host.enc}, available ${s.host.availMbps} Mbps` : '');
+    // Real stutter (see watchFrames in the page): shown frames whose capture times came with them.
+    const late = s.hitch || {};
+    // The self-test's client window is hidden and draws seldom, so most late frames here are drawn late, not received late.
+    if (late.frames > 0) info(`frames late compared with when they were captured (hidden window): shown late ${late.n} of ${late.frames} (worst ${Math.round(late.worst)} ms), received late ${late.rn}`);
+    else info('frames shown late: not measured (the client window is hidden in the self-test)');
 
     info(`audio track: ${s.audio ? 'received' : 'none (normal on a PC without an audio output device)'}`);
     // The host sends the text on its clipboard when a session starts: when there is some, it must have

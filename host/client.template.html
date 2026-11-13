@@ -322,6 +322,7 @@ function render(view) {
     const pane = { idx: m.idx, video: v };
     attachTouch(view, pane); // first: a finger's events are taken there and do not reach the mouse handling
     attachPointer(view, pane);
+    watchFrames(v);
     view.root.insertBefore(v, view.root.firstChild); // overlays and the toast stay on top
     view.panes.push(pane);
     v.play().catch(() => {});
@@ -2175,6 +2176,42 @@ $('hk').onchange = () => { hotkeysOn = $('hk').checked; store.set('mr_hotkeys', 
 // The counters below start again with every connection (a reconnect, a 'renew', a codec change), so
 // a reading is only ever compared with one of the same connection.
 let last = null, connSeq = 0;
+// Real stutter. The engine's freeze count takes every pause of more than about 150 ms between two shown
+// frames for a freeze, but the host sends no frames while its screen does not change (native capture),
+// so a still screen counts as frozen. Here a shown frame counts as late when it came on screen later
+// after the frame before it than it was captured after it, by more than HITCH_MS: the capture times
+// come with the frames (RTP timestamps, 90 kHz). The same is counted for when the frames arrived (`rn`,
+// `rms`): late arrivals are the network's or the host's doing, the rest is this PC drawing late - or not
+// drawing at all: a minimized window. A browser reports such a window hidden and it is left out, but the
+// client app keeps its windows running (backgroundThrottling off) and they always count as visible.
+// Counted per connection, over every shown monitor.
+const HITCH_MS = 50;
+const hitch = (window.__rd.hitch = { conn: 0, frames: 0, n: 0, ms: 0, worst: 0, rn: 0, rms: 0 });
+function watchFrames(v) {
+  if (!v.requestVideoFrameCallback) return;
+  let prev = null;
+  const step = (now, meta) => {
+    if (!v.isConnected) return; // its pane is gone
+    if (hitch.conn !== connSeq) Object.assign(hitch, { conn: connSeq, frames: 0, n: 0, ms: 0, worst: 0, rn: 0, rms: 0 });
+    const t = meta.expectedDisplayTime || now, rtp = meta.rtpTimestamp, rx = meta.receiveTime || 0;
+    if (v.ownerDocument.visibilityState !== 'visible') prev = null;
+    else if (typeof rtp === 'number') {
+      // Another stream (a reconnect gives the element a new one) or another connection: start over.
+      if (prev && prev.src === v.srcObject && prev.conn === connSeq) {
+        const cap = ((rtp - prev.rtp) >>> 0) / 90; // the timestamp wraps at 2^32
+        if (cap < 5000) {
+          hitch.frames++;
+          const late = t - prev.t - cap, rxLate = rx && prev.rx ? rx - prev.rx - cap : 0;
+          if (late > HITCH_MS) { hitch.n++; hitch.ms += late; hitch.worst = Math.max(hitch.worst, late); }
+          if (rxLate > HITCH_MS) { hitch.rn++; hitch.rms += rxLate; }
+        }
+      }
+      prev = { rtp, t, rx, src: v.srcObject, conn: connSeq };
+    }
+    v.requestVideoFrameCallback(step);
+  };
+  v.requestVideoFrameCallback(step);
+}
 setInterval(async () => {
   const my = pc, conn = connSeq;
   if (!my || my.connectionState !== 'connected') { $('stats').textContent = ''; last = null; return; }
@@ -2207,13 +2244,14 @@ setInterval(async () => {
     let viewed = [];
     try { viewed = JSON.parse(lastView || '[]').map((e) => e.i); } catch {}
     $('stats').textContent = `${viewed.map((i) => `${i + 1}:${fps[i]}`).join(' ')} fps · ${mbps.toFixed(1)} Mbps · 왕복 ${rtt != null ? Math.round(rtt * 1000) : '?'} ms · 버퍼 ${Math.round(buf)} ms · ${relay ? 'TURN 중계' : 'P2P 직접'}`;
-    samples.push({ t: Date.now(), conn, viewed, fps, res, mbps, rtt: rtt != null ? rtt * 1000 : null, buf, relay, lost, recv, freezes, freezeDur, dropped, nack, pli, decoder, host: hostStat });
+    const late = hitch.conn === conn ? { f: hitch.frames, n: hitch.n, ms: Math.round(hitch.ms), worst: Math.round(hitch.worst), rn: hitch.rn, rms: Math.round(hitch.rms) } : { f: 0, n: 0, ms: 0, worst: 0, rn: 0, rms: 0 };
+    samples.push({ t: Date.now(), conn, viewed, fps, res, mbps, rtt: rtt != null ? rtt * 1000 : null, buf, relay, lost, recv, freezes, freezeDur, dropped, nack, pli, late, decoder, host: hostStat });
     if (samples.length > 45) samples.shift(); // about 90 seconds
     // The same numbers go to the host, which appends them to a local log file for troubleshooting.
     const pick = (o) => Object.fromEntries(viewed.map((i) => [i, o[i]]));
     send({ t: 'cs', s: {
       fps: pick(fps), res: pick(res), mbps: +mbps.toFixed(2), rtt: rtt != null ? Math.round(rtt * 1000) : null, buf: Math.round(buf), relay,
-      lost, recv, freezes, freezeDur: +freezeDur.toFixed(2), dropped, nack, pli, dec: decoder, mode, shell: !!shell,
+      lost, recv, freezes, freezeDur: +freezeDur.toFixed(2), dropped, nack, pli, late, dec: decoder, mode, shell: !!shell,
       views: liveViews().map((v) => `${v.sel}/${v.fit}/${v.root.clientWidth}x${v.root.clientHeight}@${v.win.devicePixelRatio}${v.win.document.fullscreenElement ? '/fs' : ''}`),
       ...(Object.values(window.__rd.ptr).some(Boolean) ? { ptr: { ...window.__rd.ptr } } : {}),
       ...(Object.values(window.__rd.xfer).some(Boolean) ? { xfer: { ...window.__rd.xfer } } : {}),
@@ -2249,8 +2287,11 @@ function buildReport() {
     const limits = [...new Set(hm.map((x) => x.limit))].join(',') || '?';
     L.push(`모니터 ${i + 1}: 수신 fps 최소/평균/최대 ${mmm(samples.map((x) => x.fps[i]))} · 수신 해상도 ${b.res[i]} · 호스트 캡처 fps ${mmm(hm.map((x) => x.cap))} → 인코딩 fps ${mmm(hm.map((x) => x.enc))} · 제한 요인 ${limits}`);
   }
-  L.push(`끊김: 화면 멈춤 ${b.freezes - c.freezes}회 (${(b.freezeDur - c.freezeDur).toFixed(1)}초) · 버린 프레임 ${b.dropped - c.dropped} · 패킷 손실 ${pk > 0 ? (((b.lost - c.lost) / pk) * 100).toFixed(2) : '0'}% · 재전송 요청 ${b.nack - c.nack} · 키프레임 요청 ${b.pli - c.pli}`
+  L.push(`끊김: 늦게 표시된 프레임 ${b.late.n - c.late.n}회 (캡처 간격보다 ${HITCH_MS} ms 넘게 늦음, 합계 ${b.late.ms - c.late.ms} ms, 가장 늦은 것 ${b.late.worst} ms, 표시된 프레임 ${b.late.f - c.late.f})`
+    + ` · 그중 늦게 도착 ${b.late.rn - c.late.rn}회 (합계 ${b.late.rms - c.late.rms} ms; 나머지는 이 PC에서 늦게 그려진 것)`
+    + ` · 버린 프레임 ${b.dropped - c.dropped} · 패킷 손실 ${pk > 0 ? (((b.lost - c.lost) / pk) * 100).toFixed(2) : '0'}% · 재전송 요청 ${b.nack - c.nack} · 키프레임 요청 ${b.pli - c.pli}`
     + (c !== a ? ` (다시 연결된 뒤 ${Math.round((b.t - c.t) / 1000)}초 동안)` : ''));
+  L.push(`엔진의 화면 멈춤 집계: ${b.freezes - c.freezes}회 (${(b.freezeDur - c.freezeDur).toFixed(1)}초; 호스트 화면이 그대로라 프레임이 없던 시간도 셉니다)`);
   L.push(`수신 버퍼 지연: 평균 ${Math.round(avg(samples.map((x) => x.buf)))} ms, 최대 ${Math.round(Math.max(0, ...num(samples.map((x) => x.buf))))} ms`);
   L.push(`화질 모드: ${mode} · 호스트 커서 숨김: ${offerInfo.cursorHidden ? '예' : '아니오'}`);
   return L.join('\n');
