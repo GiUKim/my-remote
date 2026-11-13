@@ -459,8 +459,12 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       // The panel itself: every monitor is shown small while it is open, and a drag changes what the window shows.
       await js(`arrOpen().then(() => { arr.cs = ${one}; arr.A = monitors.map((_, h) => (h === 0 ? 0 : null)); arr.prev = arr.A.slice(); arrBuild(); arrPaint(arr.A); applyAssign(arr.A, arr.cs); })`);
       [ok, s] = await until((x) => x.sel === 0 && JSON.parse(x.view).length === x.monitors, 12);
-      const tiles = await js(`({ host: arr.host.length, client: arr.client.length, shown: document.getElementById('arr').style.display, live: arr.host.every((t) => t.videos.size === 1) })`);
-      check('arrangement panel: shows every host monitor live', ok && tiles.host === N && tiles.client === 1 && tiles.shown === 'flex' && tiles.live, JSON.stringify(tiles) + ' requested ' + s.view);
+      const tiles = await js(`({ host: arr.host.length, client: arr.client.length, shown: document.getElementById('arr').style.display, live: arr.host.every((t) => t.videos.size === 1),
+        os: [document.getElementById('arrHostOs').textContent, document.getElementById('arrClientOs').textContent, document.querySelectorAll('.osTag svg').length] })`);
+      // Each PC's operating system next to its name: the host's from its offer, this one's from the browser.
+      const osName = process.platform === 'win32' ? /^Windows 1[01]$/ : process.platform === 'linux' ? /\S/ : /^macOS/;
+      check('arrangement panel: shows every host monitor live, and each PC\'s operating system', ok && tiles.host === N && tiles.client === 1 && tiles.shown === 'flex' && tiles.live
+        && osName.test(tiles.os[0]) && osName.test(tiles.os[1]) && tiles.os[2] === 2, JSON.stringify(tiles) + ' requested ' + s.view);
       await js(`(() => {
         const at = (t) => { const r = t.lcd.getBoundingClientRect(); return { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }; };
         const fire = (type, target, pos, extra) => target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 7, ...pos, ...extra }));

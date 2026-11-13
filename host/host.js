@@ -587,7 +587,7 @@ async function startSession(hello) {
   if (session !== s) return;
   await chan.send({
     app: appHash,
-    t: 'offer', sid: s.sid, ts: Date.now(), sdp: pc.localDescription.sdp, ice: cfg.iceServers, audio, codec: s.codec, cursorHidden: s.cursorHidden,
+    t: 'offer', sid: s.sid, ts: Date.now(), sdp: pc.localDescription.sdp, ice: cfg.iceServers, audio, codec: s.codec, cursorHidden: s.cursorHidden, os: cfg.hostOs,
     monitors: sources.map((src, i) => ({ idx: i, mid: mids[i], x: src.x, y: src.y, width: src.width, height: src.height, primary: src.primary, hdr: src.hdr || undefined })),
   });
   if (session !== s) return; // ended while the offer was being posted: no timers for it

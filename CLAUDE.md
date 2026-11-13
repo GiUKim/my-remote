@@ -295,6 +295,13 @@ the client app instead).
   - No keyring (`safeStorage` backend `basic_text`, usual outside a GNOME/KDE session): the key is only
     obscured ('v10', a fixed password); the host prints a warning and keeps `config.json` at mode 0600.
     The asynchronous calls work there without `setUsePlainTextEncryption` (the synchronous ones needed it).
+  - Electron 45 links GTK 3 and other desktop libraries (NSS, ALSA, GBM, AT-SPI, ...) directly: on a
+    system without a desktop, or a minimal one, it does not start at all ("error while loading shared
+    libraries: libgtk-3.so.0"). `need_electron` in `host/linux-launch.sh` (setup and every launcher)
+    checks with `ldd` and says what is missing and the install command (apt, picking Ubuntu 24.04's
+    `t64` names; dnf/zypper by soname; pacman). With `XDG_CURRENT_DESKTOP=GNOME` or `KDE` it still loads
+    only GTK 3, not GTK 4 next to it (checked on the server, GTK 4.6 installed, with a window and a tray
+    icon); a real GNOME session was not tried.
   - Chromium's sandbox needs its setuid helper (npm does not install it so) or unprivileged user
     namespaces: Ubuntu 22.04 has them (the self-test ran with the sandbox on), 23.10 and later restrict
     them through AppArmor. `host/linux-launch.sh` then stops and names the two ways out (the helper,
@@ -516,7 +523,8 @@ lost and the sender retries. Checked with Node tests against a fake EventSource 
 Signaling (through the relay, each message deflated, encrypted, chunked to 3000 chars):
 
 1. client -> host topic: `{t:'hello', sid, ts, mode, codec}` (`codec` optional: `H264`, `H264HQ`, `VP9`, `AV1`)
-2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, codec, cursorHidden, app, monitors:[{idx, mid, x, y, width, height, primary, hdr?}]}`
+2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, codec, cursorHidden, app, os, monitors:[{idx, mid, x, y, width, height, primary, hdr?}]}`
+   (`os`: `{os: 'windows'|'linux'|'mac', name}`, what the host runs, e.g. `Windows 10` or `Ubuntu 22.04.5 LTS`; the arrangement panel shows it with a logo)
    (`x`,`y`,`width`,`height` are the monitor's rectangle on the host's virtual desktop, physical pixels)
 3. client -> host topic: `{t:'answer', sid, ts, sdp}`
 
@@ -604,6 +612,10 @@ aspect ratio, so pointer mapping is a plain proportion of the element. Policy, i
   left to right): all N on neighbouring screens when N <= M, otherwise M neighbouring monitors around the
   primary. The result is remembered per `N:M` in localStorage.
 - Selecting a monitor that another window shows swaps the two, so a monitor is never shown twice.
+- The arrangement panel shows next to "호스트 PC" and "이 PC" each one's operating system, a logo drawn
+  in the page (`OS_ICON`: Windows, Linux, Apple, Android, a plain screen otherwise) and a name: the
+  host's from its offer (`os`), this PC's from the browser (`userAgentData`, Windows 11 by
+  `platformVersion` >= 13).
 - The arrangement panel (`모니터 배치`, `arr*` functions) edits one list: for every host monitor, the client
   screen it is shown on, or null. `arrOp(A, src, dst, copy)` is the whole drag rule set (host onto host
   swaps, Ctrl adds the target to the dragged monitor's screen; screen and host: that screen shows that

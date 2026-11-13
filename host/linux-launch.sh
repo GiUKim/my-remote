@@ -11,6 +11,43 @@ need_electron() {
     echo "Electron is not installed under host/node_modules. Run ./setup.sh first." >&2
     exit 1
   fi
+  check_libs
+}
+
+# Electron links the desktop's libraries (GTK 3, NSS, ALSA, GBM, AT-SPI, ...; checked with Electron 45):
+# on a system without a desktop, or a minimal one, it does not start at all ("error while loading
+# shared libraries"). Says which are missing and how to install them.
+check_libs() {
+  local missing
+  missing="$(ldd "$electron" 2>/dev/null | awk '/not found/ {print $1}' | sort -u | tr '\n' ' ')"
+  [ -z "$missing" ] && return 0
+  echo "Electron cannot start: these libraries are missing: $missing" >&2
+  if command -v apt-get >/dev/null 2>&1; then
+    local pkgs="" l p
+    for l in $missing; do
+      case "$l" in
+        libgtk-3.so*|libgdk-3.so*) p=libgtk-3-0 ;; libgdk_pixbuf-2.0.so*) p=libgdk-pixbuf-2.0-0 ;;
+        libnss3.so|libnssutil3.so|libsmime3.so) p=libnss3 ;; libnspr4.so|libplc4.so|libplds4.so) p=libnspr4 ;;
+        libasound.so*) p=libasound2 ;; libgbm.so*) p=libgbm1 ;; libdrm.so*) p=libdrm2 ;; libxkbcommon.so*) p=libxkbcommon0 ;;
+        libatk-1.0.so*) p=libatk1.0-0 ;; libatk-bridge-2.0.so*) p=libatk-bridge2.0-0 ;; libatspi.so*) p=libatspi2.0-0 ;;
+        libcups.so*) p=libcups2 ;; libdbus-1.so*) p=libdbus-1-3 ;; libexpat.so*) p=libexpat1 ;;
+        libglib-2.0.so*|libgobject-2.0.so*|libgio-2.0.so*) p=libglib2.0-0 ;; libpango-1.0.so*) p=libpango-1.0-0 ;; libcairo.so*) p=libcairo2 ;;
+        libX11.so*) p=libx11-6 ;; libxcb.so*) p=libxcb1 ;; libXext.so*) p=libxext6 ;; libXfixes.so*) p=libxfixes3 ;;
+        libXcomposite.so*) p=libxcomposite1 ;; libXdamage.so*) p=libxdamage1 ;; libXrandr.so*) p=libxrandr2 ;; libXtst.so*) p=libxtst6 ;;
+        *) continue ;;
+      esac
+      apt-cache show "${p}t64" >/dev/null 2>&1 && p="${p}t64" # Ubuntu 24.04 and Debian 13 renamed many of them
+      case " $pkgs " in *" $p "*) ;; *) pkgs="$pkgs $p" ;; esac
+    done
+    [ -n "$pkgs" ] && echo "Install them with: sudo apt install$pkgs" >&2
+  elif command -v dnf >/dev/null 2>&1 || command -v zypper >/dev/null 2>&1; then
+    local caps="" l
+    for l in $missing; do caps="$caps '$l()(64bit)'"; done
+    echo "Install them with: sudo $(command -v dnf >/dev/null 2>&1 && echo dnf || echo zypper) install$caps" >&2
+  elif command -v pacman >/dev/null 2>&1; then
+    echo "Install them with: sudo pacman -S --needed gtk3 nss alsa-lib mesa libxkbcommon at-spi2-core libcups libxtst" >&2
+  fi
+  exit 1
 }
 
 # Only X11 sessions are supported: on Wayland, capturing the screen and injecting input go through the

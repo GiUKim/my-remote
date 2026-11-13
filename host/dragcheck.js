@@ -106,6 +106,21 @@ async function itemRect(hwnd, prefix) {
   return m ? { x: +m[1], y: +m[2], w: +m[3], h: +m[4], px: +m[5], py: +m[6] } : null;
 }
 
+// A point of empty space inside a folder window's list of items. Not a fixed spot of the window: with
+// the preview or details pane on (an Explorer setting of the person's, for every window), the right
+// side of the window is that pane, which takes no drop (seen: the drop point was a SysLink there).
+async function emptySpot(hwnd) {
+  const out = await ps(`Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes,WindowsBase; $A=[System.Windows.Automation.AutomationElement]; $root=$A::FromHandle([IntPtr]${hwnd});
+    $v=New-Object System.Windows.Automation.PropertyCondition($A::ClassNameProperty,'UIItemsView'); $w=[System.Windows.Automation.TreeWalker]::ControlViewWalker;
+    $t=[DateTime]::Now.AddSeconds(8); do { $list=$root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$v); if($list){ $lr=$list.Current.BoundingRectangle;
+      foreach($p in @(@(0.8,0.8),@(0.55,0.85),@(0.85,0.55),@(0.5,0.6))){ $x=[int]($lr.X + $lr.Width*$p[0]); $y=[int]($lr.Y + $lr.Height*$p[1]);
+        $hit=$A::FromPoint((New-Object System.Windows.Point($x,$y))); $item=$false;
+        while($hit -and $hit.Current.ClassName -ne 'UIItemsView'){ if($hit.Current.ControlType -eq [System.Windows.Automation.ControlType]::ListItem){ $item=$true }; $hit=$w.GetParent($hit) }
+        if($hit -and -not $item){ '{0},{1}' -f $x,$y; exit } } }; Start-Sleep -Milliseconds 300 } while([DateTime]::Now -lt $t)`);
+  const m = /^(-?\d+),(-?\d+)/.exec(out);
+  return m ? { px: +m[1], py: +m[2] } : null;
+}
+
 // `electron . --selftest --dropin-check`: files dragged IN, for real. A real drag (injected input)
 // from an Explorer window on the second display onto a client window's picture of the first one;
 // the page uploads the files and the host drops them where they were let go in the picture:
@@ -199,11 +214,15 @@ exports.runIn = async ({ check, info, cfg, buildClientHtml }) => {
       const ok = x && x.inDone > x0.inDone && x.inHow === 'dropped' && expect();
       check(`${label}: the dragged-in file lands where it was let go on the host`, ok, JSON.stringify({ how: x && x.inHow, inStart: x && x.inStart - x0.inStart, done: x && x.inDone - x0.inDone, failed: x && x.inFailed - x0.inFailed }));
     };
-    await dragOnto('D (empty space)', 'in-a', tr.right - 140, tr.bottom - 100, () => fs.existsSync(path.join(dst, 'in-a.txt')) && fs.readFileSync(path.join(dst, 'in-a.txt'), 'utf8') === content['in-a.txt']);
+    const empty = await emptySpot(hwndT);
+    if (empty) await dragOnto('D (empty space)', 'in-a', empty.px, empty.py, () => fs.existsSync(path.join(dst, 'in-a.txt')) && fs.readFileSync(path.join(dst, 'in-a.txt'), 'utf8') === content['in-a.txt']);
+    else check('D: empty space in the target window\'s list is found', false, 'nothing was pressed');
     const sub = await itemRect(hwndT, 'sub');
     if (sub) await dragOnto('E (onto a folder icon)', 'in-b', sub.px, sub.py, () => fs.existsSync(path.join(dst, 'sub', 'in-b.txt')) && fs.readFileSync(path.join(dst, 'sub', 'in-b.txt'), 'utf8') === content['in-b.txt']);
     else check('E: the folder icon is found', false, '');
-    await dragOnto('F (a folder)', 'in-dir', tr.right - 140, tr.bottom - 100, () => fs.existsSync(path.join(dst, 'in-dir', 'deeper', 'x.txt')) && fs.readFileSync(path.join(dst, 'in-dir', 'deeper', 'x.txt'), 'utf8') === content.x);
+    const empty2 = await emptySpot(hwndT); // the list has one more item now
+    if (empty2) await dragOnto('F (a folder)', 'in-dir', empty2.px, empty2.py, () => fs.existsSync(path.join(dst, 'in-dir', 'deeper', 'x.txt')) && fs.readFileSync(path.join(dst, 'in-dir', 'deeper', 'x.txt'), 'utf8') === content.x);
+    else check('F: empty space in the target window\'s list is found', false, 'nothing was pressed');
   } catch (e) {
     check('drop-in check ran', false, e.stack || e.message);
   } finally {

@@ -409,6 +409,15 @@ const cfgPath = () => path.join(app.getPath('userData'), 'config.json');
 
 function newKey() { return crypto.randomBytes(32).toString('base64url'); }
 
+// What this PC runs, for the client's arrangement panel (a logo and a name next to "호스트 PC").
+function hostOs() {
+  if (process.platform === 'win32') return { os: 'windows', name: Number(os.release().split('.')[2]) >= 22000 ? 'Windows 11' : 'Windows 10' };
+  if (process.platform === 'darwin') return { os: 'mac', name: 'macOS' };
+  let name = 'Linux';
+  try { const m = /^PRETTY_NAME="?([^"\n]*)"?\s*$/m.exec(fs.readFileSync('/etc/os-release', 'utf8')); if (m && m[1]) name = m[1].slice(0, 60); } catch {}
+  return { os: 'linux', name };
+}
+
 // The key is encrypted with Electron's asynchronous safeStorage calls (the synchronous ones are
 // deprecated in Electron 45 and gone in 46). Each reads what the other wrote, and Electron 45 reads what
 // Electron 33 wrote and the reverse: checked on Windows, and on Linux with a keyring (gnome-libsecret,
@@ -674,6 +683,7 @@ else {
   app.whenReady().then(async () => {
     await loadConfig();
     if (!cfg.key && !(await askForKey())) { quitting = true; app.quit(); return; }
+    cfg.hostOs = hostOs();
     cfg.viewOnly = input.viewOnlyReason(); // '' = input from the client is injected here
     if (cfg.viewOnly) console.warn(`[host] WARNING: the host is view-only, input from the client is not injected: ${cfg.viewOnly}`);
     if (BENCH) Object.assign(cfg, benchCfg.cfg || {});
