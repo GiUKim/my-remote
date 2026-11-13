@@ -97,6 +97,23 @@ function keyOf(code, keyName, shortcut) {
 function sendKey(k, up) {
   SendKey(1, [{ type: 1, ki: { wVk: k.vk, wScan: k.scan, dwFlags: k.flags | (up ? KF.UP : 0), time: 0, dwExtraInfo: 0 }, pad: [0, 0, 0, 0, 0, 0, 0, 0] }], SIZE);
 }
+// An unassigned key (0xE8, as AutoHotkey uses it): pressed between Alt or the Windows key going down
+// and up, it keeps that release from opening the program's menu bar or the Start menu.
+function maskKey() {
+  const k = (up) => ({ type: 1, ki: { wVk: 0xe8, wScan: 0, dwFlags: up, time: 0, dwExtraInfo: 0 }, pad: [0, 0, 0, 0, 0, 0, 0, 0] });
+  SendKey(2, [k(0), k(KF.UP)], SIZE);
+}
+// Text as characters, not keys (KEYEVENTF_UNICODE, one UTF-16 unit per press): what a phone's
+// keyboard typed, Hangul included, arrives as those characters whatever the host's keyboard layout
+// and input method; programs read them as typed characters (WM_CHAR).
+function typeText(s) {
+  const list = [];
+  for (let i = 0; i < s.length; i++) {
+    const u = s.charCodeAt(i);
+    for (const up of [0, KF.UP]) list.push({ type: 1, ki: { wVk: 0, wScan: u, dwFlags: 0x4 | up, time: 0, dwExtraInfo: 0 }, pad: [0, 0, 0, 0, 0, 0, 0, 0] });
+  }
+  for (let i = 0; i < list.length; i += 200) { const part = list.slice(i, i + 200); SendKey(part.length, part, SIZE); }
+}
 
 // ---- cursor shape -----------------------------------------------------------
 // The client draws its own cursor (zero latency). We tell it which standard
@@ -216,6 +233,13 @@ function restoreCursors() { return SystemParametersInfoW(0x0057, 0, 0, 0); }
 const SpiGetBool = user32.func('SystemParametersInfoW', 'bool', ['uint32', 'uint32', koffi.out(koffi.pointer('int32')), 'uint32']);
 function dragFullWindows() { const v = [1]; return SpiGetBool(0x0026, 0, v, 0) ? !!v[0] : true; }
 
+// Whether what is on the clipboard was marked as private: password managers put a format of one of
+// these names next to a password they copy, asking clipboard tools not to keep or pass it on. Checked
+// without opening the clipboard.
+const RegisterClipboardFormatW = user32.func('RegisterClipboardFormatW', 'uint32', ['str16']);
+const IsClipboardFormatAvailable = user32.func('IsClipboardFormatAvailable', 'bool', ['uint32']);
+const PRIVATE_FORMATS = ['ExcludeClipboardContentFromMonitorProcessing', 'Clipboard Viewer Ignore'].map((n) => RegisterClipboardFormatW(n)).filter(Boolean);
+const clipboardPrivate = () => PRIVATE_FORMATS.some((f) => IsClipboardFormatAvailable(f));
 // Changes whenever the clipboard content changes; reading it does not open the clipboard.
 const GetClipboardSequenceNumber = user32.func('GetClipboardSequenceNumber', 'uint32', []);
 
@@ -426,7 +450,7 @@ function processRunning(exe) {
 module.exports = {
   viewOnlyReason: () => '',
   hidesCursors: true,
-  virtualDesktop, move, button, wheel, keyOf, sendKey,
+  virtualDesktop, move, button, wheel, keyOf, sendKey, typeText, maskKey, clipboardPrivate,
   cursorState, cursorBitmap, hideCursors, restoreCursors, dragFullWindows, displayColor,
   captureClass, dragging, clipboardFiles, underPointer, buttonsHeld, clickAt, dropFilesBuffer, setClipboardFiles, processRunning,
   clipSeq: () => GetClipboardSequenceNumber(),

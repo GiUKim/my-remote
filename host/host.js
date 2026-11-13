@@ -293,8 +293,8 @@ function onClientMessage(s, dc, data) {
   } else if (m.t === 'cs') {
     // Client-side measurements: keep them with ours in the local diagnostics log.
     if (data.length < 6000 && m.s && typeof m.s === 'object') api.diag({ client: m.s, host: s.lastHs || null });
-  } else if (data.length < 500) {
-    if (m.t === 'md' || m.t === 'kd') s.putTouched = true; // see receiveUpload: no drop at an old place after this
+  } else if (data.length < (m.t === 'text' ? 2000 : 500)) { // 'text': up to 400 characters from a phone's keyboard
+    if (m.t === 'md' || m.t === 'kd' || m.t === 'text') s.putTouched = true; // see receiveUpload: no drop at an old place after this
     api.input(data);
   }
 }

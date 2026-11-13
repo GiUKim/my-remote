@@ -291,6 +291,26 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       return app.exit(pass ? 0 : 1);
     }
 
+    // --dump-phone=<file.png>: pictures of the phone layout (a client window of a phone's size, 915x412
+    // and 412x915, with '#touch'), with the key row open, then exit. No window is shown.
+    const dumpPhone = process.argv.find((a) => a.startsWith('--dump-phone='));
+    if (dumpPhone) {
+      const out = dumpPhone.split('=')[1];
+      for (const [name, width, height] of [['-landscape', 915, 412], ['-portrait', 412, 915]]) {
+        const pw = new BrowserWindow({ show: false, width, height, useContentSize: true, webPreferences: { backgroundThrottling: false } });
+        await pw.loadFile(file, { hash: `k=${cfg.key}&auto&ro&touch` });
+        const pjs = (code) => pw.webContents.executeJavaScript(code);
+        for (let i = 0; i < 30; i++) { await sleep(1000); if (await pjs(`window.__rd.state === 'connected' && window.__rd.frames > 20`)) break; }
+        await pjs(`document.getElementById('keyBtn').click(); [...document.getElementById('keyrow').children].find((b) => b.dataset.code === 'ControlLeft').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true })); 1`);
+        await sleep(1500);
+        fs.writeFileSync(out.replace(/\.png$/, name + '.png'), (await pw.webContents.capturePage()).toPNG());
+        pw.destroy();
+      }
+      console.log('[selftest] INFO  phone pictures written next to ' + out);
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+      return app.exit(0);
+    }
+
     // --dump-panel=<file.png>: pictures of the arrangement panel for checking its design, then exit.
     // It is drawn as if this PC had two 2560x1440 screens; nothing is applied and no window is opened.
     const dumpPanel = process.argv.find((a) => a.startsWith('--dump-panel='));
@@ -694,6 +714,74 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       }
       check('the client says when the host screen is locked or behind a secure prompt, and when it is back', on && shown && off && gone && !/not (shown|cleared)/.test(secure),
         `lock ${on && shown ? 'shown' : 'not shown'}, ${off && gone ? 'cleared' : 'not cleared'}; ${secure}`);
+    }
+    // A phone (attachTouch, the phone keyboard): fingers on the picture made of synthetic touch pointer
+    // events, traced (nothing is sent), and what the host makes of the characters a phone types.
+    {
+      const t = await js(`(async () => {
+        if (typeof mainView.sel !== 'number') setSel(mainView, 0);
+        if (mainView.fit !== 'fit') setFit(mainView, 'fit');
+        const v = mainView.panes[0].video, r = v.getBoundingClientRect();
+        const P = (type, id, fx, fy) => v.dispatchEvent(new PointerEvent(type, { pointerType: 'touch', pointerId: id, isPrimary: id === 11, clientX: r.left + r.width * fx, clientY: r.top + r.height * fy, bubbles: true, cancelable: true }));
+        const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+        const INPUT = new Set(['mm', 'md', 'mu', 'mw', 'kd', 'ku', 'text']);
+        const out = {};
+        const run = async (name, fn) => {
+          window.__rd.trace = []; await fn(); await wait(80);
+          out[name] = window.__rd.trace.filter((m) => INPUT.has(m.t)).map((m) => m.t + (m.b != null ? m.b : '') + (m.t === 'mw' ? (m.dy > 0 ? '+' : m.dy < 0 ? '-' : '0') : ''));
+        };
+        await run('tap', async () => { P('pointerdown', 11, .5, .5); await wait(60); P('pointerup', 11, .5, .5); });
+        await run('long', async () => { P('pointerdown', 11, .3, .3); await wait(700); P('pointerup', 11, .3, .3); });
+        await run('drag', async () => { P('pointerdown', 11, .4, .4); await wait(420); P('pointermove', 11, .45, .4); P('pointermove', 11, .5, .4); P('pointerup', 11, .5, .4); });
+        await run('swipe', async () => { P('pointerdown', 11, .5, .6); await wait(30); P('pointermove', 11, .5, .55); P('pointermove', 11, .5, .45); await wait(40); P('pointerup', 11, .5, .45); });
+        await run('pinch', async () => { P('pointerdown', 11, .45, .5); P('pointerdown', 12, .55, .5); P('pointermove', 11, .35, .5); P('pointermove', 12, .65, .5); P('pointerup', 12, .65, .5); P('pointerup', 11, .35, .5); });
+        out.zoom = +(mainView.zoom || 1).toFixed(2);
+        document.getElementById('zoomBtn').click();
+        // The phone keyboard: what changes in the hidden field goes over; Backspace also when only the
+        // kept space is left; a key-row Ctrl makes the next letter a shortcut.
+        const k = document.getElementById('kbd'), type = (val, inputType) => { k.value = val; k.dispatchEvent(new InputEvent('input', { inputType })); };
+        await run('kbd', async () => { type(' 한글a', 'insertText'); type(' 한글', 'deleteContentBackward'); type(' 한', 'deleteContentBackward'); type(' ', 'deleteContentBackward'); type('', 'deleteContentBackward'); });
+        out.kept = JSON.stringify(k.value);
+        await run('ctrl', async () => {
+          const ctrl = [...document.getElementById('keyrow').children].find((b) => b.dataset.code === 'ControlLeft');
+          ctrl.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+          type(' c', 'insertText');
+        });
+        out.kbdTrace = window.__rd.trace;
+        window.__rd.trace = null;
+        return out;
+      })()`);
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const typed = input.simulate([{ x: 0, y: 0, width: 1920, height: 1080 }], [{ t: 'text', s: '한글 a' }]).log.find((e) => e.text);
+      const ok = same(t.tap, ['md0', 'mu0']) && same(t.long, ['md2', 'mu2']) && t.drag[0] === 'md0' && t.drag.includes('mm') && t.drag[t.drag.length - 1] === 'mu0'
+        && t.swipe.includes('mw+') && !t.swipe.some((x) => /^m[du]/.test(x)) && !t.pinch.some((x) => /^m[du]/.test(x)) && t.zoom > 1.2
+        && same(t.kbd, ['text', 'kd', 'ku', 'kd', 'ku', 'kd', 'ku', 'kd', 'ku']) && t.kept === '" "' && same(t.ctrl, ['kd', 'kd', 'ku', 'ku']) && typed && typed.text === '한글 a';
+      // The first rule: in a window this PC's system shortcuts stay here, in fullscreen they go to the
+      // host; a key whose press went keeps its release. The clipboard is shared either way.
+      const r = await js(`(() => {
+        const K = (type, code, o = {}) => window.dispatchEvent(new KeyboardEvent(type, { code, key: code, bubbles: true, cancelable: true, ...o }));
+        const sent = () => window.__rd.trace.filter((m) => m.t === 'kd' || m.t === 'ku').map((m) => m.t + ':' + m.c);
+        const out = {};
+        window.__rd.trace = []; window.__rd.forceFull = false;
+        K('keydown', 'MetaLeft', { metaKey: true }); K('keydown', 'KeyS', { metaKey: true, shiftKey: true }); K('keyup', 'KeyS', { metaKey: true }); K('keyup', 'MetaLeft');
+        K('keydown', 'PrintScreen'); K('keyup', 'PrintScreen'); K('keydown', 'KeyA'); K('keyup', 'KeyA');
+        out.window = sent();
+        window.__rd.trace = []; window.__rd.forceFull = true;
+        K('keydown', 'MetaLeft', { metaKey: true }); K('keydown', 'KeyD', { metaKey: true }); K('keyup', 'KeyD', { metaKey: true });
+        window.__rd.forceFull = false; K('keyup', 'MetaLeft'); // fullscreen left with the key still held: its release still goes
+        out.full = sent();
+        window.__rd.trace = [];
+        gotClientClip({ seq: 101 }); gotClientClip({ seq: 102, text: 'copied here' }); gotClientClip({ seq: 103, text: 'copied here' });
+        out.clip = window.__rd.trace.filter((m) => m.t === 'clip').map((m) => m.s);
+        clipSeqSeen = null; window.__rd.trace = null; window.__rd.forceFull = false;
+        return out;
+      })()`);
+      const masked = input.simulate([{ x: 0, y: 0, width: 1920, height: 1080 }], [{ t: 'kd', c: 'AltLeft', k: 'Alt' }, { t: 'reset' }]).log.map((e) => e.key + (e.up ? '-up' : ''));
+      check('fullscreen is the host: in a window the system keys stay here, in fullscreen they go; the clipboard is shared; a lone Alt let go is masked', same(r.window, ['kd:KeyA', 'ku:KeyA'])
+        && same(r.full, ['kd:MetaLeft', 'kd:KeyD', 'ku:KeyD', 'ku:MetaLeft']) && same(r.clip, ['copied here']) && same(masked, ['AltLeft', 'mask', 'AltLeft-up']),
+        `window ${r.window} | fullscreen ${r.full} | clipboard ${JSON.stringify(r.clip)} | reset ${masked}`);
+      check('a phone: tap, long press, hold and drag, swipe, pinch; its keyboard (Hangul, Backspace, key-row Ctrl); the host types the characters', ok,
+        `tap ${t.tap} | long ${t.long} | drag ${t.drag} | swipe ${t.swipe} | pinch ${t.pinch.join(',') || 'nothing sent'}, zoom ${t.zoom} | kbd ${t.kbd} kept ${t.kept} | ctrl ${t.ctrl} | host typed ${typed ? 'yes' : 'no'}`);
     }
 
     if (INPUT_CHECK) {

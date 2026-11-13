@@ -299,6 +299,49 @@ the client app instead).
   later needs admin rights.
 - **Lock screen / UAC** are on a separate secure desktop: they cannot be captured or controlled by a
   normal-user process. This is the main functional limitation, not a bug to "fix" with a quick patch.
+  The client is told (`lock`): main reports Windows' lock and unlock (`powerMonitor`, and
+  `getSystemIdleState` when a session starts), and native capture loops that cannot read their screen
+  for over 1.5 s count as a secure prompt (`screenGone` in `host.js`); every client window then says so
+  over the picture until the screen is back.
+- **Fullscreen is the host, a window is this PC** (the user's first rule, `systemKey` in
+  `client.template.html`). In fullscreen every key goes to the host, the system's shortcuts too (the
+  Windows key and its combinations such as Win+Shift+S, Alt+Tab, Alt+F4, Ctrl+Esc, PrintScreen): the
+  page is in HTML fullscreen with `navigator.keyboard.lock()` in a browser and in the client app alike
+  (`FULLSCREEN_JS` in `client/shell.js`), so Chromium holds them for the page. In a window those
+  shortcuts are not sent and act on the client PC; a key whose press was sent always has its release
+  sent. Whether Keyboard Lock really holds the Windows key on Windows was not checked (Ctrl+Alt+Del and
+  Win+L cannot be held by anything). The clipboard is the one exception: shared in both modes. When the
+  host lets go of Alt or the Windows key in a `reset` (the client left with Alt+Tab while Alt was
+  held), it first presses an unassigned key (VK 0xE8, `maskKey`), or the lone release would open the
+  program's menu bar or the Start menu.
+- **The clipboard is shared both ways.** Host to client: text at once (the host page polls main's
+  clipboard; the client app writes it with `shell:clipWrite`, a browser when one of its windows has the
+  focus), files when the client's own programs get the focus (`clipfiles`/`clipget`). Client to host: in
+  the client app text at once (`shell:clipPoll` twice a second while connected: `clipSeq`, then the
+  text; what was on the clipboard before the session began is not sent, the host's text counts then);
+  files, and in a browser also text, when pasted into the picture (a browser lets a page read the
+  clipboard only in a paste event). Text a password manager marked as private
+  (`ExcludeClipboardContentFromMonitorProcessing`, `Clipboard Viewer Ignore`; `clipboardPrivate()`)
+  goes neither way. Echoes are cut by the last text on each side (`lastClip`, `s.clip`).
+- **Phones and tablets** (`TOUCH`: `(pointer: coarse)`, or `#touch` for tests; `attachTouch`). A
+  finger's pointer events are taken before the mouse handling (capture listeners at the target,
+  `stopImmediatePropagation`): a tap clicks, a long press (550 ms) clicks the right button, holding
+  still for 300 ms and then moving drags with the left button, a quick swipe scrolls (the wheel, scaled
+  by host pixels per screen pixel so the content follows the finger), two fingers zoom (1x-5x) and move
+  the picture locally (`view.zoom`, `view.pan` in `layout`; the host is asked for more pixels when
+  zoomed). The phone's keyboard types into a hidden textarea (`#kbd`) that always keeps one space so
+  Backspace has something to delete; what changes there goes as `text` (characters, Hangul composition
+  included) or Backspace/Enter/Tab keys. The host types `text` with `KEYEVENTF_UNICODE` (Windows only
+  so far; elsewhere it is dropped). A key row offers Esc, Tab, sticky Ctrl/Alt/Shift/Win (for the next
+  key), arrows, Home/End, PgUp/PgDn, Del, F5. Without the person's own codec choice a phone asks for
+  H.264 unless `MediaCapabilities` says it decodes AV1 power-efficiently. Not tried on a real phone;
+  how a phone gets the loader file (no file:// on iPhone) is not settled.
+- **Electron 45's npm package no longer fetches Electron's program at install time** (it would at
+  first start through the package's own launcher, which the `.bat`/`.sh` launchers do not use: they
+  start `dist/electron` directly). `setup.ps1`/`setup.sh` run `node node_modules/electron/install.js`
+  after `npm install`. A host that runs while `npm install` replaces Electron makes it fail: stop the
+  host first. `safeStorage` ciphertexts of 33 and 45, sync and async calls, are interchangeable (same
+  profile); the sync calls are deprecated in 45.
 - **Cursor and the captured video.** Chromium always paints the cursor into captured frames
   (`cursor: 'never'` is ignored, and hiding it with the Magnification API does not affect capture). The
   host therefore swaps the system cursors for a transparent one (`SetSystemCursor`) *before* capture
@@ -324,6 +367,7 @@ Run from `host/` with Electron's env var cleared.
 |---|---|
 | `npm run selftest` | Local end-to-end test, prints `[selftest] PASS/FAIL` lines, exits 0 or 1 |
 | `electron . --selftest --shell-check` | Same, plus the client app's one-click layout on the real screens. Fullscreen windows cover every monitor for a few seconds, so ask the user first |
+| `electron . --selftest --dump-phone=<file.png>` | Pictures of the phone layout: client windows of a phone's size (915x412 and 412x915, `#touch`) with the key row open, written as `<file>-landscape.png` and `<file>-portrait.png`. About 30 s, opens no window |
 | `electron . --selftest --dump-panel=<file.png>` | Quick look at the arrangement panel: connects, draws the panel as if the client had two screens, writes pictures (`<file>.png`, `-ctrl-drag`, `-swap-drag`, `-together`) and exits. About 20 s, opens no window |
 | `node native/build.js user@host[:folder]` | Builds the native modules on a Linux machine with mingw-w64: `host/bin/capture.dll` + `capture.dll.json` (commit them with the source), `tools/native/capprobe.dll`. After a change in `native/` |
 | `npm run bench -- --native-probe --capture-probe ...` | Bench with a native observer of the same display: reports when the picture was on the host's own screen and how long after that the capturer in use had it. Needs `tools/native/capprobe.dll` |
@@ -358,7 +402,7 @@ must then be given the new file). Run `npm run selftest` after either.
 | `start-client.bat` | Launcher for the client app (uses the Electron installed under `host/node_modules`) |
 | `setup.sh`, `start-host.sh`, `start-client.sh`, `local-test.sh` | The same for Linux (bash, executable in git, LF line endings) |
 | `host/linux-launch.sh` | Sourced by those: Electron's path, X11 session and sandbox checks, starting Electron in the background |
-| `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js`: Win32 or X11, and `host/files.js`). Exposes `window.mrShell` (`fileAbort` and `pointerOwn` from 2026-11-13 on). `main.js --loader=<file>` shows another loader with a profile of its own (self-test, local trial on Linux). These files are not updated through the loader: the page must feature-detect what an installed app offers |
+| `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js`: Win32 or X11, and `host/files.js`). Exposes `window.mrShell` (`fileAbort`, `pointerOwn`, `clipPoll` and `clipWrite` from 2026-11-13 on). `main.js --loader=<file>` shows another loader with a profile of its own (self-test, local trial on Linux). These files are not updated through the loader: the page must feature-detect what an installed app offers |
 | `host/main.js` | Electron main: config and key storage, monitor enumeration, tray, IPC, isolated modes |
 | `host/preload.js` | The only bridge between the renderer and main (`window.hostApi`). Also runs the native capturer's loops and hands their frames to the page over a message port |
 | `host/host.html`, `host/host.js` | Host UI and the WebRTC side: capture, encoding control, data-channel routing |
@@ -438,7 +482,9 @@ Data channel `input` (JSON text):
 | client -> host | `cs` | Client measurements for the host's diagnostics log |
 | client -> host | `dragout` | The pointer was let go outside every client window while the host reported a drag; `b` = button. The host ends its drag, copies what was dragged and answers with `dragdata` |
 | client -> host | `dragq` | The pointer just left every client window with a button held: the host checks for a drag-and-drop every 15 ms for 1.2 s and sends `drag` the moment one starts |
-| both | `clip` | Clipboard text, at most 60000 chars |
+| both | `clip` | Clipboard text, at most 60000 chars (see "The clipboard is shared both ways") |
+| client -> host | `text` | `s`: characters typed on a phone's keyboard, at most 400 at a time; the host types them as characters (`KEYEVENTF_UNICODE`), whatever its layout and input method. Windows hosts only |
+| host -> client | `lock` | `on`, `why`: `lock` (the host's session is locked) or `secure` (a UAC prompt or another secure desktop has the screen). Sent when a session starts and when it changes; the client says so over the picture |
 | host -> client | `cur` | Current host cursor: `c` = CSS cursor name, or `img` (PNG data URL) with hotspot `hx`,`hy` for an app-specific cursor. The host page asks main about 30 times a second and passes the cursor it has, so the picture is copied over IPC only when it changes |
 | host -> client | `hs` | Host-side statistics every 2 s (codec and `from`, whose choice it was: `client` (the 진단 dialog, kept in the client's localStorage `mr_codec`), `config` or `auto`; encoder, bitrate, per-monitor capture/encode fps and limiting factor) for the client's diagnostics report; the host's diagnostics log gets the same |
 | host -> client | `drag` | `on`: whether a drag-and-drop is under way on the host |
@@ -674,6 +720,13 @@ dropped by the host into another Explorer window, its folder icon, and a whole f
 Chromium handing over files copied in Explorer in a paste event. Not verified: dropping into other
 programs (mail, chat, browser upload fields), the desktop, an elevated target (Windows blocks it),
 a paste into Explorer through the host, a real second PC, folders whose reading throws.
+
+Electron 45.3.1 (2026-11-13, was 33.4.11): the self-test passes on it (43 checks, among them the
+lock notice, a phone's gestures and keyboard traced from synthetic touch events, the fullscreen/window
+key rule and the clipboard poll's logic). Not yet checked on 45: the bench (latency and quality),
+`--client-app-check` and `--shell-check` (the client app), `--dragout-check`/`--dropin-check`, Linux.
+Not verified anywhere: a real phone, Keyboard Lock holding the Windows key on Windows, `shell:clipPoll`
+in a real client app with a real password manager.
 
 Audit fixes of 2026-11-13 (signaling, session lifecycle, the main process, the client page, the client
 app, native capture): after merging them all, the self-test with `--clip-check` (41 checks),

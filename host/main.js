@@ -726,6 +726,7 @@ else {
       if (seq === lastSeq) return { seq };
       const files = await clipFilesNow(seq);
       if (files) return { seq, files };
+      if (input.clipboardPrivate()) return { seq }; // a password manager's: not passed on to the client
       const text = timed('clip-read', () => clipboard.readText());
       return { seq, text: text.length <= CLIP_MAX ? text : '' }; // longer text is not sent to the client: not copied to the page either
     });

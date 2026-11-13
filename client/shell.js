@@ -12,8 +12,9 @@ const { execFile } = require('child_process');
 const { safeName, freePath, stagedPath, sweep } = require('../host/files');
 
 const PRELOAD = path.join(__dirname, 'preload.js');
-// Not 'clipboard-read': pasted text and files reach the page through the paste event, and the page
-// (sent by the host) has no business reading this PC's clipboard at any other time.
+// Not 'clipboard-read': the page (sent by the host) never reads this PC's clipboard itself. Pasted text
+// and files reach it through the paste event, and copied text through shell:clipPoll, which hands over
+// only text that changed while a session is on, never what a password manager marked as private.
 const ALLOWED = new Set(['window-management', 'fullscreen', 'keyboardLock', 'pointerLock', 'clipboard-sanitized-write']);
 const FULLSCREEN_JS = `document.documentElement.requestFullscreen()
   .then(() => (navigator.keyboard && navigator.keyboard.lock ? navigator.keyboard.lock() : null))
@@ -200,6 +201,29 @@ function setupIpc() {
     let at = null;
     try { at = w.underPointer(); } catch {}
     return at && at.hwnd ? ownWindow(at.hwnd, s) : null;
+  });
+  // The clipboard is shared with the host in both directions, in a window and in fullscreen (the one
+  // exception to "fullscreen is the host, a window is this PC"). The page asks about twice a second
+  // while connected; text copied here goes over at once. Not what a password manager marked as not to
+  // be kept or passed on, and not a file list (files go over when pasted on the host).
+  ipcMain.handle('shell:clipPoll', (e, lastSeq) => {
+    const m = shellOf(e.sender) ? win32() : null;
+    if (!m) return null;
+    try {
+      const seq = m.clipSeq();
+      if (seq === lastSeq) return { seq };
+      if (m.clipboardPrivate()) return { seq, private: true };
+      if (m.clipboardFiles().length) return { seq, files: true };
+      const text = clipboard.readText();
+      return { seq, text: text.length <= 60000 ? text : '' };
+    } catch { return null; }
+  });
+  // Text copied on the host, onto this PC's clipboard at once (also while none of our windows has the
+  // focus, which the page's own clipboard writing needs).
+  ipcMain.handle('shell:clipWrite', (e, text) => {
+    if (!shellOf(e.sender) || typeof text !== 'string' || text.length > 60000) return false;
+    clipboard.writeText(text);
+    return true;
   });
   ipcMain.handle('shell:dropText', async (e, id, text) => {
     if (!shellOf(e.sender) || typeof text !== 'string' || text.length > 200000) return '';

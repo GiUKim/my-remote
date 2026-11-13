@@ -9,6 +9,9 @@ const NEUTRAL = {
   hidesCursors: false, // whether hideCursors() can keep the pointer out of the engine's captured video
   virtualDesktop: () => null, // null: the area the monitors cover
   move() {}, button() {}, wheel() {}, keyOf: () => null, sendKey() {},
+  typeText() {}, // characters as such (a phone's keyboard); Windows only so far
+  maskKey() {}, // a key that keeps a lone Alt or Windows key release from opening a menu (Windows)
+  clipboardPrivate: () => false, // whether a password manager marked the clipboard's content as private
   cursorState: () => ({ key: '0', name: 'default' }),
   cursorBitmap: () => null,
   hideCursors: () => 0,
@@ -94,6 +97,9 @@ function key(code, keyName, up, shortcut) {
 }
 
 function reset() {
+  // Alt or the Windows key let go with nothing pressed in between opens the program's menu bar or the
+  // Start menu (a client that left with Alt+Tab, say, held Alt here): a key that means nothing in between.
+  if ([...down.keys()].some((c) => /^(Alt|Meta)/.test(c))) { if (dry) dry.push({ key: 'mask', up: false }); else backend.maskKey(); }
   for (const code of [...down.keys()]) key(code, '', true);
   down.clear();
   for (let b = 0; b < BTN.length; b++) if (buttonsDown & (1 << b)) button(b, false);
@@ -134,6 +140,12 @@ function handle(text) {
     }
     case 'kd': key(String(m.c), String(m.k || ''), false); break;
     case 'ku': key(String(m.c), String(m.k || ''), true); break;
+    case 'text': { // characters from a phone's keyboard, typed as such (see typeText in platform/win32.js)
+      const s = String(m.s || '').slice(0, 1000);
+      if (!s) break;
+      if (dry) dry.push({ text: s }); else backend.typeText(s);
+      break;
+    }
     case 'reset': reset(); break;
   }
 }
@@ -200,5 +212,6 @@ module.exports = {
   dropFilesBuffer: backend.dropFilesBuffer,
   setClipboardFiles: backend.setClipboardFiles,
   processRunning: backend.processRunning,
+  clipboardPrivate: backend.clipboardPrivate,
   clipSeq: backend.clipSeq,
 };

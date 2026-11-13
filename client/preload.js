@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld('mrShell', {
   // Whether the real pointer is over one of this client's windows right now: true, false (another
   // program), or null (cannot be told here; only on Windows).
   pointerOwn: () => ipcRenderer.invoke('shell:pointerOwn'),
+  // The clipboard shared with the host (see shell.js): what changed here since `seq`, and text from the host.
+  clipPoll: (seq) => ipcRenderer.invoke('shell:clipPoll', seq),
+  clipWrite: (text) => ipcRenderer.invoke('shell:clipWrite', text),
   // Where a file or folder dropped on the page is on this PC (for reading a dropped folder here).
   pathFor: (file) => { try { return webUtils.getPathForFile(file) || ''; } catch { return ''; } },
 });
