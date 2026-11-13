@@ -38,7 +38,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 2. `host` 폴더에서 `npm install`을 실행합니다(Electron 약 100MB).
 3. 자체 테스트를 돌립니다. 이 PC 안에서만 동작하며 인터넷으로 아무것도 보내지 않습니다.
 
-마지막에 `[selftest] ALL PASS`가 나오면 준비가 끝난 것입니다. Linux에서는 `./setup.sh`를 씁니다([Linux](#linux) 참고).
+마지막에 `[selftest] ALL PASS`가 나오면 준비가 끝난 것입니다. Linux에서는 zip을 풀고 `./start-host.sh`만 실행하면 처음에 알아서 설치합니다([Linux](#linux) 참고).
 
 ## 사용 방법
 
@@ -203,19 +203,35 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 
 ## Linux
 
-호스트와 클라이언트 앱은 Linux의 **X11 세션**에서도 동작합니다(Ubuntu 22.04에서 시험).
+호스트와 클라이언트 앱은 Linux의 **X11 세션**에서도 동작합니다(Ubuntu 22.04와 24.04 대상, 22.04에서 시험).
 
-- **Wayland 세션은 지원하지 않습니다.** 로그인 화면의 톱니바퀴에서 "Ubuntu on Xorg" 같은 X11 세션을 고르세요.
+- **Wayland 세션은 지원하지 않습니다.** 로그아웃한 뒤 로그인 화면에서 이름을 고르고, 오른쪽 아래 톱니바퀴에서 "Ubuntu on Xorg"를 고른 다음 로그인하세요. Wayland에서 실행하면 이 안내가 창으로 뜹니다.
 - **macOS는 아직 지원하지 않습니다.** 입력 처리가 없어 호스트가 보기 전용으로만 뜨며, 그마저 시험해 보지 않았습니다.
 
-Node.js 22.12 이상과 npm이 필요합니다. 없으면 `setup.sh`가 무엇을 설치해야 하는지 알려 주고 멈춥니다(스스로 내려받지 않습니다. Ubuntu 22.04 기본 패키지의 Node는 너무 오래됐으니 https://nodejs.org 의 LTS를 쓰세요).
+**처음 한 번(설치 포함):**
 
-Electron은 데스크톱 라이브러리(GTK 3, NSS, ALSA 등)가 있어야 실행됩니다. 데스크톱이 깔린 배포판에는 보통 다 있습니다. 서버용이나 최소 설치처럼 빠진 것이 있으면, `setup.sh`와 실행 스크립트가 빠진 라이브러리와 설치 명령(예: `sudo apt install libgtk-3-0 libnss3 libasound2`)을 알려 주고 멈춥니다.
+1. GitHub에서 zip을 받아 원하는 곳에 풉니다.
+2. 그 폴더에서 `start-host.sh`를 실행합니다. 터미널에서 `./start-host.sh`를 치거나, 파일 관리자에서 오른쪽 클릭 → "프로그램으로 실행"을 고릅니다.
+3. 처음에는 필요한 것을 알아서 받아 설치하고(몇 분), 끝나면 호스트 창이 뜹니다.
+   - Node.js가 없거나 오래됐으면(Ubuntu 기본 패키지는 22.04가 v12, 24.04가 v18이라 둘 다 해당) 공식 Node 22 LTS를 nodejs.org에서 받아 SHA-256을 확인하고 이 폴더의 `tools/node`에 둡니다.
+   - 시스템에는 아무것도 설치하지 않고, 관리자 권한도 필요 없습니다.
+   - 파일 관리자에서 실행했으면 진행 상황이 터미널 창으로 보입니다.
+
+**그다음부터:** 앱 메뉴(Activities)에서 "My Remote Host"를 누르면 됩니다. 설치할 때 "My Remote Host"와 "My Remote Client"가 이 사용자의 앱 메뉴에 추가됩니다. 지우려면 `~/.local/share/applications/my-remote-*.desktop`을 지우세요.
+
+막힐 수 있는 곳과 그때 나오는 안내:
+
+| 상황 | 안내 |
+|---|---|
+| Wayland 세션 | 위의 Xorg 세션 안내가 창으로 뜹니다 |
+| Ubuntu 23.10 이후(24.04 포함)의 Chromium 샌드박스 제한 | 설치 중에 sudo로 샌드박스 도우미를 한 번 설치할지 묻습니다(권장). 설치하지 않으면 `MY_REMOTE_NO_SANDBOX=1 ./start-host.sh`로 실행합니다 |
+| 데스크톱 라이브러리(GTK 3 등)가 빠진 최소 설치 | 빠진 것과 설치 명령(예: `sudo apt install libgtk-3-0 libnss3 libasound2`)이 나옵니다 |
+| curl과 wget이 모두 없음 | `sudo apt install wget`을 안내합니다(Ubuntu 데스크톱에는 wget이 기본으로 있습니다) |
 
 ```bash
-./setup.sh            # npm install과 자체 테스트. 클라이언트로만 쓸 PC에서는 ./setup.sh --skip-selftest
-./start-host.sh       # 호스트. 백그라운드로 뜨고, 출력은 $XDG_RUNTIME_DIR/my-remote-host.log
-./start-client.sh     # 클라이언트 앱
+./start-host.sh       # 호스트 (처음엔 설치부터). 백그라운드로 뜨고, 출력은 $XDG_RUNTIME_DIR/my-remote-host.log
+./start-client.sh     # 클라이언트 앱 (처음엔 설치부터)
+./setup.sh            # 설치만 다시, 자체 테스트 포함 (문제를 찾을 때)
 ./local-test.sh       # 이 PC에서만 체험 (보기 전용 클라이언트가 클라이언트 앱으로 열림)
 ```
 

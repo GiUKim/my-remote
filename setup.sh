@@ -1,28 +1,75 @@
 #!/usr/bin/env bash
-# One-shot setup on Linux (X11 session; Ubuntu 22.04 tested). No root needed, nothing is installed
-# system-wide and nothing is downloaded but what npm install fetches for host/ (Electron and koffi).
-#   ./setup.sh [--skip-selftest]
-# 1. Uses Node.js >= 22.12 (what Electron 45's npm package needs) with npm from PATH; says what to install when there is none.
-# 2. Runs npm install in ./host.
-# 3. Runs the self-test. It is fully local: no internet traffic, throwaway key, no input injected.
+# One-shot setup on Linux (X11 session; Ubuntu 22.04 and 24.04). No root needed, nothing is installed
+# system-wide: Node.js (when needed) goes into ./tools/node, Electron and koffi into ./host/node_modules.
+# start-host.sh and start-client.sh run it by themselves on their first start (without the self-test).
+#   ./setup.sh [--skip-selftest] [--hold]
+# 1. Uses Node.js >= 22.12 (what Electron 45's npm package needs) with npm: one downloaded into ./tools/node
+#    earlier, else the one on PATH, else downloads portable Node 22 LTS into ./tools/node (SHA-256
+#    verified), as setup.ps1 does on Windows. Ubuntu's own nodejs package is too old (22.04: 12, 24.04: 18).
+# 2. Runs npm install in ./host (Electron, koffi) and fetches Electron's program.
+# 3. Where Chromium's sandbox is restricted (Ubuntu 23.10 and later), offers to install its helper (sudo).
+# 4. Adds "My Remote Host" and "My Remote Client" to this user's app menu.
+# 5. Runs the self-test. It is fully local: no internet traffic, throwaway key, no input injected.
+# --hold: in a terminal window of its own (a start from the file manager), wait before it closes.
 set -euo pipefail
 . "$(dirname "$0")/host/linux-launch.sh"
 
-skip=0
-[ "${1:-}" = "--skip-selftest" ] && skip=1
+skip=0 hold=0
+for a in "$@"; do
+  case "$a" in --skip-selftest) skip=1 ;; --hold) hold=1 ;; esac
+done
 if [ "$(uname -s)" != "Linux" ]; then
   echo "[setup] This script is for Linux. On Windows run setup.ps1." >&2
   exit 1
 fi
+tmp=""
+finish() {
+  local status=$?
+  [ -n "$tmp" ] && rm -rf "$tmp"
+  if [ "$hold" = 1 ]; then
+    if [ "$status" = 0 ]; then sleep 2; else echo; read -r -p "[setup] It did not finish (see above). Press Enter to close this window. " _ || true; fi
+  fi
+}
+trap finish EXIT
 
-recent=0
-if command -v node >/dev/null 2>&1; then recent="$(node -p 'const [a, b] = process.versions.node.split(".").map(Number); a > 22 || (a === 22 && b >= 12) ? 1 : 0' 2>/dev/null || echo 0)"; fi
-if [ "$recent" != 1 ] || ! command -v npm >/dev/null 2>&1; then
-  echo "[setup] Node.js 22.12 or newer, with npm, is needed (found: $(node -v 2>/dev/null || echo none))." >&2
-  echo "        Install the LTS version from https://nodejs.org or your distribution's packages" >&2
-  echo "        (Ubuntu 22.04's own nodejs package is too old), then run this again." >&2
-  exit 1
+# Node.js >= 22.12 with npm. MY_REMOTE_NODE_DIST points the download elsewhere (tests).
+nodedir="$root/tools/node"
+node_ok() { [ -n "$1" ] && [ -x "$1" ] && [ "$("$1" -p 'const [a, b] = process.versions.node.split(".").map(Number); a > 22 || (a === 22 && b >= 12) ? 1 : 0' 2>/dev/null)" = 1 ]; }
+fetch() { # url file: curl, or wget (what a fresh Ubuntu desktop has)
+  if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"
+  elif command -v wget >/dev/null 2>&1; then wget -q "$1" -O "$2"
+  else echo "[setup] Neither curl nor wget is installed (sudo apt install wget)." >&2; return 1; fi
+}
+if [ -e "$nodedir/bin/node" ]; then
+  if ! node_ok "$nodedir/bin/node"; then
+    echo "[setup] tools/node holds Node $("$nodedir/bin/node" -v 2>/dev/null || echo '?'), older than 22.12. Delete the tools/node folder and run ./setup.sh again." >&2
+    exit 1
+  fi
+  PATH="$nodedir/bin:$PATH"
+elif ! { command -v npm >/dev/null 2>&1 && node_ok "$(command -v node 2>/dev/null || true)"; }; then
+  case "$(uname -m)" in
+    x86_64) arch=x64 ;; aarch64|arm64) arch=arm64 ;; armv7l) arch=armv7l ;;
+    *) echo "[setup] There is no portable Node.js for this processor ($(uname -m)): install Node.js 22.12 or newer with npm, then run this again." >&2; exit 1 ;;
+  esac
+  dist="${MY_REMOTE_NODE_DIST:-https://nodejs.org/dist}/latest-v22.x"
+  echo "[setup] Node.js 22.12 or newer not found (found: $(node -v 2>/dev/null || echo none)) - downloading portable Node 22 LTS into tools/node"
+  mkdir -p "$root/tools"
+  tmp="$(mktemp -d "$root/tools/.node-download.XXXXXX")"
+  fetch "$dist/SHASUMS256.txt" "$tmp/sums" || { echo "[setup] Could not download the list of Node.js builds from $dist." >&2; exit 1; }
+  line="$(grep -E "^[0-9a-f]{64}  node-v22\.[0-9]+\.[0-9]+-linux-$arch\.tar\.gz$" "$tmp/sums" | head -n 1 || true)"
+  [ -n "$line" ] || { echo "[setup] $dist has no Node 22 build for linux-$arch." >&2; exit 1; }
+  hash="${line%% *}"; name="${line##* }"
+  fetch "$dist/$name" "$tmp/$name" || { echo "[setup] Downloading $name failed." >&2; exit 1; }
+  if [ "$(sha256sum "$tmp/$name" | cut -d ' ' -f 1)" != "$hash" ]; then
+    echo "[setup] $name does not match its SHA-256 in $dist/SHASUMS256.txt; nothing was installed." >&2
+    exit 1
+  fi
+  tar -xzf "$tmp/$name" -C "$tmp"
+  rm -rf "$nodedir"
+  mv "$tmp/${name%.tar.gz}" "$nodedir"
+  PATH="$nodedir/bin:$PATH"
 fi
+export PATH
 echo "[setup] Node $(node -v) at $(command -v node)"
 
 # The host's input and cursor go through these X11 libraries; without them it runs view-only.
@@ -41,6 +88,34 @@ echo "[setup] npm install (downloads Electron, about 100 MB)"
 (cd "$root/host" && node node_modules/electron/install.js)
 need_electron
 
+# Ubuntu 23.10 and later: Chromium's sandbox needs its helper installed by root. Asked here, once.
+if ! sandbox_ok && [ "${MY_REMOTE_NO_SANDBOX:-}" != 1 ] && [ -t 0 ]; then
+  echo "[setup] This system restricts what Chromium's sandbox needs (Ubuntu 23.10 and later). Electron's"
+  echo "        sandbox helper can be installed once with sudo (recommended); otherwise the programs must"
+  echo "        be started with MY_REMOTE_NO_SANDBOX=1 (without the sandbox)."
+  read -r -p "[setup] Install the sandbox helper now with sudo? [Y/n] " answer || answer=n
+  case "$answer" in
+    [Nn]*) echo "[setup] Not installed. Start the programs with MY_REMOTE_NO_SANDBOX=1 in front, e.g. MY_REMOTE_NO_SANDBOX=1 ./start-host.sh" ;;
+    *) sudo chown root:root "$sandbox_helper" && sudo chmod 4755 "$sandbox_helper" && echo "[setup] Sandbox helper installed." ;;
+  esac
+fi
+
+# This user's app menu: later starts are one click. (Delete the two files to take them out again.)
+apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+case "$root" in
+  *[\"\`\$\\%]*) echo "[setup] The folder's path has a character an app menu entry cannot hold; start the programs with the .sh files." ;;
+  *)
+    if mkdir -p "$apps" 2>/dev/null; then
+      for kind in host client; do
+        if [ "$kind" = host ]; then title="My Remote Host"; what="Lets another PC see and control this PC"; else title="My Remote Client"; what="Shows and controls another PC"; fi
+        printf '%s\n' '[Desktop Entry]' 'Type=Application' "Name=$title" "Comment=$what" "Exec=\"$root/start-$kind.sh\"" \
+          "Icon=$root/host/icon.svg" 'Terminal=false' 'Categories=Network;RemoteAccess;' > "$apps/my-remote-$kind.desktop"
+      done
+      echo "[setup] Added \"My Remote Host\" and \"My Remote Client\" to the app menu ($apps)"
+    fi
+    ;;
+esac
+
 if [ "$skip" = 0 ]; then
   check_session
   check_sandbox
@@ -57,7 +132,8 @@ fi
 
 echo
 echo "[setup] Done."
-echo "  Start the host : ./start-host.sh"
+if [ "${MY_REMOTE_FROM_LAUNCHER:-}" = 1 ]; then exit 0; fi # the launcher that ran this starts the program now
+echo "  Start the host : ./start-host.sh    (or \"My Remote Host\" in the app menu)"
 echo "  Try it locally : ./local-test.sh    (view-only, no internet traffic)"
-echo "  Client app     : ./start-client.sh  (on the PC you connect FROM; one-click multi-monitor layout)"
+echo "  Client app     : ./start-client.sh  (on the PC you connect FROM; or \"My Remote Client\" in the app menu)"
 echo "  Client, no install: my-remote-client.html (open in Chrome, Edge or Chromium on the other PC)"

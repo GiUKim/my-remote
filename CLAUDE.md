@@ -19,8 +19,12 @@ When the user asks you to set this up, do the following in order.
    ```
    It needs no admin rights. It downloads portable Node 22 LTS into `tools\node` if Node >= 22.12 is
    missing (SHA-256 verified), runs `npm install` in `host`, then runs the self-test.
-   On Linux (X11 session) run `./setup.sh` instead. It downloads no Node: without Node >= 22.12 and npm
-   on PATH it says what to install and stops. Then `npm install` in `host` and the self-test, as above.
+   On Linux (X11 session) run `./setup.sh` instead: the same, Node 22 LTS into `tools/node` when none
+   >= 22.12 with npm is on PATH (from nodejs.org's `latest-v22.x`, SHA-256 checked against its list;
+   curl or wget), plus an offer to install Chromium's sandbox helper with sudo where Ubuntu 23.10+
+   restricts the sandbox, and "My Remote Host"/"My Remote Client" entries in the user's app menu. The
+   person can skip it: `start-host.sh`/`start-client.sh` run it (without the self-test) on their first
+   start, in a terminal window of their own when started from the file manager.
 3. **Check the result.** Success is `[selftest] ALL PASS` and exit code 0. `INFO` lines are not
    failures. The self-test is local only (relay on 127.0.0.1, no STUN, throwaway key and profile,
    view-only client), so it is safe to run without asking. It does capture the screen for about a minute.
@@ -467,7 +471,7 @@ Run from `host/` with Electron's env var cleared.
 | `electron . --selftest --input-check` | Linux (X11) only (`inputcheck.js`): the pointer read back after an XTest move, whether the engine's video has the pointer in it (INFO), all 133 keys of the table, five buttons and the wheel into a test window, window-or-desktop under the pointer, text and a file dragged out of a second program it starts, and the client app's drop placement. INJECTS INPUT: on a virtual display only, or with the user's agreement |
 | `electron . --selftest --client-app-check` | Same, plus at the end the client app (`client/main.js`, a process of its own, with a profile of its own) on a loader that talks to the test's relay only; passes when its measurements say it shows the host's picture. Opens a window for about 20 s |
 | `xvfb-run -a -s "-screen 0 1920x1080x24" <electron> . --selftest --input-check --clip-check --client-app-check` | How the Linux side was verified on a server (Ubuntu 22.04, Xvfb). Add `--no-sandbox` where Chromium's sandbox cannot run (see Gotchas) |
-| `./setup.sh [--skip-selftest]`, `./start-host.sh`, `./start-client.sh`, `./local-test.sh` | Linux counterparts of `setup.ps1` and the `.bat` files (shared code in `host/linux-launch.sh`). Extra arguments go to Electron, e.g. `./start-host.sh --selftest` |
+| `./setup.sh [--skip-selftest] [--hold]`, `./start-host.sh`, `./start-client.sh`, `./local-test.sh` | Linux counterparts of `setup.ps1` and the `.bat` files (shared code in `host/linux-launch.sh`); the launchers set the folder up on their first start (`ensure_setup`). Extra arguments go to Electron, e.g. `./start-host.sh --selftest`. `MY_REMOTE_NODE_DIST` points the Node download elsewhere (tests) |
 | `npm run bench -- --net=direct,home,narrow,wifi --try=old,base` | Measures delay and smoothness on this PC for the given link conditions and settings, prints a table (see "Performance"). `--picture-test=quality` measures picture quality instead (a window opening, a window being dragged, scrolling); `--snapshot` saves what the client showed next to what was drawn. About 45 s per run. Shows a test picture on one display and a small window on another for that time; they never take focus and no input is injected, but tell the user before a long series |
 | `npm run bench -- --remote=user@host --net=direct --try=base` | The same bench with the client page on another machine, reached over ssh: a real second machine and a real network instead of one PC. That machine needs `~/my-remote-dev/electron/` (an unpacked Electron release for its platform) and `xvfb-run`; signaling goes through an ssh tunnel, only the WebRTC traffic crosses the network directly. Add `--capture-probe` to split the delay into its parts. This sends the picture of one of this PC's displays to that machine, so the user must have agreed |
 | `npm run localtest` | Local trial: host window plus view-only client in the default browser |
@@ -489,7 +493,8 @@ must then be given the new file). Run `npm run selftest` after either.
 | `my-remote-client.html` | Built loader: the one file a client PC keeps (generated, committed for convenience) |
 | `start-client.bat` | Launcher for the client app (uses the Electron installed under `host/node_modules`) |
 | `setup.sh`, `start-host.sh`, `start-client.sh`, `local-test.sh` | The same for Linux (bash, executable in git, LF line endings) |
-| `host/linux-launch.sh` | Sourced by those: Electron's path, X11 session and sandbox checks, starting Electron in the background |
+| `host/linux-launch.sh` | Sourced by those: Electron's path, the first-start setup (`ensure_setup`), X11 session, library and sandbox checks, errors also as a dialog (`fail`: zenity or notify-send, when there is no terminal), starting Electron in the background |
+| `host/icon.svg` | The app's icon for the Linux app menu entries (the tray icon is drawn in `main.js`) |
 | `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js`: Win32 or X11, and `host/files.js`). Exposes `window.mrShell` (`fileAbort`, `pointerOwn`, `clipPoll` and `clipWrite` from 2026-11-13 on), and from 2026-11-13 on marks a minimized or hidden window's document (`data-mr-hidden`, event `mrshown`): its windows run with `backgroundThrottling` off, so `visibilityState` never says hidden there, and the page (`unseen()`) stops asking the host for what such a window shows. `main.js --loader=<file>` shows another loader with a profile of its own (self-test, local trial on Linux). These files are not updated through the loader: the page must feature-detect what an installed app offers |
 | `host/main.js` | Electron main: config and key storage, monitor enumeration, tray, IPC, isolated modes |
 | `host/preload.js` | The only bridge between the renderer and main (`window.hostApi`). Also runs the native capturer's loops and hands their frames to the page over a message port |
