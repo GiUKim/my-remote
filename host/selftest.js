@@ -633,6 +633,26 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
           fire('pointerdown', inside, 1); fire('pointermove', { ...bar, ctrlKey: true }, 1);
           hostDrag = true; fire('pointermove', { ...bar, ctrlKey: true }, 1); fire('pointerup', { ...bar, ctrlKey: true }, 0);
           res.ctrlCarriedOut = sent('dragout').length === 1 && sent('mu').length === 0;
+          // The browser did not give the pointer to the picture (Chromium 156 in a page the loader wrote
+          // in place, see hold in the page): what follows the press arrives at whatever is under the
+          // pointer, outside the window at the root element. It must reach the picture's handlers, once.
+          gotDragData({ t: 'dragdata', kind: 'none', why: 'nodrag' }); drop = null;
+          window.__rd.trace = []; hostDrag = false; outPending = 0;
+          const fireAt = (el, type, at, buttons) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 9, pointerType: 'mouse', button: 0, buttons, ...at }));
+          const root = document.documentElement;
+          fire('pointerdown', inside, 1); fireAt(root, 'pointermove', outside, 1);
+          hostDrag = true; fireAt(root, 'pointermove', outside, 1);
+          res.notGrantedOutMode = mainView.dragOut === true;
+          fireAt(root, 'pointerup', outside, 0);
+          res.notGrantedCarriedOut = sent('dragout').length === 1 && sent('mu').length === 0;
+          // ... a plain press let go over this window's bar: the button goes up on the host, and the
+          // pointer moving over the bar afterwards, no button held, sends nothing.
+          gotDragData({ t: 'dragdata', kind: 'none', why: 'nodrag' }); drop = null;
+          window.__rd.trace = []; hostDrag = false; outPending = 0;
+          fire('pointerdown', inside, 1); fireAt($('bar'), 'pointermove', bar, 1); fireAt($('bar'), 'pointerup', bar, 0);
+          res.notGrantedLetGo = sent('md').length === 1 && sent('mm').length === 1 && sent('mu').length === 1;
+          fireAt($('bar'), 'pointermove', bar, 0);
+          res.notGrantedNoStrayMoves = sent('mm').length === 1;
           } finally { READONLY = true; window.__rd.trace = null; hostDrag = false; drop = null; outPending = 0; }
           return res;
         })()`);

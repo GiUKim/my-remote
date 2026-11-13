@@ -1,0 +1,10 @@
+{
+  "ko": [
+    "원격 화면 속 파일·글자를 창 밖으로 끌어내지 못하던 문제 수정: 창 밖에서 마우스 단추를 놓는 것을 알아채지 못해, 호스트가 단추를 누른 채로 남았습니다 (0.3.0 앱과 최신 Chrome·Edge에서 발생)",
+    "모니터 배치 창에서 끌다가 창 밖에서 놓아도 끌기가 끝납니다"
+  ],
+  "en": [
+    "Fixed: files and text could not be dragged out of the remote picture; a button let go outside the window went unnoticed and stayed down on the host (the 0.3.0 app and current Chrome and Edge)",
+    "A drag in the arrangement panel also ends when the button is let go outside the window"
+  ]
+}

@@ -154,6 +154,24 @@ the client app instead).
   exactly this, so the client blocks `dragstart`/`selectstart` and lets go on `pointercancel`, and
   every `mm` carries the held buttons (`h`) so the host can let go of one whose `mu` was lost. The
   diagnostics log counts each of these (`ptr`, `released`): read it if it happens again.
+- **A press on the picture does not get the pointer (Chromium 156).** `setPointerCapture` is ignored,
+  without an error (`hasPointerCapture` false right after), by every element of a document that was
+  put in place with `document.open/write` while the pointer was over its window - which is how the
+  loader starts the client page, and where the pointer is when the person presses "접속". Measured with
+  Electron 45.3.1 on Xvfb, real input: the pointer away at that moment, or the page loaded as a file of
+  its own: granted. Electron 33 granted it always. The events of the pressed pointer then go to whatever
+  is under it, outside the window to the root element, so the picture heard neither the pointer leave
+  nor the button go up: nothing could be dragged out (`xfer.out` stayed 0), the host kept the button
+  down until the pointer came back (`released` in the diagnostics log, no `ptr` counters), and a drag
+  past the picture stopped at its edge. Reported 2026-11-14 right after the client moved to the 0.3.0
+  app. So the page does not rely on capture: `hold(el, ev, handlers)` asks for it and notes who holds
+  the pointer, and `routeHeld(doc)` (once per window) hands that pointer's move, up and cancel events
+  that arrive anywhere else in the document to the holder's own handlers; a new press or a move without
+  a button forgets a holder whose release was never seen. Used by the pictures and the arrangement
+  panel; a finger's events are not routed (a touch keeps its first target by itself; not tried).
+  The self-test dispatches the events at the root element and at the bar (`notGranted*`); it fails on
+  the page from before. Posted window messages on Windows did not reproduce the loss (Windows takes the
+  pointer off a window the real cursor is not over), so on Windows only the symptom is known.
 - **Another remote-control program connected at the same time.** In that session the host's main
   thread stalled three times (57, 71, 19 s), each stall ending when a Chrome Remote Desktop session
   to the same PC (re)connected (Windows Application log, source `chromoting`). Clicks did nothing
@@ -624,7 +642,7 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
   anything else, so an app installed over a source folder's use keeps the key.
 - **Packages** (`release/package.js`) are made on the platform they are for, from
   `host/node_modules/electron/dist` (nothing else is downloaded): a folder to unpack and run
-  (`My Remote.exe`, `./my-remote.sh`), zipped. No installer, no code signing: Windows SmartScreen warns
+  (`My Remote.exe`, `./my-remote.sh`), zipped as `MyRemote-Windows-x64.zip` / `MyRemote-Linux-x64.tar.gz` holding a folder `MyRemote`: no version in the names, so the README's download buttons (`.../releases/latest/download/<name>`) always fetch the newest and a self-updating folder is not named after an old version. No installer, no code signing: Windows SmartScreen warns
   at the first start. macOS is not built (an unsigned app does not run there). Started without `--host`
   or `--client` the app asks which and offers the two shortcuts (`--shortcuts` makes them without asking).
 - **Making a release**: README "릴리스 만들기". `release/build.js` takes the files from the commit that is
@@ -665,7 +683,7 @@ Run from `host/` with Electron's env var cleared.
 | `node release/test-update.js` | The update logic (`app/core.js`, `app/updater.js`) in plain Node with made-up releases and feeds: signatures, file names, downgrades, the trial and going back, ordinary and required updates. A few seconds |
 | `node release/test-app.js [--packaged]` | The app's shell in real Electron against a feed on this machine (made-up versions; nothing leaves the PC, the real host is not started). `--packaged` also builds this folder's code as the real package (test key, temporary folder) and runs its self-test through the shell: about 4 minutes. On Linux under `xvfb-run`; `MR_TEST_ELECTRON_ARGS=--no-sandbox` where the sandbox cannot run |
 | `node release/build.js [--critical]` | Builds a release from the checked-out commit into `dist/release` (`latest.json`, its signature, the bundle, and `bundle/` for packaging). Signs with the key outside the repository |
-| `node release/package.js` | The installable app for this platform from `dist/release`, into `dist/pack` (a folder and a zip or tar.gz, about 110 MB) |
+| `node release/package.js` | The installable app for this platform from `dist/release`, into `dist/pack` (the folder `MyRemote` and `MyRemote-Windows-x64.zip` or `MyRemote-Linux-x64.tar.gz`, about 120-140 MB) |
 | `<electron> release/make-icon.js` | Draws `app/icon.png` and `app/icon.ico` from `host/icon.svg` |
 | `npm run localtest` | Local trial: host window plus view-only client in the default browser |
 | `npm start` | The real host (connects to the signaling server). User-initiated only |
@@ -681,6 +699,7 @@ must then be given the new file). Run `npm run selftest` after either.
 
 | Path | Role |
 |---|---|
+| `README.md`, `docs/img/*.svg` | The page people see first: download buttons, three steps, features and shortcuts as pictures and short tables; everything longer is folded into `<details>` under "자세히". Keep the top short; put new explanations into the folded part. The pictures are hand-written SVG (each with its own dark panel, so they read on a light and a dark page) |
 | `setup.ps1` | One-shot host setup and self-test |
 | `start-host.bat`, `local-test.bat` | Launchers for the real host and the local trial |
 | `my-remote-client.html` | Built loader: the one file a client PC keeps (generated, committed for convenience) |
@@ -1008,6 +1027,14 @@ Verified for native capture: the whole self-test with it in use (it is what `aut
 three monitors on two graphics cards, a host window reload during a session, the figures in
 "Performance". Not verified: a monitor in HDR mode or rotated, the lock screen and permission prompts
 (the capturer should pause and resume), a resolution change during a session, any PC but this one.
+
+Verified with real input and the real client app (2026-11-14, the Ubuntu 24.04 PC, two Xvfb displays:
+the host with GNOME Shell and Nautilus 46 on one, the client app as a program of its own on the other,
+its pointer moved and pressed through XTest; a harness outside the repository): a file pressed in the
+picture, dragged out of the window and let go there arrives in the client's desktop folder, with the
+drag ghost shown - slowly, with 2 moves before leaving, and let go 150 ms after leaving. Before the
+fix (see "A press on the picture does not get the pointer") the same run carried nothing out. Not
+verified: the same with a real mouse on a Windows client.
 
 Verified by the self-test for dragging out: the file channel end to end (3 MB, hashes compared, a
 file inside a folder), listing a dragged folder (links skipped), the "pointer left every window"

@@ -286,6 +286,7 @@ function makeView(win, root, isMain) {
   const editable = (n) => { const el = n && (n.nodeType === 1 ? n : n.parentElement); return !!(el && el.closest('input, textarea, select')); };
   doc.addEventListener('dragstart', (ev) => { if (!editable(ev.target)) { ev.preventDefault(); window.__rd.ptr.drag++; } }, true);
   doc.addEventListener('selectstart', (ev) => { if (!editable(ev.target)) ev.preventDefault(); }, true);
+  routeHeld(doc); // a pressed pointer's events reach what it was pressed on, wherever they arrive (see hold)
   // A file (or a link) dragged in from this PC and let go anywhere but on a picture of the host must
   // not make the browser open it in this window: that would replace the page, and with it the session
   // or this monitor's window. On a picture, the picture's own handlers send the files (attachPointer).
@@ -605,6 +606,38 @@ function releaseHeld() {
     window.__rd.ptr.released++;
   }
   held = 0;
+}
+// A pressed pointer's events belong to the element it was pressed on until the button is let go, also
+// when the pointer leaves that element or the window: setPointerCapture. Chromium 156 (Electron 45)
+// ignores that request, without an error, in a document that was written in place after it had finished
+// loading - which is how the loader starts this page (measured: written 50 ms after the first page's
+// script ran, the request is granted; written 300 ms after, it is not, for any element; loaded as a
+// file of its own it is). The events then go to whatever lies under the pointer, and outside the window
+// to the root element: the picture never heard the pointer leave or the button go up, so nothing could
+// be carried out of the picture and the host kept the button down until the pointer came back.
+// So hold() also notes who holds the pointer, and the pointer's events that arrive anywhere else in
+// that document are handed to the holder's own handlers (routeHeld, once per document). Where the
+// request is granted, every event arrives at the holder and nothing is handed on.
+const heldBy = new WeakMap(); // document -> Map(pointerId -> { own(target), pointermove(ev), pointerup(ev), pointercancel(ev) })
+function hold(el, ev, h) {
+  try { el.setPointerCapture(ev.pointerId); } catch {}
+  const doc = el.ownerDocument;
+  if (!heldBy.has(doc)) heldBy.set(doc, new Map());
+  heldBy.get(doc).set(ev.pointerId, h);
+}
+function routeHeld(doc) {
+  // A new press: whoever held this pointer before never saw it let go.
+  doc.addEventListener('pointerdown', (ev) => { const m = heldBy.get(doc); if (m) m.delete(ev.pointerId); }, true);
+  for (const type of ['pointermove', 'pointerup', 'pointercancel']) {
+    doc.addEventListener(type, (ev) => {
+      const m = heldBy.get(doc), h = m && m.get(ev.pointerId);
+      if (!h) return;
+      // No button is held any more (after the last one went up, or a move that says so: the release was never seen here).
+      if (type === 'pointercancel' || !ev.buttons) m.delete(ev.pointerId);
+      if (type === 'pointermove' && !ev.buttons) return;
+      if (!h.own(ev.target)) h[type](ev);
+    }, true);
+  }
 }
 // ---- dragging something out of the remote picture onto this PC ----------------------
 // While a file or selected text is being dragged on the host and the pointer leaves our windows,
@@ -1013,7 +1046,9 @@ function attachPointer(view, pane) {
     applyCursor();
     if (on) toast(view, canDrop() ? '놓으면 이 PC로 복사됩니다 (폴더·바탕화면·프로그램 위에 놓으세요)' : '놓으면 다운로드로 받습니다', 3000);
   };
-  v.addEventListener('pointermove', (ev) => {
+  // The three handlers below also get the events of a pointer pressed here that arrive elsewhere (hold).
+  const onPicture = (t) => view.panes.some((p) => p.video === t);
+  const onMove = (ev) => {
     if (outPending > performance.now()) return; // a drag-out is being decided or carried out (see outPending)
     // A button is held and the pointer is over this PC's own desktop or programs - or, with Ctrl held,
     // anywhere off the host's picture: Ctrl takes the pointer over to this PC at once (crossed) instead
@@ -1036,28 +1071,30 @@ function attachPointer(view, pane) {
     chord(ev, p);
     queueMove(view, p, ev.buttons);
     edgePan(view, ev);
-  });
-  v.addEventListener('pointerleave', () => { view.panDir = null; });
-  v.addEventListener('pointercancel', () => {
+  };
+  const onCancel = () => {
     setOut(false);
     view.leftAt = 0; view.crossed = false;
     window.__rd.ptr.cancel++;
     releaseHeld(); // no pointerup will come for this press
-  });
+  };
+  v.addEventListener('pointermove', onMove);
+  v.addEventListener('pointerleave', () => { view.panDir = null; });
+  v.addEventListener('pointercancel', onCancel);
   // Seen for diagnostics only: the capture went away while a button was still held here.
   v.addEventListener('lostpointercapture', () => { if (held) window.__rd.ptr.lost++; });
   v.addEventListener('pointerdown', (ev) => {
     const p = here(ev); if (!p) return;
     ev.preventDefault(); v.focus();
     if (outPending > performance.now()) return; // the host still holds the button of the drag being carried out
-    try { v.setPointerCapture(ev.pointerId); } catch {}
+    hold(v, ev, { own: onPicture, pointermove: onMove, pointerup: onUp, pointercancel: onCancel });
     view.pending = null;
     if (ev.button >= 0 && ev.button < 5) held |= 1 << ev.button;
     lastAt = p;
     send({ t: 'md', b: ev.button, d: p.d, x: p.x, y: p.y }); // 0 left, 1 middle, 2 right, 3 back, 4 forward
     watchOwn(ev);
   });
-  v.addEventListener('pointerup', (ev) => {
+  const onUp = (ev) => {
     // Only a button that this page pressed on the host is let go there. A release on its own (pressed
     // elsewhere, or already let go when the window lost the focus) would reach the program under the
     // host's pointer as a stray button-up, and a right one opens its context menu.
@@ -1098,7 +1135,8 @@ function attachPointer(view, pane) {
     if (!was) return;
     lastAt = p;
     send({ t: 'mu', b: ev.button, d: p.d, x: p.x, y: p.y });
-  });
+  };
+  v.addEventListener('pointerup', onUp);
   v.addEventListener('wheel', (ev) => {
     ev.preventDefault();
     const k = ev.deltaMode === 1 ? 33 : ev.deltaMode === 2 ? 400 : 1;
@@ -2000,11 +2038,15 @@ $('arr').addEventListener('pointerdown', (ev) => {
   ev.preventDefault();
   const tile = (el.dataset.kind === 'host' ? arr.host : arr.client)[Number(el.dataset.i)];
   arr.drag = { tile, x0: ev.clientX, y0: ev.clientY, x: ev.clientX, y: ev.clientY, moved: false, ghost: null, aim: null, copy: ev.ctrlKey };
-  try { $('arr').setPointerCapture(ev.pointerId); } catch {}
+  hold($('arr'), ev, ARR_HELD); // also when the pointer leaves the panel or the window (see hold)
 });
-$('arr').addEventListener('pointermove', (ev) => arrDragMove(ev.clientX, ev.clientY, ev.ctrlKey));
-$('arr').addEventListener('pointerup', (ev) => { if (arr.drag) { arr.drag.copy = ev.ctrlKey; arrDragEnd(true); } });
-$('arr').addEventListener('pointercancel', () => arrDragEnd(false));
+const ARR_HELD = {
+  own: (t) => $('arr').contains(t),
+  pointermove: (ev) => arrDragMove(ev.clientX, ev.clientY, ev.ctrlKey),
+  pointerup: (ev) => { if (arr.drag) { arr.drag.copy = ev.ctrlKey; arrDragEnd(true); } },
+  pointercancel: () => arrDragEnd(false),
+};
+for (const type of ['pointermove', 'pointerup', 'pointercancel']) $('arr').addEventListener(type, ARR_HELD[type]);
 for (const type of ['keydown', 'keyup']) window.addEventListener(type, (ev) => {
   if (!arr.open) return;
   if (ev.key === 'Control' && arr.drag && arr.drag.moved) arrDragMove(arr.drag.x, arr.drag.y, type === 'keydown');
