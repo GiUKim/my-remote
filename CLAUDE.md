@@ -151,7 +151,12 @@ the client app instead).
   read-only) and the host tells the client (`drag`). Once seen, the thread running the drag is
   followed, so a window that comes to the front meanwhile does not end it; `captureClass()`, which
   `dragOut` checks before pressing Escape and Ctrl+C, stays about the program in front, because
-  those keys go there. When the client's pointer then leaves every client
+  those keys go there. (For half a day that check was missing: the keys would have closed the other
+  program's dialog and its selection would have been sent as what was dragged. Found by a review,
+  2026-11-13.) With another program in front, no key is pressed: Escape is posted to the window that
+  holds the mouse in the dragging thread (`input.cancelDrag`, `PostMessageW`; OLE's drag loop reads its
+  own thread's key messages), the button is let go and the client is told `nofront`. That path has not
+  run with a real drag. When the client's pointer then leaves every client
   window, moves are no longer sent (the host's pointer waits); on release outside, the host presses
   Escape (ends the drag without a drop), Ctrl+C (what was dragged is still selected), releases the
   button and sends the clipboard's files or text (`dragOut` in `main.js`). Explorer takes 0.35-0.5 s
@@ -171,7 +176,16 @@ the client app instead).
   neighbouring monitor; let go there, what the host drags is carried out (a drag may still show up for
   1 s), else the button is let go where the host's pointer waited. Carrying out shows "놓으면 이 PC로
   복사됩니다" in the window (outside it the browser cannot show a drag image: the host's drag icon stays at
-  the edge, which is what looked "blocked" to the user). A dragged folder is sent as its files with paths ('a/b/c')
+  the edge, which is what looked "blocked" to the user). In the client app a small window follows the
+  real pointer meanwhile with what is being brought (`mrShell.dragGhost`, `ghostOn` in `client/shell.js`:
+  no focus, no clicks, beside the pointer and never under it, none of the client's windows; gone when
+  the page says so, when no button is held any more (Windows) or after 20 s without a word). The person
+  asked for it: dragging into the picture shows the system's drag picture at the pointer, dragging out
+  showed a bare pointer. An X11 host names what is dragged once the drag is seen (`drag` with `what`,
+  asked of the dragging program as a drop target would, `drag-what` in `main.js`); a Windows host cannot
+  tell before its Ctrl+C, so the window then says only that something is brought. Checked on Xvfb (shown
+  beside the pointer, renamed, hidden, gone with the last window) and on Windows that it hides itself
+  when no button is held; not seen yet in a real drag on Windows. A dragged folder is sent as its files with paths ('a/b/c')
   plus `dir` entries for empty folders; links and junctions are not followed. This replaces the host's
   clipboard. Isolated modes never do the key presses. On the client the app (`client/shell.js`) saves
   files into the folder they were dropped on (desktop, or an Explorer window whose folder it asks the
@@ -233,7 +247,9 @@ the client app instead).
   file (the host then runs on the defaults and says so in a dialog); without a usable key the host
   asks before starting (retry / new key / quit). The file is written to a temporary file and renamed
   over the old one. After `키 복사` the key is taken off the clipboard after a minute (and when the host
-  quits) if it is still there. The config and crash paths were checked with a Node harness of
+  quits) if it is still there. (On X11 the change count is taken only once the X server's word of the
+  write has been read, and where the count cannot say, the text is read and compared: before that the
+  key could stay on a Linux host's clipboard for good.) The config and crash paths were checked with a Node harness of
   `main.js` with a fake Electron; in Electron only the reloads of the self-test ran through
   `pageGone()`; a real renderer crash and the start-up dialogs have not been exercised.
 - **Throwaway profiles.** Every isolated run (`--selftest`, `--localtest`, `--bench`, and the bench's
@@ -324,6 +340,12 @@ the client app instead).
       HiDPI, an X server of another user (MIT-SHM is then refused and the engine's capturer is used).
     - A still screen sends nothing, as on Windows. The self-test therefore puts a small counter in a
       corner of a Linux display (a virtual display with the test's windows hidden never changes).
+    - A capturer is nearly always closed while a read is under way (the loop waits in `next`). `close`
+      then only marks it, and the read's end lets go of it: for half a day that end found the mark and
+      freed nothing, so every monitor of every session left two X connections, a damage object and the
+      shared memory of a whole screen behind (found by a review). `closed` (no more reads) and `freed`
+      are separate now, `openCount()` counts what is really held, and the self-test checks it after a
+      renegotiation.
   - Cursor shape: `XFixesGetCursorImage` gives the picture and, for cursors loaded from a theme by name
     (GTK, Qt, libXcursor), the name. Chromium's own cursors and the X server's default cursor have none
     and go as pictures. `pixels` holds one `unsigned long` per pixel (8 bytes on x64).
@@ -665,7 +687,7 @@ Data channel `input` (JSON text):
 | host -> client | `lock` | `on`, `why`: `lock` (the host's session is locked) or `secure` (a UAC prompt or another secure desktop has the screen). Sent when a session starts and when it changes; the client says so over the picture |
 | host -> client | `cur` | Current host cursor: `c` = CSS cursor name, or `img` (PNG data URL) with hotspot `hx`,`hy` for an app-specific cursor. The host page asks main about 30 times a second and passes the cursor it has, so the picture is copied over IPC only when it changes |
 | host -> client | `hs` | Host-side statistics every 2 s (codec and `from`, whose choice it was: `client` (the 진단 dialog, kept in the client's localStorage `mr_codec`), `config` or `auto`; encoder, bitrate, per-monitor capture/encode fps and limiting factor) for the client's diagnostics report; the host's diagnostics log gets the same |
-| host -> client | `drag` | `on`: whether a drag-and-drop is under way on the host |
+| host -> client | `drag` | `on`: whether a drag-and-drop is under way on the host. An X11 host sends it once more with `what`: `{kind:'files', n, name}` (the number of files and the first one's name, no path) or `{kind:'text'}`, for the client app's picture at the pointer while it is carried out |
 | host -> client | `dragdata` | Answer to `dragout`: `kind` `text` (`s`, `cut`), `files` (`files:[{id,name,size,dir?}]`, `skipped`; the bytes follow on the `file` channel; `name` may be a path 'folder/sub/file') or `none` with `why`: `nodrag`, `nocopy`, `empty`, `toobig` |
 | host -> client | `clipfiles` | Files were copied on the host during the session: `seq` (the clipboard's change count), `n` items, `dirs` of them folders, `bytes` of the plain files, `names` (at most 3, no paths). Files already on the clipboard when the session began are not announced, nor files the client sent itself (a paste, or a drop nothing took: they lie in the host's inbox), which it would otherwise fetch back |
 | client -> host | `clipget` | Fetch the files of `clipfiles` `seq`; refused (`dragdata` `none`, `why:'changed'`) when the clipboard changed since. The answer is a `dragdata` with `clip: true`, the bytes on a `file` channel as for dragging out. The client asks when focus leaves all of its windows (the person went to the client's own programs to paste), at most 512 MB, the app only; the files go onto the client's clipboard |
@@ -751,8 +773,9 @@ aspect ratio, so pointer mapping is a plain proportion of the element. Policy, i
   differs reloads through the loader to fetch the new one, so clients follow host updates by themselves.
   The key never goes into the address for that (the browser would keep it in its history): the page
   puts it where the loader keeps a remembered key (`mr_key`) and, when the person had not asked to keep
-  it there, leaves a mark in the tab (sessionStorage `mr_forget_key`) so that the new page removes it at
-  once. sessionStorage `mr_respread` brings the spread windows back afterwards (the app; a browser is
+  it there, leaves a mark (`mr_forget_key`, in the tab's sessionStorage and next to the key in
+  localStorage) so that the new page removes it at once - or, when the tab was closed before the new
+  page started, the page that starts next. sessionStorage `mr_respread` brings the spread windows back afterwards (the app; a browser is
   told which button to press).
 
 ## Performance

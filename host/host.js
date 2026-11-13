@@ -372,6 +372,12 @@ function receiveUpload(s, ch) {
 // (see dragOut in main.js) and send it over - text at once, files over a channel of their own
 // so that a large file does not hold up the cursor and input messages.
 const txTo = (s, o) => { try { if (s.dc && s.dc.readyState === 'open') s.dc.send(JSON.stringify(o)); } catch {} };
+// What is being dragged here, said once the drag is seen, where the host can tell without ending it
+// (X11): the client app shows it beside the person's pointer while it is carried out of the picture.
+function tellDragWhat(s) {
+  if (!api.dragWhat) return;
+  api.dragWhat().then((what) => { if (what && session === s && s.drag) txTo(s, { t: 'drag', on: true, what }); }, () => {});
+}
 async function dragOut(s, button) {
   const r = await api.dragOut(button);
   if (session !== s) return;
@@ -401,7 +407,7 @@ async function pollDrag(s, ms) {
     const end = performance.now() + ms;
     for (let i = 0; session === s && performance.now() < end; i++) {
       const on = !!(await api.dragging(i % 2 === 1));
-      if (on !== !!s.drag) { s.drag = on; txTo(s, { t: 'drag', on }); }
+      if (on !== !!s.drag) { s.drag = on; txTo(s, { t: 'drag', on }); if (on) tellDragWhat(s); }
       if (on) break;
       await new Promise((r) => setTimeout(r, 15));
     }
@@ -448,14 +454,20 @@ function startChannelTasks(s, dc) {
   api.hostLocked().then((v) => { screenGone.lock = !!v; screenGone.lockFrom = 'query'; }, () => {}).then(() => { if (session === s) sendLock(true); });
   // Cursor shape (or picture) -> the client draws the cursor itself.
   // Also whether something is being dragged here, so the client knows what leaving its window means.
-  let cur = null;
+  // One question at a time: main leaves the picture out when it is the cursor the page says it has
+  // (`cur`), and an answer overtaken by a later question could name a cursor without its picture.
+  let cur = null, asking = false;
   s.drag = false;
   s.timers.push(setInterval(async () => {
-    const c = await api.cursor(cur); // the picture comes along only when the cursor changed
-    if (!!c.drag !== s.drag) { s.drag = !!c.drag; tx({ t: 'drag', on: s.drag }); }
-    if (c.k === cur) return;
-    cur = c.k;
-    tx(c.img ? { t: 'cur', img: c.img, hx: c.hx, hy: c.hy } : { t: 'cur', c: c.c });
+    if (asking) return;
+    asking = true;
+    try {
+      const c = await api.cursor(cur); // the picture comes along only when the cursor changed
+      if (!!c.drag !== s.drag) { s.drag = !!c.drag; tx({ t: 'drag', on: s.drag }); if (s.drag) tellDragWhat(s); }
+      if (c.k === cur) return;
+      cur = c.k;
+      tx(c.img ? { t: 'cur', img: c.img, hx: c.hx, hy: c.hy } : { t: 'cur', c: c.c || 'default' });
+    } catch {} finally { asking = false; }
   }, 33));
   // Another remote-control program connected to this PC as well (see 'others' in main.js): tell the
   // client when that starts or ends, so the person knows why dragging or clicking may misbehave.

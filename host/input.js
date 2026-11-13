@@ -22,6 +22,7 @@ const NEUTRAL = {
   displayColor: () => [],
   captureClass: () => '',
   dragging: () => false,
+  cancelDrag: () => false, // ends the drag under way without a drop when its program is not in front (Windows)
   // The pointer a pixel aside and back while a button is held, so that a program that starts its drag only
   // on motion (GTK 4) can, while the client holds the pointer still (dragq). X11 only; Explorer needs none.
   nudge() {},
@@ -129,6 +130,10 @@ function typed(p) {
   }));
 }
 
+// Resolves once nothing is being typed and nothing waits behind it: what the host does by itself at a
+// place (a drop where the client let go) must not run ahead of the move that takes the pointer there.
+const idle = () => (typing ? typing.then(idle) : Promise.resolve());
+
 function handle(text) {
   if (typing) { if (queued.length < 5000) queued.push(text); return; }
   let m;
@@ -230,7 +235,9 @@ module.exports = {
   displayColor: backend.displayColor,
   captureClass: backend.captureClass,
   dragging: backend.dragging,
+  cancelDrag: backend.cancelDrag,
   nudge: backend.nudge,
+  idle, // resolves when no text is being typed (X11 types over time and holds later input back)
   dragData: backend.dragData,
   dropFiles: backend.dropFiles,
   clipboardFiles: backend.clipboardFiles,

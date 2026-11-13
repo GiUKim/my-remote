@@ -28,6 +28,7 @@ const REPLY_MS = 2000; // a read the X server has not answered by then has faile
 let L = null;          // the libraries' functions; false: not available here
 let lastError = '';
 const caps = new Array(MAX).fill(null);
+let live = 0;          // capturers that hold their X connections and shared memory (opened, not yet let go)
 
 function libs() {
   if (L !== null) return L;
@@ -149,13 +150,18 @@ function openRect(rect) {
     f.shmctl(c.shmid, IPC_RMID, null);
     c.dirty = c.w * c.h; // the first call reads the whole picture at once, as DXGI's first frame does
     caps[h] = c;
+    c.counted = true; live++;
     return h;
   } catch (e) { close1(c); return fail('opening the X11 capturer: ' + e.message); }
 }
 
+// Lets go of everything a capturer holds, once. `closed` (no more reads) may have been set before by
+// close() for a capturer whose read was still under way; `freed` says that this has run.
 function close1(c) {
   const f = L;
-  if (!f || c.closed) return;
+  if (!f || c.freed) return;
+  c.freed = true;
+  if (c.counted) live--;
   c.closed = true;
   try {
     if (c.xc) { if (c.seg) f.xcb_shm_detach(c.xc, c.seg); f.xcb_flush(c.xc); f.xcb_disconnect(c.xc); }
@@ -276,6 +282,7 @@ function close(h) {
 
 module.exports = {
   available: () => !!libs(),
+  openCount: () => live, // capturers that still hold their connections and memory (the self-test)
   openRect,
   size: (h, w, hh) => { const c = caps[h]; if (!c) return -1; w[0] = c.w; hh[0] = c.h; return 0; },
   next: { async: nextAsync },

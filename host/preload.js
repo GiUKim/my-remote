@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('hostApi', {
   dragFileDone: (id) => ipcRenderer.send('drag-file-done', id),
   cursor: (last) => ipcRenderer.invoke('cursor', last),
   dragging: (nudge) => ipcRenderer.invoke('dragging', !!nudge),
+  dragWhat: () => ipcRenderer.invoke('drag-what'),
   putBegin: () => ipcRenderer.invoke('put-begin'),
   putDir: (gid, name) => ipcRenderer.invoke('put-dir', gid, name),
   putFile: (gid, name, size) => ipcRenderer.invoke('put-file', gid, name, size),
@@ -34,6 +35,7 @@ contextBridge.exposeInMainWorld('hostApi', {
   regenKey: () => ipcRenderer.invoke('regen-key'),
   exportClient: () => ipcRenderer.invoke('export-client'),
   nativeCapture: () => !!capturer(),
+  nativeOpen: () => { const c = capturer(); return c && c.openCount ? c.openCount() : -1; }, // X11: capturers not let go yet (the self-test)
   others: () => ipcRenderer.invoke('others'),
 });
 

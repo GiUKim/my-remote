@@ -186,6 +186,18 @@ async function dragOut(button) {
     paths = direct.paths || [];
     text = direct.text || '';
   } else {
+    // Escape and Ctrl+C go to the program in front, and that must be the one dragging. A drag is followed
+    // in its own thread (input.dragging), so another window may have come to the front meanwhile (a
+    // dialog, a notification): the keys would close that dialog and copy that program's selection, which
+    // would then be sent as what was dragged. The drag is ended in its own thread instead, and nothing
+    // is brought over.
+    if (process.platform === 'win32' && input.captureClass() !== 'CLIPBRDWNDCLASS') {
+      const ended = input.cancelDrag();
+      await sleep(90);
+      input.buttonUp(button);
+      console.log('drag out: the dragging program is not in front' + (ended ? '' : '; its drag could not be ended'));
+      return { kind: 'none', why: 'nofront' };
+    }
     const before = input.clipSeq();
     input.tap(['Escape']);
     await sleep(90);
@@ -346,6 +358,9 @@ async function putDone(gid, at, mode) {
   const later = () => setTimeout(() => fs.rm(p.dir, { recursive: true, force: true }, () => {}), 10 * 60e3); // the target may still be reading
   const so = shellOps();
   if (mode === 'drop' && at && (so || process.platform === 'linux')) {
+    // Text still being typed (X11 types over time) holds later input back, this move too: the drop would
+    // then go wherever the pointer was. It waits for the typing (a few seconds at most).
+    await Promise.race([input.idle(), new Promise((r) => setTimeout(r, 8000))]);
     input.handle(JSON.stringify({ t: 'mm', d: at.d | 0, x: +at.x, y: +at.y }));
     await new Promise((r) => setTimeout(r, 60));
     // Windows: an OLE drag of the shell's own data object (shellops.dll); X11: an XDND drag (platform/linux.js).
@@ -441,6 +456,9 @@ async function decryptKey(keyEnc) {
   return typeof r === 'string' ? { text: r, again: false } : { text: r && r.result, again: !!(r && r.shouldReEncrypt) };
 }
 const validKey = (k) => /^[A-Za-z0-9_-]{43}$/.test(k || ''); // 32 bytes, base64url, as newKey() makes them
+// Notepad and PowerShell 5.1 (Set-Content -Encoding UTF8) start a file with a byte order mark. By its
+// number: written as a character in a pattern it is invisible, and an editor may drop it unnoticed.
+const stripBom = (s) => (s.charCodeAt(0) === 0xFEFF ? s.slice(1) : s);
 // The encrypted key in the config file's text; also found in a file that is not valid JSON.
 const keyEncIn = (body) => (/"keyEnc"\s*:\s*"([A-Za-z0-9+/=]+)"/.exec(body) || [])[1] || '';
 // Linux without a keyring: true. The synchronous calls (an Electron before 45) need to be told then.
@@ -458,7 +476,7 @@ async function loadConfig() {
   let text = null, saved = {}, keyEnc = '';
   try { text = fs.readFileSync(cfgPath(), 'utf8'); } catch (e) { if (e.code !== 'ENOENT') problem(`설정 파일을 읽을 수 없습니다 (${e.code || e.message}).`, `cannot be read (${e.code || e.message})`); }
   if (text !== null) {
-    const body = text.replace(/^\uFEFF/, ''); // Notepad and PowerShell 5.1 (Set-Content -Encoding UTF8) start the file with a BOM
+    const body = stripBom(text);
     try {
       saved = JSON.parse(body);
       if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('not an object');
@@ -572,7 +590,7 @@ async function showKey() {
     else process.stderr.write(`[show-key] ${err}\n`, end);
   };
   let body;
-  try { body = fs.readFileSync(cfgPath(), 'utf8').replace(/^﻿/, ''); } catch (e) {
+  try { body = stripBom(fs.readFileSync(cfgPath(), 'utf8')); } catch (e) {
     return done(1, '', e.code === 'ENOENT' ? `No access key yet (${cfgPath()} is not there): start the host once to make one.`
       : `${cfgPath()} cannot be read (${e.code || e.message}).`);
   }
@@ -660,11 +678,18 @@ function showWindow() { if (win) { win.show(); win.focus(); } }
 // that it does not go along with whatever is pasted next. "Still there" is the clipboard's change count
 // being the one right after the key was put on it: nothing is read back (Electron's clipboard reads
 // are promises since 44, and this must also work in before-quit, which cannot wait).
+// Where the count cannot say (X11 without XFixes counts every look as a change; an owner change may also
+// be counted after the count was taken), the text is read after all and the clipboard cleared when it
+// is the key: that takes a moment, so it may not finish when the host is quitting.
 let keyOnClip = null; // { seq, timer }
 function clearKeyClip() {
   if (!keyOnClip) return;
   clearTimeout(keyOnClip.timer);
-  try { if (input.clipSeq() === keyOnClip.seq) clipboard.clear(); } catch {}
+  const key = cfg && cfg.key;
+  try {
+    if (input.clipSeq() === keyOnClip.seq) clipboard.clear();
+    else if (process.platform !== 'win32' && key) Promise.resolve(clipboard.readText()).then((t) => { if (t === key) clipboard.clear(); }, () => {});
+  } catch {}
   keyOnClip = null;
 }
 
@@ -814,6 +839,17 @@ else {
         return { ...c, drag };
       } catch { return { k: '0', c: 'default', drag: false }; }
     }));
+    // What the drag under way carries, for the client app to show beside the pointer while it is carried
+    // out: files as their number and the first one's name (never a path), or that it is text. Only where
+    // the dragging program can be asked without ending its drag (X11, as a drop target asks); else null.
+    ipcMain.handle('drag-what', async () => {
+      try {
+        const d = await input.dragData();
+        if (d && d.paths && d.paths.length) return { kind: 'files', n: d.paths.length, name: path.basename(d.paths[0]).slice(0, 80) };
+        if (d && d.text) return { kind: 'text' };
+      } catch {}
+      return null;
+    });
     ipcMain.handle('drag-out', async (_e, button) => {
       // Local trials never press keys on this PC, except the opt-in drag-out check (dragcheck.js).
       if (ISOLATED && !process.argv.includes('--dragout-check')) return { kind: 'none', why: 'not in a local trial' };
@@ -861,8 +897,13 @@ else {
     ipcMain.handle('copy-key', async () => {
       if (keyOnClip) clearTimeout(keyOnClip.timer);
       keyOnClip = null;
+      const before = input.clipSeq();
       await clipboard.writeText(cfg.key);
-      keyOnClip = { seq: input.clipSeq(), timer: setTimeout(clearKeyClip, 60e3) }; // see clearKeyClip
+      // X11 counts a change when the X server's event about it has been read, which may be a moment after
+      // the write: the count is taken once it has moved (Windows' has by now).
+      let seq = input.clipSeq();
+      for (let i = 0; i < 20 && seq === before && process.platform !== 'win32'; i++) { await new Promise((r) => setTimeout(r, 25)); seq = input.clipSeq(); }
+      keyOnClip = { seq, timer: setTimeout(clearKeyClip, 60e3) }; // see clearKeyClip
       return true;
     });
     ipcMain.handle('regen-key', async () => {

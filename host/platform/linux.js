@@ -132,6 +132,13 @@ function guarded(fn, fallback) {
   try { return fn(x); } catch (e) { console.error('X11', e.message); return fallback; } finally { x.f.XSync(x.dpy, 0); x.f.XSetErrorHandler(prev); }
 }
 
+// Where the pointer is on the root window, the top-level window under it and the button mask; null
+// when the X server does not say.
+function pointerNow(x) {
+  const r = [0], child = [0], rx = [0], ry = [0], wx = [0], wy = [0], mask = [0];
+  return x.f.XQueryPointer(x.dpy, x.root, r, child, rx, ry, wx, wy, mask) ? { x: rx[0], y: ry[0], child: child[0], mask: mask[0] } : null;
+}
+
 // ---- selections: the clipboard, and drag-and-drop -----------------------------------
 // A drag-and-drop on X11 (XDND) is under way while its source owns the XdndSelection selection. A
 // source may keep that selection after its drag has ended, so owning it is not enough: the owner
@@ -189,7 +196,15 @@ async function convert(x, target, ms) {
   }
   return null;
 }
-async function dragData() {
+// One asking at a time: the answers come to one window and one property of ours, and the host asks
+// both when a drag starts (what to show the client) and when it is carried out.
+let dragAsking = Promise.resolve();
+function dragData() {
+  const run = dragAsking.then(dragDataNow);
+  dragAsking = run.catch(() => null);
+  return run;
+}
+async function dragDataNow() {
   const x = open();
   if (!x || !dragging()) return null;
   if (!x.requestor) x.requestor = x.f.XCreateSimpleWindow(x.dpy, x.root, -10, -10, 1, 1, 0, 0, 0);
@@ -278,7 +293,7 @@ async function dropFiles(paths) {
   const x = open();
   if (!x || dnd || !paths.length) return -1;
   x.f.XSync(x.dpy, 0); // the pointer has just been moved there
-  const at = guarded((x) => { const r = [0], c = [0], rx = [0], ry = [0], wx = [0], wy = [0], m = [0]; return x.f.XQueryPointer(x.dpy, x.root, r, c, rx, ry, wx, wy, m) ? { px: rx[0], py: ry[0] } : null; }, null);
+  const at = guarded((x) => { const p = pointerNow(x); return p && { px: p.x, py: p.y }; }, null);
   const t = at && guarded((x) => xdndTarget(x, at.px, at.py), null);
   lastDrop = { at, target: t && t.win.toString(16), to: t && t.to.toString(16), version: t && t.version, seen: [] };
   if (!t) return 0;
@@ -336,10 +351,10 @@ let nudged = 0;
 function nudge() {
   const x = open();
   if (!x || !held) return;
-  const r = [0], c = [0], rx = [0], ry = [0], wx = [0], wy = [0], m = [0];
-  if (!x.f.XQueryPointer(x.dpy, x.root, r, c, rx, ry, wx, wy, m)) return;
+  const p = pointerNow(x);
+  if (!p) return;
   nudged ^= 1;
-  x.f.XTestFakeMotionEvent(x.dpy, -1, rx[0] + (nudged ? 1 : -1), ry[0], 0);
+  x.f.XTestFakeMotionEvent(x.dpy, -1, p.x + (nudged ? 1 : -1), p.y, 0);
   x.f.XFlush(x.dpy);
 }
 const XBUTTON = [1, 2, 3, 8, 9]; // left, middle, right, back, forward
@@ -428,7 +443,6 @@ const TYPE_GAP = 30, HOLD = 1000, SETTLE = 500; // ms
 const lent = new Map();    // keycode -> { sym, last }: what it holds, and when it was last pressed (or lent)
 const emptied = new Map(); // keycode -> when it was emptied again
 let typingChain = Promise.resolve(), giveBackTimer = 0, noFreeSaid = false;
-const later = (ms) => new Promise((r) => setTimeout(r, ms));
 // The keyboard map as it is now: another program may have replaced it meanwhile (a layout switch loads
 // a whole new one), so what was lent is checked against it, and only keycodes still empty or still
 // holding what was lent to them are used (and given back). Returns the empty ones.
@@ -490,7 +504,7 @@ async function typeNow(syms) {
     if (change.length) {
       for (const [kc, sym] of change) x.f.XChangeKeyboardMapping(x.dpy, kc, 2, [sym, sym], 1);
       x.f.XSync(x.dpy, 0);
-      await later(TYPE_GAP);
+      await sleep(TYPE_GAP);
     }
     if (order.length) {
       for (const kc of order) { x.f.XTestFakeKeyEvent(x.dpy, kc, 1, 0); x.f.XTestFakeKeyEvent(x.dpy, kc, 0, 0); }
@@ -500,7 +514,7 @@ async function typeNow(syms) {
       idle = 0;
     } else if (++idle > 100) return; // nothing became free in 10 s: give up on the rest
     if (!giveBackTimer) giveBackTimer = setTimeout(giveBack, HOLD);
-    if (i < syms.length) await later(100); // every keycode is in use: wait for one to be given back
+    if (i < syms.length) await sleep(100); // every keycode is in use: wait for one to be given back
   }
 }
 // A key that means nothing (an empty keycode), pressed between Alt going down and up: Firefox, GTK and
@@ -653,14 +667,14 @@ function clientWindow(x, w, depth = 0) {
 // Nemo, Caja, xfdesktop, PCManFM) or GNOME's desktop icons (DING, whose window title starts "@!").
 function underPointer() {
   return guarded((x) => {
-    const r = [0], child = [0], rx = [0], ry = [0], wx = [0], wy = [0], mask = [0];
-    if (!x.f.XQueryPointer(x.dpy, x.root, r, child, rx, ry, wx, wy, mask)) return null;
-    const top = child[0], w = top ? clientWindow(x, top) || top : 0;
+    const p = pointerNow(x);
+    if (!p) return null;
+    const top = p.child, w = top ? clientWindow(x, top) || top : 0;
     const types = w ? property(x, w, x.atoms._NET_WM_WINDOW_TYPE) || [] : [];
     const cls = w ? String(property(x, w, x.atoms.WM_CLASS) || '').split('\0')[1] || '' : '';
     const title = w ? String(property(x, w, x.atoms._NET_WM_NAME) || property(x, w, x.atoms.WM_NAME) || '') : '';
     const desktop = !top || (Array.isArray(types) && types.includes(x.atoms._NET_WM_WINDOW_TYPE_DESKTOP)) || /^@!\d+,\d+;/.test(title);
-    return { x: rx[0], y: ry[0], hwnd: w, cls, desktop, buttons: (mask[0] >> 8) & 0x1f }; // buttons: bit 0 = button 1 held, ...
+    return { x: p.x, y: p.y, hwnd: w, cls, desktop, buttons: (p.mask >> 8) & 0x1f }; // buttons: bit 0 = button 1 held, ...
   }, null);
 }
 

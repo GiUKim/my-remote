@@ -324,6 +324,20 @@ function dragging() {
     return false;
   } catch { return false; }
 }
+// Ends the drag-and-drop under way without a drop, whatever window is in front: Escape posted to the
+// window that holds the mouse in the dragging thread (OLE's drag loop reads its own thread's key
+// messages). For when another program came to the front during the drag: a pressed Escape would go to
+// that program instead. Not tried with real input yet; true when the messages were posted.
+const PostMessageW = user32.func('PostMessageW', 'bool', ['uintptr_t', 'uint32', 'uintptr_t', 'intptr_t']);
+function cancelDrag() {
+  try {
+    const c = dragThread ? captureOf(dragThread) : null;
+    if (!c || c.cls !== 'CLIPBRDWNDCLASS') return false;
+    const down = PostMessageW(c.hwnd, 0x0100, 0x1B, 0x00010001); // WM_KEYDOWN VK_ESCAPE, scan code 1
+    const up = PostMessageW(c.hwnd, 0x0101, 0x1B, 0xC0010001);   // WM_KEYUP
+    return !!(down && up);
+  } catch { return false; }
+}
 // The files on the clipboard (what Ctrl+C in Explorer puts there), as full paths.
 const shell32 = koffi.load('shell32.dll');
 const OpenClipboard = user32.func('OpenClipboard', 'bool', ['uintptr_t']);
@@ -455,6 +469,6 @@ module.exports = {
   hidesCursors: true,
   virtualDesktop, move, button, wheel, keyOf, sendKey, typeText, maskKey, clipboardPrivate,
   cursorState, cursorBitmap, hideCursors, restoreCursors, dragFullWindows, displayColor,
-  captureClass, dragging, clipboardFiles, underPointer, buttonsHeld, clickAt, dropFilesBuffer, setClipboardFiles, processRunning,
+  captureClass, dragging, cancelDrag, clipboardFiles, underPointer, buttonsHeld, clickAt, dropFilesBuffer, setClipboardFiles, processRunning,
   clipSeq: () => GetClipboardSequenceNumber(),
 };

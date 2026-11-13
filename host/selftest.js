@@ -816,6 +816,13 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       else if (!h.native) info('sound take-over not checked: native capture is not in use');
       else check('a new session takes the system sound over instead of capturing again', h.reused > 0 && h.audio, JSON.stringify(h));
     }
+    // X11: the session before let go of its capturers (each holds two X connections and the shared
+    // memory of a whole screen). They are closed while a read is under way, which once freed nothing.
+    {
+      await sleep(600);
+      const open = await hostWin.webContents.executeJavaScript('session && session.native && api.nativeOpen ? api.nativeOpen() : -1');
+      if (open >= 0) check('X11: the capturers of the session before are let go', open === s.monitors, `${open} open for ${s.monitors} monitor(s)`);
+    }
     // The host's screen locked and unlocked (what main sends on Windows' lock events), and a screen the
     // native capturer cannot read for a while (a UAC prompt): the client says so over the picture.
     {

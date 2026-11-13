@@ -166,10 +166,97 @@ async function placeFiles(files, d) {
   return { how: '', where: left.length ? path.dirname(left[0]) : '' };
 }
 
+// ---- what is being carried out, shown at the pointer --------------------------------
+// While something dragged on the host is carried over to this PC, the real pointer is outside the
+// remote picture, where a page cannot draw: the host's own drag picture stays behind at the edge of
+// the picture, and the person saw a bare pointer. This small window follows the pointer with what is
+// being brought (as a local drag shows its item) until the page says it is over. It takes no clicks
+// and no focus, sits beside the pointer, never under it (so the window under the pointer is still the
+// drop target), and is none of the client's windows (ownWindow). It also goes away by itself: when no
+// button is held any more (Windows, where the buttons can be read) or 20 s after the page last said so.
+const GHOST_PAGE = `<!doctype html><meta charset="utf-8"><style>
+  html, body { margin: 0; background: transparent; overflow: hidden; user-select: none; }
+  #chip { display: inline-flex; align-items: center; gap: 8px; max-width: 300px; box-sizing: border-box; margin: 2px; padding: 6px 12px 6px 8px;
+    border-radius: 9px; background: rgba(29, 34, 41, .96); border: 1px solid #4a8dff; color: #e6e8eb; font: 13px "Segoe UI", "Malgun Gothic", sans-serif;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, .45); }
+  #icon { flex: none; width: 22px; height: 22px; }
+  #text { min-width: 0; }
+  #name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 230px; }
+  #hint { font-size: 11px; color: #8fb8ff; white-space: nowrap; }
+</style><div id="chip"><svg id="icon" viewBox="0 0 24 24"></svg><div id="text"><div id="name"></div><div id="hint"></div></div></div><script>
+  const ICON = {
+    files: '<path d="M6 2h8l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="#dfe6ee"/><path d="M14 2v5h5" fill="#aeb9c6"/>',
+    text: '<rect x="3" y="4" width="18" height="16" rx="2" fill="#dfe6ee"/><path d="M7 9h10M7 12h10M7 15h6" stroke="#5b6573" stroke-width="1.6"/>',
+  };
+  window.set = (o) => {
+    document.getElementById('icon').innerHTML = ICON[o.kind] || ICON.files;
+    document.getElementById('name').textContent = o.name;
+    document.getElementById('hint').textContent = o.hint;
+    const r = document.getElementById('chip').getBoundingClientRect();
+    return { w: Math.ceil(r.width) + 4, h: Math.ceil(r.height) + 4 };
+  };
+</script>`;
+let ghost = null; // { win, ready, timer, until }
+function ghostOff() {
+  if (!ghost) return;
+  clearInterval(ghost.timer);
+  ghost.timer = null;
+  if (!ghost.win.isDestroyed()) ghost.win.hide();
+}
+function ghostGone() {
+  if (!ghost) return;
+  clearInterval(ghost.timer);
+  if (!ghost.win.isDestroyed()) ghost.win.destroy();
+  ghost = null;
+}
+async function ghostOn(o) {
+  if (!ghost || ghost.win.isDestroyed()) {
+    const win = new BrowserWindow({
+      width: 240, height: 48, show: false, frame: false, transparent: true, resizable: false, movable: false, focusable: false, skipTaskbar: true,
+      alwaysOnTop: true, hasShadow: false, fullscreenable: false, minimizable: false, maximizable: false,
+      webPreferences: { backgroundThrottling: false, contextIsolation: true, nodeIntegration: false },
+    });
+    win.setIgnoreMouseEvents(true);
+    win.setAlwaysOnTop(true, 'screen-saver'); // also above a fullscreen client window
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    ghost = { win, timer: null, until: 0, ready: win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(GHOST_PAGE)) };
+  }
+  const g = ghost;
+  g.until = Date.now() + 20000;
+  await g.ready;
+  if (ghost !== g || g.win.isDestroyed()) return false;
+  // What is shown is text only, put there as text (the page that names it comes from the host).
+  const kind = o.kind === 'text' ? 'text' : 'files';
+  const name = String(o.label || '').slice(0, 120) || (kind === 'text' ? '선택한 글자' : '끌어온 항목');
+  const size = await g.win.webContents.executeJavaScript(`set(${JSON.stringify({ kind, name, hint: '＋ 놓으면 이 PC로 복사' })})`).catch(() => null);
+  if (ghost !== g || g.win.isDestroyed()) return false;
+  if (size && size.w > 0 && size.h > 0) g.win.setContentSize(Math.min(320, size.w), Math.min(80, size.h));
+  // Beside the pointer, wherever that is; false when it is over: no button is held any more (where
+  // that can be read), or the page went quiet.
+  const follow = () => {
+    if (g.win.isDestroyed() || Date.now() > g.until || (process.platform === 'win32' && trackButtons() && !press.held)) return false;
+    const p = screen.getCursorScreenPoint();
+    g.win.setPosition(p.x + 16, p.y + 18, false);
+    return true;
+  };
+  if (!g.timer) {
+    if (!follow()) { ghostOff(); return false; }
+    g.win.showInactive();
+    g.timer = setInterval(() => { if (!follow()) ghostOff(); }, 16);
+  }
+  return true;
+}
+
 let ipcReady = false;
 function setupIpc() {
   if (ipcReady) return;
   ipcReady = true;
+  // What is being carried out of the remote picture, shown at the pointer (see above). `o.on` false ends it.
+  ipcMain.handle('shell:dragGhost', async (e, o) => {
+    if (!shellOf(e.sender)) return false;
+    if (!o || !o.on) { ghostOff(); return true; }
+    return ghostOn(o).catch((err) => { console.error('drag ghost', err); return false; });
+  });
   // Received files that were never placed are thrown away after two days.
   sweep(stageDir(), 2 * 86400000);
   // The buttons are read every 25 ms while one of our windows has the focus (a drag out of the
@@ -342,7 +429,7 @@ function attach(win) {
   const wc = win.webContents;
   const state = { win, children: new Set() };
   shells.set(wc.id, state);
-  win.on('closed', () => shells.delete(wc.id));
+  win.on('closed', () => { shells.delete(wc.id); if (!shells.size) ghostGone(); }); // a window left behind would keep the app from quitting
   reportShown(win);
 
   wc.session.setPermissionRequestHandler((_wc, permission, cb) => cb(ALLOWED.has(permission)));

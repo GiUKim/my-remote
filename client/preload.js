@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('mrShell', {
   // Whether the real pointer is over one of this client's windows right now: true, false (another
   // program), or null (cannot be told here; only on Windows).
   pointerOwn: () => ipcRenderer.invoke('shell:pointerOwn'),
+  // What is being carried out of the remote picture, shown beside the real pointer while it is outside
+  // the picture: { on, kind: 'files' | 'text', label }. From 2026-11-13 on; the page must not rely on it.
+  dragGhost: (o) => ipcRenderer.invoke('shell:dragGhost', o),
   // The clipboard shared with the host (see shell.js): what changed here since `seq`, and text from the host.
   clipPoll: (seq) => ipcRenderer.invoke('shell:clipPoll', seq),
   clipWrite: (text) => ipcRenderer.invoke('shell:clipWrite', text),

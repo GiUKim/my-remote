@@ -209,7 +209,9 @@ show_key() {
 launch() {
   local log="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/$1.log"
   shift
-  (umask 077; exec setsid "$electron" "${sandbox_args[@]}" "$@" >"$log" 2>&1 </dev/null) &
+  # Added to, not started anew: a second start (which only reaches the running program and ends) would
+  # otherwise empty the log the running one still writes to.
+  (umask 077; echo "---- $(date '+%F %T') started" >>"$log"; exec setsid "$electron" "${sandbox_args[@]}" "$@" >>"$log" 2>&1 </dev/null) &
   local pid=$! status=0
   sleep 3
   if kill -0 "$pid" 2>/dev/null; then
