@@ -703,8 +703,9 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
           // Text from the client is on the clipboard before the input that follows it is injected: the
           // paste shortcut comes right after the text, and since Electron 44 a write completes later.
           if (process.platform === 'win32') {
+            // The input is only looked at, never injected: nothing reaches this PC's keyboard.
             const seen = [], handle = input.handle;
-            input.handle = (t) => { if (/"t":"kd"/.test(t)) seen.push(input.clipSeq()); return handle(t); };
+            input.handle = (t) => { if (/"t":"kd"/.test(t)) seen.push(input.clipSeq()); };
             try {
               const seq0 = input.clipSeq();
               await hostWin.webContents.executeJavaScript(`api.writeClip('self-test paste'); api.input(JSON.stringify({ t: 'kd', c: 'F24', k: 'F24' })); api.input(JSON.stringify({ t: 'ku', c: 'F24', k: 'F24' })); 1`);
