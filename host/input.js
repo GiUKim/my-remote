@@ -10,7 +10,7 @@ const NEUTRAL = {
   virtualDesktop: () => null, // null: the area the monitors cover
   move() {}, button() {}, wheel() {}, keyOf: () => null, sendKey() {},
   typeText() {}, // characters as such (a phone's keyboard): Windows (KEYEVENTF_UNICODE) and X11 (keycodes lent to keysyms)
-  maskKey() {}, // a key that keeps a lone Alt or Windows key release from opening a menu (Windows)
+  maskKey() {}, // a key that keeps a lone Alt or Windows key release from opening a menu (Windows, X11)
   clipboardPrivate: () => false, // whether a password manager marked the clipboard's content as private
   cursorState: () => ({ key: '0', name: 'default' }),
   cursorBitmap: () => null,

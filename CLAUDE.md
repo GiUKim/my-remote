@@ -318,18 +318,25 @@ the client app instead).
   The client is told (`lock`): main reports Windows' lock and unlock (`powerMonitor`, and
   `getSystemIdleState` when a session starts), and native capture loops that cannot read their screen
   for over 1.5 s count as a secure prompt (`screenGone` in `host.js`); every client window then says so
-  over the picture until the screen is back.
+  over the picture until the screen is back. A lock learned by asking (at a session's start; Windows'
+  idle check also calls a screensaver that does not lock "locked"; on Linux no lock events come at all)
+  is asked about again every 2 s and cleared when it is over; a monitor whose capture loop is stopped
+  (nobody shows it) stops counting as paused, since a stopped loop can never report it back.
 - **Fullscreen is the host, a window is this PC** (the user's first rule, `systemKey` in
   `client.template.html`). In fullscreen every key goes to the host, the system's shortcuts too (the
   Windows key and its combinations such as Win+Shift+S, Alt+Tab, Alt+F4, Ctrl+Esc, PrintScreen): the
   page is in HTML fullscreen with `navigator.keyboard.lock()` in a browser and in the client app alike
   (`FULLSCREEN_JS` in `client/shell.js`), so Chromium holds them for the page. In a window those
   shortcuts are not sent and act on the client PC; a key whose press was sent always has its release
-  sent. Whether Keyboard Lock really holds the Windows key on Windows was not checked (Ctrl+Alt+Del and
+  sent, and a release whose press was not sent never is. The modifier of such a shortcut did go first
+  (Alt of Alt+Space, Ctrl of Ctrl+Esc), and its release may never come (Windows' window menu takes it):
+  when a shortcut stays on the client, the page sends `reset` so the host lets go of everything. On a
+  Mac client Option+Tab/F4/Esc/Space and Ctrl+Esc are no system shortcuts and go to the host. Whether
+  Keyboard Lock really holds the Windows key on Windows was not checked (Ctrl+Alt+Del and
   Win+L cannot be held by anything). The clipboard is the one exception: shared in both modes. When the
   host lets go of Alt or the Windows key in a `reset` (the client left with Alt+Tab while Alt was
-  held), it first presses an unassigned key (VK 0xE8, `maskKey`), or the lone release would open the
-  program's menu bar or the Start menu.
+  held), it first presses a key of no meaning (Windows: VK 0xE8; X11: an empty keycode; `maskKey`), or
+  the lone release would open the program's menu bar or the Start menu.
 - **The clipboard is shared both ways.** Host to client: text at once (the host page polls main's
   clipboard; the client app writes it with `shell:clipWrite`, a browser when one of its windows has the
   focus), files when the client's own programs get the focus (`clipfiles`/`clipget`). Client to host: in
@@ -338,7 +345,15 @@ the client app instead).
   files, and in a browser also text, when pasted into the picture (a browser lets a page read the
   clipboard only in a paste event). Text a password manager marked as private
   (`ExcludeClipboardContentFromMonitorProcessing`, `Clipboard Viewer Ignore`; `clipboardPrivate()`)
-  goes neither way. Echoes are cut by the last text on each side (`lastClip`, `s.clip`).
+  goes neither way. Echoes are cut by the last text on each side (`lastClip`, `s.clip`). Never passed to
+  the client: the access key that `키 복사` put on the host's clipboard (by change count, and any text
+  that is the key), what a drag-out's Ctrl+C copied (the drag hands it over; announced again, the app
+  would fetch the same files twice), and files the client sent itself (in the host's inbox). Every new
+  connection starts with the host's text, which the client does not write again when it is what both had
+  (the person may have copied something else meanwhile). The client app's first reading of a session is
+  only remembered, never sent (on a Mac the change counter changes on every reading, so text is
+  compared), and readings never overlap on either side. Host files fetched onto the client's clipboard
+  and pasted back into the picture are not sent back: the host's own Ctrl+V pastes its originals.
 - **Phones and tablets** (`TOUCH`: `(pointer: coarse)`, or `#touch` for tests; `attachTouch`). A
   finger's pointer events are taken before the mouse handling (capture listeners at the target,
   `stopImmediatePropagation`): a tap clicks, a long press (550 ms) clicks the right button, holding

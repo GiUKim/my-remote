@@ -17,7 +17,7 @@ function status(text, cls) { $('status').textContent = text; $('dot').className 
 // the session locked (powerMonitor in main.js); `paused`: native capture loops that could not read
 // their screen for more than a moment (the lock screen, a UAC prompt, another user's session; a
 // mode change for a moment).
-const screenGone = { lock: false, paused: new Set(), timers: new Map(), sentFor: null, sent: null };
+const screenGone = { lock: false, lockFrom: '', paused: new Set(), timers: new Map(), sentFor: null, sent: null };
 const lockReason = () => (screenGone.lock ? 'lock' : screenGone.paused.size ? 'secure' : '');
 function sendLock(force) {
   const s = session, dc = s && s.dc;
@@ -34,6 +34,13 @@ function screenPaused(i, on) {
   else if (screenGone.paused.delete(i)) sendLock();
 }
 function forgetPaused() { for (const t of screenGone.timers.values()) clearTimeout(t); screenGone.timers.clear(); screenGone.paused.clear(); }
+// A lock learned by asking (at a session's start; also a screensaver that does not lock, which Windows'
+// idle check reports as locked; on Linux, where no lock events come, any lock) ends with no event: while
+// it lasts, ask again every 2 s. A lock reported by an event is ended by the matching event.
+setInterval(() => {
+  if (!screenGone.lock || screenGone.lockFrom !== 'query' || !session) return;
+  api.hostLocked().then((v) => { if (!v && screenGone.lock && screenGone.lockFrom === 'query') { screenGone.lock = false; log('이 PC의 잠금이 풀렸습니다'); sendLock(); } }, () => {});
+}, 2000);
 
 // ---- native capture (optional) -----------------------------------------------------
 // The preload script runs the native capturer and sends each monitor's frames over a message
@@ -216,7 +223,12 @@ function applyEncoding(s) {
         await sender.setParameters(p);
       } catch (e) { log('인코더 설정 실패: ' + e.message); }
       if (session !== s) return; // the next session's capture loops go by the same monitor numbers
-      if (s.native && nativePort) nativePort.postMessage({ t: 'show', i, on: !!plan[i] }); // a monitor nobody looks at is not captured
+      if (s.native && nativePort) {
+        nativePort.postMessage({ t: 'show', i, on: !!plan[i] }); // a monitor nobody looks at is not captured
+        // Its loop stops reading the screen and so can never report it back: not counted as paused any
+        // more (shown again, it reports for itself).
+        if (!plan[i]) screenPaused(i, false);
+      }
     }
   });
   return s.encQueue;
@@ -425,7 +437,7 @@ async function sendFiles(s, files) {
 function startChannelTasks(s, dc) {
   const tx = (o) => { if (dc.readyState === 'open') dc.send(JSON.stringify(o)); };
   // Whether the screen is locked right now (the session may have started on a locked PC).
-  api.hostLocked().then((v) => { screenGone.lock = !!v; }, () => {}).then(() => { if (session === s) sendLock(true); });
+  api.hostLocked().then((v) => { screenGone.lock = !!v; screenGone.lockFrom = 'query'; }, () => {}).then(() => { if (session === s) sendLock(true); });
   // Cursor shape (or picture) -> the client draws the cursor itself.
   // Also whether something is being dragged here, so the client knows what leaving its window means.
   let cur = null;
@@ -452,9 +464,13 @@ function startChannelTasks(s, dc) {
   // fetches them with 'clipget' when it wants them, see main.js). Files that were already on the
   // clipboard when the session began are not announced: only what is copied during it.
   if (cfg.clipboard) {
-    let seq = -1, first = true;
+    let seq = -1, first = true, busy = false;
     s.timers.push(setInterval(async () => {
-      const r = await api.readClip(seq);
+      if (busy) return; // a reading still under way (sizing files on a network share takes a while)
+      busy = true;
+      let r;
+      try { r = await api.readClip(seq); } catch { r = null; } finally { busy = false; }
+      if (session !== s || !r) return;
       seq = r.seq;
       if (r.files) {
         if (!first) tx({ t: 'clipfiles', seq: r.seq, n: r.files.n, dirs: r.files.dirs, bytes: r.files.bytes, names: r.files.names });
@@ -719,6 +735,7 @@ async function onMessage(m) {
   $('kick').onclick = () => teardown('사용자가 끊음');
   api.onKick(() => teardown('사용자가 끊음'));
   api.onHostLock((on) => {
+    screenGone.lockFrom = 'event';
     if (screenGone.lock === on) return;
     screenGone.lock = on;
     log(on ? '이 PC가 잠겼습니다 — 잠금 화면은 원격으로 보이지 않습니다' : '이 PC의 잠금이 풀렸습니다');

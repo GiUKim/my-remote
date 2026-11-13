@@ -156,6 +156,14 @@ exports.run = async ({ check, info, js, until, dragOut }) => {
     typed = typed.replace(/\n$/, '');
     await tjs(`window.typing = false; document.getElementById('ta').remove(); 1`);
     check('X11: text from a phone keyboard is typed as characters (Latin, accents, Hangul, symbols)', typed === TEXT, `typed ${JSON.stringify(typed)}`);
+
+    // A held Alt let go by a reset has a key of no meaning pressed before it (maskKey): no lone Alt.
+    await tjs('window.ev = []; 1');
+    send({ t: 'kd', c: 'AltLeft', k: 'Alt' }); await sleep(50); send({ t: 'reset' }); await sleep(400);
+    const ev3 = (await tjs('window.ev')).map((e) => e[0] + ':' + (e[1] || '?'));
+    const between = ev3.slice(ev3.indexOf('keydown:AltLeft') + 1, ev3.indexOf('keyup:AltLeft'));
+    check('X11: a held Alt let go by a reset is not a lone Alt (a key of no meaning comes between)', ev3.includes('keydown:AltLeft') && ev3.includes('keyup:AltLeft') && between.some((e) => e.startsWith('keydown:')),
+      ev3.join(' '));
   } finally { tw.destroy(); }
 
   // ---- D ----

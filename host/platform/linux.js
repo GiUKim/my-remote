@@ -368,6 +368,17 @@ async function typeNow(syms) {
     if (i < syms.length) await later(100); // every keycode is in use: wait for one to be given back
   }
 }
+// A key that means nothing (an empty keycode), pressed between Alt going down and up: Firefox, GTK and
+// Qt programs open their menu bar on a lone Alt let go. As on Windows (maskKey in platform/win32.js).
+function maskKey() {
+  const x = open();
+  if (!x) return;
+  const kc = emptyKeycodes(x).find((c) => !emptied.has(c) || Date.now() - emptied.get(c) >= SETTLE);
+  if (!kc) return;
+  x.f.XTestFakeKeyEvent(x.dpy, kc, 1, 0);
+  x.f.XTestFakeKeyEvent(x.dpy, kc, 0, 0);
+  x.f.XFlush(x.dpy);
+}
 // Returns a promise that resolves when the text is typed; texts are typed one after the other.
 function typeText(s) {
   const syms = [];
@@ -520,7 +531,7 @@ function underPointer() {
 
 module.exports = {
   viewOnlyReason, hidesCursors: false, // X11 has no way to swap every program's cursor for a transparent one
-  move, button, wheel, keyOf, sendKey, typeText,
+  move, button, wheel, keyOf, sendKey, typeText, maskKey,
   cursorState, cursorBitmap, dragging, dragData, clipSeq, clipboardFiles, setClipboardFiles, underPointer,
   keyCodes: Object.keys(EVDEV), // for the self-test's --input-check
 };

@@ -455,6 +455,7 @@ function setSel(view, sel) {
   view.sel = sel;
   view.pan = { x: 0, y: 0 };
   view.zoom = 1;
+  if (view === mainView) $('zoomBtn').style.display = 'none';
   render(view);
   toast(view, label(sel));
   renderBar();
@@ -472,6 +473,7 @@ function setFit(view, fit) {
   view.fit = fit;
   view.pan = { x: 0, y: 0 };
   view.zoom = 1;
+  if (view === mainView) $('zoomBtn').style.display = 'none';
   layout(view);
   toast(view, fit === '1:1' ? '원본 크기 (1:1) — 가장자리로 밀면 화면이 이동합니다' : '화면에 맞춤');
   renderBar();
@@ -500,6 +502,9 @@ async function flushClip(win) {
 // local file can never keep and so would be asked for again and again.
 function gotClip(s) {
   window.__rd.clipRx = true;
+  // Every new connection starts with the host's text; when it is what both had, this PC's clipboard
+  // stays as it is (the person may have copied something else here meanwhile).
+  if (s === lastClip) { pendingClip = null; return; }
   // The client app writes it at once, whether or not one of our windows has the focus.
   if (shell && shell.clipWrite) { lastClip = s; pendingClip = null; shell.clipWrite(s).catch(() => {}); return; }
   pendingClip = s;
@@ -512,22 +517,25 @@ function gotClip(s) {
 // is copied here (below); files, and in a browser also text, when pasted into the picture (the paste
 // event: a browser lets a page read the clipboard only then). What was on this PC's clipboard before
 // the session began is not sent by itself: at the start the host's clipboard counts (it sends its text).
-let clipSeqSeen = null;
+let clipSeqSeen = null, clipPolling = false;
 function gotClientClip(r) {
   if (!r) return;
   const first = clipSeqSeen === null;
   clipSeqSeen = r.seq;
-  if (first || !r.text || r.text === lastClip || r.text.length > CLIP_MAX) return;
+  // The first reading is what was here before: never sent, only remembered as known (a Mac's app
+  // cannot tell a change from its counter, which changes on every reading there, so text is compared).
+  if (first) { if (lastClip === null && r.text) lastClip = r.text; return; }
+  if (!r.text || r.text === lastClip || r.text.length > CLIP_MAX) return;
   lastClip = r.text;
   window.__rd.clipTx = (window.__rd.clipTx || 0) + 1;
   send({ t: 'clip', s: r.text });
 }
-setInterval(async () => {
-  if (!shell || !shell.clipPoll || !dc || dc.readyState !== 'open' || READONLY) return;
-  let r = null;
-  try { r = await shell.clipPoll(clipSeqSeen); } catch {}
-  gotClientClip(r);
-}, 500);
+async function pollClip() {
+  if (clipPolling || !shell || !shell.clipPoll || !dc || dc.readyState !== 'open' || READONLY) return;
+  clipPolling = true; // one reading at a time: a slow one must not be overtaken by the next
+  try { gotClientClip(await shell.clipPoll(clipSeqSeen)); } catch {} finally { clipPolling = false; }
+}
+setInterval(pollClip, 500);
 
 // ---- pointer ---------------------------------------------------------------------
 function rel(pane, cx, cy) {
@@ -765,6 +773,12 @@ function receiveFiles(ch) {
       if (!app) { toast(where(d), `${what} 다운로드를 시작했습니다${note}` + (files > 1 ? ' · 브라우저가 여러 파일 다운로드를 물으면 허용하세요' : ''), 8000); return; }
       if (d) await d.ready;
       const r = (await shell.dropFiles(d ? d.id : null, ids, group)) || {};
+      // Files copied on the host, now on this PC's clipboard too: pasted back into the picture, they need
+      // not travel again (see the paste handler).
+      if (d && d.clip && r.how === 'clipboard' && shell.clipPoll) {
+        const names = [...tops].sort().join('\n');
+        shell.clipPoll(null).then((p) => { if (p) { hostFilesOnClip = { seq: p.seq, names }; clipSeqSeen = p.seq; } }, () => {});
+      }
       window.__rd.xfer.how = r.how || 'none';
       window.__rd.xfer.placed++;
       toast(where(d), r.how === 'saved' ? `${what}를 "${r.where}"에 넣었습니다${note}` : r.how === 'pasted' ? `${what}를 놓은 곳에 붙여 넣었습니다${note}`
@@ -886,6 +900,7 @@ async function upload(view, mode, at, got) {
 // Ctrl+V here work as between two folders of one PC. Copying and pasting within the host costs nothing.
 const CLIP_FILES_AUTO = 512 * 1024 * 1024; // larger copies are not fetched on their own
 let hostFiles = null; // { seq, n, dirs, bytes, names, asked }
+let hostFilesOnClip = null; // { seq, names }: such files, put on this PC's clipboard (seq: its count then)
 function gotClipFiles(m) {
   hostFiles = { seq: Number(m.seq), n: Number(m.n) || 0, dirs: Number(m.dirs) || 0, bytes: Number(m.bytes) || 0, names: Array.isArray(m.names) ? m.names.map(String).slice(0, 3) : [], asked: false };
   window.__rd.xfer.clipNotes++;
@@ -1139,7 +1154,7 @@ function attachTouch(view, pane) {
       // The spot that was between the fingers stays between them.
       view.pan = { x: t.x - g.R.left - g.u * g.bw * z, y: t.y - g.R.top - g.w * g.bh * z };
       layout(view);
-      $('zoomBtn').style.display = z > 1 ? '' : 'none';
+      if (view === mainView) $('zoomBtn').style.display = z > 1 ? 'inline-block' : 'none'; // also on a touch screen that is no phone
       scheduleView(); // larger on screen: the host may send more pixels
     }
   }, true);
@@ -1202,8 +1217,12 @@ kbd.addEventListener('input', (e) => {
   if (!e.isComposing && (now.length > 80 || !now.startsWith(KBD_KEEP))) { kbd.value = kbdPrev = KBD_KEEP; }
 });
 kbd.addEventListener('compositionend', () => setTimeout(() => { if (kbd.value.length > 80) kbd.value = kbdPrev = KBD_KEEP; }));
+// A tap would first move the focus from the hidden text field to the button, and the keyboard could
+// then never be closed with it: the press keeps the focus where it is (as the key row does).
+let kbdWasOpen = false;
+$('kbdBtn').addEventListener('pointerdown', (ev) => { kbdWasOpen = document.activeElement === kbd; ev.preventDefault(); });
 $('kbdBtn').onclick = () => {
-  if (document.activeElement === kbd) { kbd.blur(); return; }
+  if (kbdWasOpen || document.activeElement === kbd) { kbdWasOpen = false; kbd.blur(); return; }
   kbd.value = kbdPrev = KBD_KEEP;
   kbd.focus(); // brings the phone's keyboard up (only from a tap, which this is)
   try { kbd.setSelectionRange(kbd.value.length, kbd.value.length); } catch {}
@@ -1277,8 +1296,9 @@ const hostKey = (code) => (MAC && code === 'MetaLeft' ? 'ControlLeft' : MAC && c
 // PC's screen, Alt+Tab switches here, and the host does not react as well. Copy and paste are the one
 // exception: the two PCs share the clipboard either way (see the clipboard section). Ctrl+Alt+... are
 // this page's own shortcuts in both (hotkey). On a Mac, Cmd is the host's Ctrl (hostKey) and stays sent.
-const systemKey = (ev) => (!MAC && (/^Meta/.test(ev.code) || ev.metaKey)) || ev.code === 'PrintScreen'
-  || (ev.altKey && ['Tab', 'F4', 'Escape', 'Space'].includes(ev.code)) || (ev.ctrlKey && ev.code === 'Escape');
+// (Option+Tab and the like are no shortcuts of a Mac: from one they go to the host as Alt+...)
+const systemKey = (ev) => ev.code === 'PrintScreen' || (!MAC && ((/^Meta/.test(ev.code) || ev.metaKey)
+  || (ev.altKey && ['Tab', 'F4', 'Escape', 'Space'].includes(ev.code)) || (ev.ctrlKey && ev.code === 'Escape')));
 const fullscreenNow = (doc) => !!doc.fullscreenElement || !!window.__rd.forceFull; // forceFull: the self-test (a hidden window cannot go fullscreen)
 function attachKeys(view) {
   const win = view.win, doc = win.document;
@@ -1295,8 +1315,16 @@ function attachKeys(view) {
   };
   const onKey = (ev) => {
     if (local()) return;
-    // In a window, this PC's system shortcuts stay here (not prevented: the system acts on them).
-    if (!fullscreenNow(doc) && systemKey(ev) && !(ev.type === 'keyup' && sentDown.has(ev.code))) return;
+    // A release whose press did not go to the host stays here too (a shortcut's that stayed here, a key
+    // pressed before this window had the focus): the host would get a key-up it never had the press of.
+    if (ev.type === 'keyup' && !sentDown.has(ev.code)) return;
+    // In a window, this PC's system shortcuts stay here (not prevented: the system acts on them). The
+    // modifier pressed first did go (Alt of Alt+Space, Ctrl of Ctrl+Esc), and its release may never come
+    // (the window menu takes it): everything held on the host is let go now, a lone Alt masked there.
+    if (!fullscreenNow(doc) && systemKey(ev) && !(ev.type === 'keyup' && sentDown.has(ev.code))) {
+      if (ev.type === 'keydown' && [...sentDown].some((c) => /^(Alt|Control|Shift|Meta)/.test(c))) { flushPaste(); send({ t: 'reset' }); sentDown.clear(); }
+      return;
+    }
     const c = hostKey(ev.code), o = { t: ev.type === 'keydown' ? 'kd' : 'ku', c, k: c === ev.code ? ev.key : 'Control' };
     if (ev.type === 'keydown') sentDown.add(ev.code); else sentDown.delete(ev.code);
     const paste = ev.type === 'keydown' && !ev.repeat && !ev.altKey &&
@@ -1325,6 +1353,14 @@ function attachKeys(view) {
     ev.preventDefault();
     window.__rd.pastes++;
     const pasted = ev.clipboardData ? [...ev.clipboardData.files] : [];
+    // The host's own files, fetched onto this PC's clipboard and still there: the host's clipboard has the
+    // originals, so its own Ctrl+V pastes them (the held key goes) instead of copies sent back.
+    const h = hostFilesOnClip;
+    if (pasted.length && !READONLY && h && clipSeqSeen === h.seq && pasted.map((f) => f.name).sort().join('\n') === h.names) {
+      window.__rd.xfer.pasteOwn = (window.__rd.xfer.pasteOwn || 0) + 1;
+      flushPaste();
+      return;
+    }
     if (pasted.length && !READONLY) {
       // Files on this PC's clipboard: they go onto the host's clipboard and the host presses Ctrl+V
       // itself once they are there, so the held paste key is not sent.
@@ -1339,7 +1375,7 @@ function attachKeys(view) {
   });
   for (const t of ['copy', 'cut']) doc.addEventListener(t, (ev) => { if (!local()) ev.preventDefault(); });
   win.addEventListener('blur', () => { view.swallow.clear(); view.cmdKeys.clear(); sentDown.clear(); flushPaste(); send({ t: 'reset' }); held = 0; setTimeout(maybeFetchClipFiles, 150); }); // never leave keys or buttons stuck on the host
-  win.addEventListener('focus', () => flushClip(win)); // host -> client text that arrived while we were away
+  win.addEventListener('focus', () => { flushClip(win); pollClip(); }); // host -> client text that arrived while we were away; what was copied here meanwhile, before a paste
   win.addEventListener('mouseup', (ev) => { if (ev.button > 2) ev.preventDefault(); }); // no browser back/forward
 }
 

@@ -836,16 +836,28 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         K('keydown', 'MetaLeft', { metaKey: true }); K('keydown', 'KeyD', { metaKey: true }); K('keyup', 'KeyD', { metaKey: true });
         window.__rd.forceFull = false; K('keyup', 'MetaLeft'); // fullscreen left with the key still held: its release still goes
         out.full = sent();
+        // In a window Alt+Space stays here, but Alt went first: the host lets go of everything (masked);
+        // the releases of Alt and of a key never pressed here are not sent.
         window.__rd.trace = [];
-        gotClientClip({ seq: 101 }); gotClientClip({ seq: 102, text: 'copied here' }); gotClientClip({ seq: 103, text: 'copied here' });
+        K('keydown', 'AltLeft', { altKey: true }); K('keydown', 'Space', { altKey: true }); K('keyup', 'Space', { altKey: true }); K('keyup', 'AltLeft'); K('keyup', 'KeyB');
+        out.altSpace = window.__rd.trace.filter((m) => ['kd', 'ku', 'reset'].includes(m.t)).map((m) => m.t + (m.c ? ':' + m.c : ''));
+        // The client app's clipboard: what was there before the session is never sent, a copy made here is,
+        // once; text from the host that both have already is not written again.
+        window.__rd.trace = [];
+        const keepLast = lastClip;
+        clipSeqSeen = null; lastClip = null;
+        gotClientClip({ seq: 101, text: 'before the session' }); gotClientClip({ seq: 102, text: 'before the session' });
+        gotClientClip({ seq: 103, text: 'copied here' }); gotClientClip({ seq: 104, text: 'copied here' });
         out.clip = window.__rd.trace.filter((m) => m.t === 'clip').map((m) => m.s);
-        clipSeqSeen = null; window.__rd.trace = null; window.__rd.forceFull = false;
+        lastClip = 'the same text'; pendingClip = null; gotClip('the same text'); out.sameKept = pendingClip === null;
+        clipSeqSeen = null; lastClip = keepLast; pendingClip = null; window.__rd.trace = null; window.__rd.forceFull = false;
         return out;
       })()`);
       const masked = input.simulate([{ x: 0, y: 0, width: 1920, height: 1080 }], [{ t: 'kd', c: 'AltLeft', k: 'Alt' }, { t: 'reset' }]).log.map((e) => e.key + (e.up ? '-up' : ''));
-      check('fullscreen is the host: in a window the system keys stay here, in fullscreen they go; the clipboard is shared; a lone Alt let go is masked', same(r.window, ['kd:KeyA', 'ku:KeyA'])
-        && same(r.full, ['kd:MetaLeft', 'kd:KeyD', 'ku:KeyD', 'ku:MetaLeft']) && same(r.clip, ['copied here']) && same(masked, ['AltLeft', 'mask', 'AltLeft-up']),
-        `window ${r.window} | fullscreen ${r.full} | clipboard ${JSON.stringify(r.clip)} | reset ${masked}`);
+      check('fullscreen is the host: in a window the system keys stay here (Alt+Space lets go of the Alt already sent), in fullscreen they go; the clipboard is shared; a lone Alt let go is masked', same(r.window, ['kd:KeyA', 'ku:KeyA'])
+        && same(r.full, ['kd:MetaLeft', 'kd:KeyD', 'ku:KeyD', 'ku:MetaLeft']) && same(r.altSpace, ['kd:AltLeft', 'reset']) && same(r.clip, ['copied here']) && r.sameKept
+        && same(masked, ['AltLeft', 'mask', 'AltLeft-up']),
+        `window ${r.window} | fullscreen ${r.full} | Alt+Space in a window ${r.altSpace} | clipboard ${JSON.stringify(r.clip)}${r.sameKept ? '' : ', the same text written again'} | reset ${masked}`);
       check('a phone: tap, long press, hold and drag, swipe, pinch; its keyboard (Hangul, Backspace, key-row Ctrl); the host types the characters', ok,
         `tap ${t.tap} | long ${t.long} | drag ${t.drag} | swipe ${t.swipe} | pinch ${t.pinch.join(',') || 'nothing sent'}, zoom ${t.zoom} | kbd ${t.kbd} kept ${t.kept} | ctrl ${t.ctrl} | host typed ${typed ? 'yes' : 'no'}`);
     }

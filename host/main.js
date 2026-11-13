@@ -165,6 +165,7 @@ function closeDragFiles(id) {
     if (f.open) f.open.then((fh) => fh.close()).catch(() => {}); // a read under way finishes first
   }
 }
+let dragCopySeq = null; // the clipboard's change count after the last drag-out's Ctrl+C
 async function dragOut(button) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (!input.dragging()) {
@@ -189,6 +190,9 @@ async function dragOut(button) {
     input.buttonUp(button);
     if (!changed) return { kind: 'none', why: 'nocopy' };
     await sleep(80); // the program may still be adding formats
+    // What this copy put on the clipboard goes to the client with the drag; the clipboard poll must
+    // not offer it again (the client app would fetch the same files a second time).
+    dragCopySeq = input.clipSeq();
     // Reading the clipboard waits for its owner to hand the data over.
     paths = await timedAsync('drag clipboard', () => input.clipboardFiles());
     if (!paths.length) text = await timedAsync('drag clipboard', () => clipboard.readText());
@@ -766,10 +770,14 @@ else {
       if (!cfg.clipboard) return { seq: 0 };
       const seq = input.clipSeq();
       if (seq === lastSeq) return { seq };
+      // Never passed on: the access key put there by 키 복사 (it must not end up on the client, nor in
+      // its clipboard history), and what a drag-out copied (the drag hands it over already).
+      if ((keyOnClip && seq === keyOnClip.seq) || seq === dragCopySeq) return { seq };
       const files = await clipFilesNow(seq);
       if (files) return files.own ? { seq } : { seq, files };
       if (input.clipboardPrivate()) return { seq }; // a password manager's: not passed on to the client
       const text = String((await timedAsync('clip-read', () => clipboard.readText())) || '');
+      if (cfg.key && text.trim() === cfg.key) return { seq }; // the key however it got there (Linux counts changes late)
       return { seq, text: text.length <= CLIP_MAX ? text : '' }; // longer text is not sent to the client: not copied to the page either
     });
     ipcMain.handle('clip-get', async (_e, seq) => { try { return await clipGet(Number(seq)); } catch (e) { console.error('clip get', e.message); return { kind: 'none', why: 'error' }; } });
