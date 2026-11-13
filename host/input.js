@@ -24,6 +24,7 @@ const NEUTRAL = {
   clickAt: () => false,
   dropFilesBuffer: () => null,
   setClipboardFiles: () => false,
+  processRunning: async () => null, // whether a program with this file name runs (a promise); null: cannot tell here
   clipSeq: (() => { let n = 0; return () => ++n; })(), // unknown: always "changed", so the clipboard is simply read
 };
 const platformModule = { win32: './platform/win32', linux: './platform/linux' }[process.platform];
@@ -198,5 +199,6 @@ module.exports = {
   clickAt: backend.clickAt,
   dropFilesBuffer: backend.dropFilesBuffer,
   setClipboardFiles: backend.setClipboardFiles,
+  processRunning: backend.processRunning,
   clipSeq: backend.clipSeq,
 };

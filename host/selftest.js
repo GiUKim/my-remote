@@ -203,16 +203,54 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     if (soakArg) {
       const minutes = Math.max(3, Number(soakArg.split('=')[1]) || 15), end = Date.now() + minutes * 60e3, t0 = Date.now();
       const mb = (kb) => Math.round(kb / 1024);
+      // Garbage is collected in every process before a sample (the pages through the debugger protocol,
+      // this process through V8's gc()), so a sample shows what is kept, not what has not been collected
+      // yet. Without that, the samples swing by tens of MB with the collector's timing.
+      let gcMain = null;
+      try { require('v8').setFlagsFromString('--expose-gc'); gcMain = require('vm').runInNewContext('gc'); } catch {}
+      const gcPage = async (wc) => { try { if (!wc.debugger.isAttached()) wc.debugger.attach('1.3'); await wc.debugger.sendCommand('HeapProfiler.collectGarbage'); } catch {} };
+      // --soak-heap=<folder>: heap snapshots of this (the main) process after the first 3 minutes and at
+      // the end, to see what it keeps (compare them in Chrome's DevTools, Memory tab).
+      const heapArg = process.argv.find((a) => a.startsWith('--soak-heap='));
+      const heapDir = heapArg ? heapArg.slice('--soak-heap='.length) : '';
+      // --soak-no-audio: the sessions after the first capture no system sound (then the engine's
+      // capturer is not started at all while native capture is in use), to tell its share apart.
+      if (process.argv.includes('--soak-no-audio')) await hostWin.webContents.executeJavaScript('cfg.audio = false; 1');
+      // Windows: the handles (kernel, GDI, USER) of this process and the host page's, which grow when
+      // something is opened per session and never closed.
+      let handles = () => null;
+      if (process.platform === 'win32') {
+        try {
+          const koffi = require('koffi'), k32 = koffi.load('kernel32.dll'), u32 = koffi.load('user32.dll');
+          const OpenProcess = k32.func('OpenProcess', 'void *', ['uint32', 'bool', 'uint32']);
+          const CloseHandle = k32.func('CloseHandle', 'bool', ['void *']);
+          const GetProcessHandleCount = k32.func('GetProcessHandleCount', 'bool', ['void *', koffi.out(koffi.pointer('uint32'))]);
+          const GetGuiResources = u32.func('GetGuiResources', 'uint32', ['void *', 'uint32']);
+          handles = (pid) => {
+            const h = OpenProcess(0x1000, false, pid); // PROCESS_QUERY_LIMITED_INFORMATION
+            if (!h) return null;
+            try { const n = [0]; GetProcessHandleCount(h, n); return { k: n[0], gdi: GetGuiResources(h, 0), user: GetGuiResources(h, 1) }; } finally { CloseHandle(h); }
+          };
+        } catch (e) { info(`soak: handle counts not available (${e.message})`); }
+      }
       const sample = async () => {
+        await gcPage(hostWin.webContents); await gcPage(w.webContents);
+        if (gcMain) { gcMain(); gcMain(); }
+        await sleep(500);
         const by = {}, hostPid = hostWin.webContents.getOSProcessId(), clientPid = w.webContents.getOSProcessId();
         for (const p of app.getAppMetrics()) {
           const k = p.pid === hostPid ? 'hostPage' : p.pid === clientPid ? 'clientPage' : p.type === 'Tab' ? 'renderer' : p.type.toLowerCase();
           by[k] = (by[k] || 0) + (p.memory.privateBytes || p.memory.workingSetSize || 0);
         }
         const heap = async (wc) => { try { return Math.round((await wc.executeJavaScript('performance.memory ? performance.memory.usedJSHeapSize : 0')) / 1048576); } catch { return -1; } };
+        const m = process.memoryUsage(), r1 = (b) => Math.round(b / 104857.6) / 10; // MB with one decimal
+        const hm = handles(process.pid) || {}, hh = handles(hostPid) || {};
         return { min: +((Date.now() - t0) / 60e3).toFixed(1), browser: mb(by.browser || 0), gpu: mb(by.gpu || 0), hostPage: mb(by.hostPage || 0), clientPage: mb(by.clientPage || 0),
-          utility: mb(by.utility || 0), hostHeap: await heap(hostWin.webContents), clientHeap: await heap(w.webContents), sessions: 0 };
+          utility: mb(by.utility || 0), hostHeap: await heap(hostWin.webContents), clientHeap: await heap(w.webContents),
+          mainHeap: r1(m.heapUsed), mainHeapTotal: r1(m.heapTotal), mainExt: r1(m.external), mainK: hm.k, mainGdi: hm.gdi, mainUser: hm.user, hostK: hh.k, hostGdi: hh.gdi, hostUser: hh.user, sessions: 0 };
       };
+      let snapped = false;
+      const snapshot = (name) => { if (!heapDir) return; try { fs.mkdirSync(heapDir, { recursive: true }); info(`soak heap snapshot ${require('v8').writeHeapSnapshot(path.join(heapDir, name))}`); } catch (e) { info(`soak heap snapshot failed: ${e.message}`); } };
       const rows = [];
       let n = 0, reconnects = 0;
       while (Date.now() < end) {
@@ -225,9 +263,16 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
           const [back] = await until((x) => x.state === 'connected' && x.frames > 0, 30);
           if (back) reconnects++;
         }
-        if (n % 4 === 0) { const r = await sample(); r.sessions = reconnects; rows.push(r); }
+        // 15, 35 and 55 s after each reconnect: right after one, the main process holds the new
+        // session's start-up allocations for a few seconds, and such samples skewed the medians.
+        if (n % 4 === 3) {
+          const r = await sample(); r.sessions = reconnects; rows.push(r);
+          if (!snapped && r.min >= 3) { snapped = true; snapshot('main-early.heapsnapshot'); }
+        }
       }
-      for (const r of rows) info(`soak ${String(r.min).padStart(5)} min  browser ${r.browser} MB  gpu ${r.gpu} MB  host page ${r.hostPage} MB  client page ${r.clientPage} MB  utility ${r.utility} MB  heaps host ${r.hostHeap} / client ${r.clientHeap} MB  reconnects ${r.sessions}`);
+      snapshot('main-late.heapsnapshot');
+      for (const r of rows) info(`soak ${String(r.min).padStart(5)} min  browser ${r.browser} MB  gpu ${r.gpu} MB  host page ${r.hostPage} MB  client page ${r.clientPage} MB  utility ${r.utility} MB  heaps host ${r.hostHeap} / client ${r.clientHeap} / main ${r.mainHeap} (of ${r.mainHeapTotal}) MB  main external ${r.mainExt} MB` +
+        (r.mainK != null ? `  handles main ${r.mainK}/${r.mainGdi}/${r.mainUser} host ${r.hostK}/${r.hostGdi}/${r.hostUser}` : '') + `  reconnects ${r.sessions}`);
       // Growth: the median of the samples in the last third against the median of those in the first
       // third after the first 3 minutes (a reconnect makes a sample spike now and then), per reconnect.
       const after = rows.filter((r) => r.min >= 3), third = Math.max(1, Math.floor(after.length / 3));
@@ -235,7 +280,8 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       const first = after.slice(0, third), lastRows = after.slice(-third);
       const done = lastRows.length ? lastRows[lastRows.length - 1].sessions - first[0].sessions : 0;
       const per = (k) => (done > 0 ? +((median(lastRows, k) - median(first, k)) / done).toFixed(1) : 0);
-      const growth = { browser: per('browser'), gpu: per('gpu'), hostPage: per('hostPage'), clientPage: per('clientPage'), hostHeap: per('hostHeap'), clientHeap: per('clientHeap') };
+      const growth = { browser: per('browser'), gpu: per('gpu'), hostPage: per('hostPage'), clientPage: per('clientPage'), hostHeap: per('hostHeap'), clientHeap: per('clientHeap'), mainHeap: per('mainHeap'), mainHeapTotal: per('mainHeapTotal'), mainExt: per('mainExt'),
+        ...(rows.some((r) => r.mainK != null) ? { mainHandles: per('mainK'), mainGdi: per('mainGdi'), hostHandles: per('hostK'), hostGdi: per('hostGdi') } : {}) };
       const sum = growth.browser + growth.hostPage + growth.clientPage;
       check(`soak: ${minutes} min, ${reconnects} reconnects, what each session leaves behind stays under 2 MB`, sum < 2 && reconnects >= Math.floor(minutes * 0.6),
         `MB per reconnect (median of the last third minus the first): ${JSON.stringify(growth)}`);
@@ -620,6 +666,14 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     hostWin.webContents.send('displays-changed');
     [ok, s] = await until((x) => x.connects > before && x.state === 'connected' && x.frames > 20, 40);
     check('renegotiates when the host monitors change', ok, ok ? `still showing monitor ${typeof s.sel === 'number' ? s.sel + 1 : s.sel}` : JSON.stringify(s));
+    // With native capture the new session takes the system sound over from the one before instead of
+    // starting the engine's capture again (each start leaves handles behind in the main process).
+    {
+      const h = await hostWin.webContents.executeJavaScript(`({ reused: typeof audioReuses === 'number' ? audioReuses : -1, native: !!(session && session.native), audio: !!(session && session.streams.some((st) => st.getAudioTracks().some((t) => t.readyState === 'live'))) })`);
+      if (!s.audio) info('sound take-over not checked: no audio track (normal on a PC without an audio output device)');
+      else if (!h.native) info('sound take-over not checked: native capture is not in use');
+      else check('a new session takes the system sound over instead of capturing again', h.reused > 0 && h.audio, JSON.stringify(h));
+    }
 
     if (INPUT_CHECK) {
       if (process.platform === 'linux') await require('./inputcheck').run({ check, info, js, until, dragOut });

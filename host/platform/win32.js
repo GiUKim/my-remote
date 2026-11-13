@@ -390,11 +390,44 @@ function setClipboardFiles(paths) {
   return ok;
 }
 
+// ---- other programs ----------------------------------------------------------------
+// Whether a program with this file name runs (Chrome Remote Desktop's remoting_desktop.exe runs only
+// while one of its sessions is connected). A snapshot of the process list, read and closed at once,
+// no program is started for it (tasklist, every 10 s of a session, was). Taking the snapshot took
+// about 67 ms on the test PC (479 processes), so it runs on one of koffi's worker threads and the
+// client's input on this thread never waits for it; reading it takes about 4 ms. PROCESSENTRY32W is
+// read from a plain buffer.
+const CreateToolhelp32Snapshot = kernel32.func('CreateToolhelp32Snapshot', 'intptr_t', ['uint32', 'uint32']);
+const Process32FirstW = kernel32.func('Process32FirstW', 'bool', ['intptr_t', 'uint8*']);
+const Process32NextW = kernel32.func('Process32NextW', 'bool', ['intptr_t', 'uint8*']);
+const CloseHandle = kernel32.func('CloseHandle', 'bool', ['intptr_t']);
+const P64 = koffi.sizeof('uintptr_t') === 8;
+const PE_NAME = P64 ? 44 : 36, PE_SIZE = P64 ? 568 : 556; // szExeFile (260 UTF-16 units) and the struct's size
+// -> Promise of true / false, or null when the list cannot be read.
+function processRunning(exe) {
+  return new Promise((resolve) => {
+    CreateToolhelp32Snapshot.async(2, 0, (err, snap) => { // TH32CS_SNAPPROCESS
+      if (err || !snap || snap === -1) return resolve(null);
+      try {
+        const want = String(exe).toLowerCase(), pe = Buffer.alloc(PE_SIZE);
+        pe.writeUInt32LE(PE_SIZE, 0); // dwSize
+        let found = false;
+        for (let ok = Process32FirstW(snap, pe); ok && !found; ok = Process32NextW(snap, pe)) {
+          let end = PE_NAME;
+          while (end < PE_SIZE - 1 && (pe[end] || pe[end + 1])) end += 2;
+          found = end - PE_NAME === want.length * 2 && pe.toString('utf16le', PE_NAME, end).toLowerCase() === want;
+        }
+        resolve(found);
+      } catch { resolve(null); } finally { CloseHandle(snap); }
+    });
+  });
+}
+
 module.exports = {
   viewOnlyReason: () => '',
   hidesCursors: true,
   virtualDesktop, move, button, wheel, keyOf, sendKey,
   cursorState, cursorBitmap, hideCursors, restoreCursors, dragFullWindows, displayColor,
-  captureClass, dragging, clipboardFiles, underPointer, buttonsHeld, clickAt, dropFilesBuffer, setClipboardFiles,
+  captureClass, dragging, clipboardFiles, underPointer, buttonsHeld, clickAt, dropFilesBuffer, setClipboardFiles, processRunning,
   clipSeq: () => GetClipboardSequenceNumber(),
 };

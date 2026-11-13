@@ -1934,7 +1934,8 @@ function buildReport() {
   L.push('호스트 모니터: ' + monitors.map((m) => `${m.width}x${m.height}${m.hdr ? ' (HDR 켜짐)' : ''}`).join(', '));
   L.push(`연결: ${b.relay ? 'TURN 중계' : 'P2P 직접'} · 왕복 지연 평균 ${Math.round(avg(samples.map((x) => x.rtt)))} ms, 최대 ${Math.round(Math.max(0, ...num(samples.map((x) => x.rtt))))} ms`);
   const h = b.host;
-  L.push(`코덱: ${h ? h.codec : offerInfo.codec || '?'} · 인코더 ${h ? h.enc : '?'} · 디코더 ${b.decoder || '?'}`);
+  const from = { client: '이 클라이언트에서 고름', config: '호스트 설정', auto: '자동' }[h && h.from];
+  L.push(`코덱: ${h ? h.codec : offerInfo.codec || '?'}${from ? ` (${from})` : ''} · 인코더 ${h ? h.enc : '?'} · 디코더 ${b.decoder || '?'}`);
   L.push(`대역폭: 수신 평균 ${avg(samples.map((x) => x.mbps)).toFixed(1)} Mbps (최대 ${Math.max(...num(samples.map((x) => x.mbps))).toFixed(1)})${h ? ` · 호스트 목표 ${h.targetMbps} / 가용 ${h.availMbps} Mbps` : ''}`);
   for (const i of b.viewed) {
     const hm = samples.map((x) => x.host && x.host.mons && x.host.mons[i]).filter(Boolean);

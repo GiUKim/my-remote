@@ -95,7 +95,7 @@ function teardown(reason, silent) {
   api.input('{"t":"reset"}');
   api.session(false);
   api.hideCursor(false);
-  for (const st of s.streams) st.getTracks().forEach((t) => t.stop());
+  for (const st of s.streams) st.getTracks().forEach((t) => (s.native && t.kind === 'audio' ? keepSpareAudio(t) : t.stop())); // the sound waits for the next session
   // Tell the client this was deliberate so it does not auto-reconnect, then close.
   try { if (!silent && s.dc && s.dc.readyState === 'open') s.dc.send(JSON.stringify({ t: 'bye' })); } catch {}
   setTimeout(() => { try { s.pc.close(); } catch {} }, 200);
@@ -128,13 +128,16 @@ const CODECS = ['H264', 'VP9', 'AV1', 'VP8'];
 // (tens of Mbps to spare) the picture is as good as the original from the first frame after a
 // change (50 dB and more in the bench, where AV1 levels off near 42 dB); on any slower link it is
 // the worst choice, because of the bursts described above.
+// `codecFrom` says whose choice it was ('client', 'config', 'auto'), for the diagnostics.
 function pickCodec(hello) {
-  const want = [hello.codec, cfg.codec].find((c) => c === 'H264HQ' || CODECS.includes(c));
-  if (want === 'H264HQ') return { codec: 'H264', hq: true };
-  if (want) return { codec: want, hq: false };
+  const ok = (c) => c === 'H264HQ' || CODECS.includes(c);
+  const want = ok(hello.codec) ? hello.codec : ok(cfg.codec) ? cfg.codec : '';
+  const codecFrom = !want ? 'auto' : want === hello.codec ? 'client' : 'config';
+  if (want === 'H264HQ') return { codec: 'H264', hq: true, codecFrom };
+  if (want) return { codec: want, hq: false, codecFrom };
   let av1 = false;
   try { av1 = RTCRtpSender.getCapabilities('video').codecs.some((c) => c.mimeType.toLowerCase() === 'video/av1'); } catch {}
-  return { codec: av1 && navigator.hardwareConcurrency >= 8 ? 'AV1' : 'H264', hq: false };
+  return { codec: av1 && navigator.hardwareConcurrency >= 8 ? 'AV1' : 'H264', hq: false, codecFrom };
 }
 function preferCodec(pc, codec) {
   const want = 'video/' + codec.toLowerCase();
@@ -201,6 +204,27 @@ function applyEncoding(s) {
 // hence the `refine` setting.
 // It needs an encoder that reports when it has settled: the AV1 encoder does; with the graphics
 // card's H.264 encoder it is left off.
+// The system sound comes from the engine's capture of the first monitor, whose picture is thrown
+// away while native capture runs. Starting that capture for every session cost about 40 MB in the
+// main process for a moment and left two sections and two mutexes behind there each time (Chromium,
+// measured: 16 of each after 8 starts), so with native capture the sound track alone outlives its
+// session by a minute and the next session takes it over: a reconnect starts no capture at all.
+const SPARE_AUDIO_MS = 60000;
+let spareAudio = null, audioReuses = 0; // { track, timer }; how often a session took the sound over (self-test)
+function takeSpareAudio() {
+  const k = spareAudio;
+  spareAudio = null;
+  if (!k) return null;
+  clearTimeout(k.timer);
+  if (k.track.readyState === 'live') return k.track;
+  return null;
+}
+function keepSpareAudio(track) {
+  if (track.readyState !== 'live') return;
+  if (spareAudio) { clearTimeout(spareAudio.timer); if (spareAudio.track !== track) spareAudio.track.stop(); }
+  const k = (spareAudio = { track, timer: setTimeout(() => { if (spareAudio === k) { spareAudio = null; track.stop(); } }, SPARE_AUDIO_MS) });
+}
+window.addEventListener('beforeunload', () => { const t = takeSpareAudio(); if (t) t.stop(); });
 function capture(src, withAudio, refine) {
   const video = { mandatory: {
     chromeMediaSource: 'desktop', chromeMediaSourceId: src.id,
@@ -379,7 +403,7 @@ function startChannelTasks(s, dc) {
   let cur = null;
   s.drag = false;
   s.timers.push(setInterval(async () => {
-    const c = await api.cursor();
+    const c = await api.cursor(cur); // the picture comes along only when the cursor changed
     if (!!c.drag !== s.drag) { s.drag = !!c.drag; tx({ t: 'drag', on: s.drag }); }
     if (c.k === cur) return;
     cur = c.k;
@@ -468,8 +492,13 @@ async function startSession(hello) {
   for (let i = 0; i < sources.length; i++) {
     let stream;
     if (i === 0 && cfg.audio) {
-      try { stream = await capture(sources[i], true, refine); audio = true; }
-      catch (e) { log('시스템 소리 캡처 불가 — 소리 없이 진행: ' + e.message); }
+      let kept = takeSpareAudio(); // the sound of the session before (see keepSpareAudio)
+      if (kept && !s.native) { kept.stop(); kept = null; } // the engine's capture of the picture brings its own
+      if (kept) { stream = new MediaStream([kept]); audio = true; audioReuses++; }
+      else {
+        try { stream = await capture(sources[i], true, refine); audio = true; }
+        catch (e) { log('시스템 소리 캡처 불가 — 소리 없이 진행: ' + e.message); }
+      }
     }
     if (s.native) {
       // From the engine's capture only the sound is kept.
@@ -477,7 +506,7 @@ async function startSession(hello) {
       if (stream) stream.getVideoTracks().forEach((t) => t.stop());
       stream = new MediaStream(a ? [s.native[i].gen, a] : [s.native[i].gen]);
     } else if (!stream) stream = await capture(sources[i], false, refine);
-    if (session !== s) { stream.getTracks().forEach((t) => t.stop()); return; }
+    if (session !== s) { stream.getTracks().forEach((t) => (s.native && t.kind === 'audio' ? keepSpareAudio(t) : t.stop())); return; }
     s.streams.push(stream);
     s.videoSenders.push(pc.addTrack(stream.getVideoTracks()[0], stream));
     // The sound goes out as a stream of its own. Sent in the same stream as the first monitor's
@@ -510,7 +539,7 @@ async function startSession(hello) {
   await RD.waitIce(pc, 2500);
   if (session !== s) return;
   const mids = (s.mids = s.videoSenders.map((sender) => pc.getTransceivers().find((t) => t.sender === sender).mid));
-  const appHash = (await api.getClientApp()).hash;
+  const appHash = await api.getClientHash();
   if (session !== s) return;
   await chan.send({
     app: appHash,
@@ -546,7 +575,7 @@ async function startSession(hello) {
     const codec = codecId && rep.get(codecId) ? rep.get(codecId).mimeType.replace('video/', '') : '';
     const now = performance.now();
     // Host-side numbers for the client's diagnostics report.
-    s.lastHs = { codec, enc: impl, availMbps: +(avail / 1e6).toFixed(1), targetMbps: +(target / 1e6).toFixed(1), rtt: rtt != null ? Math.round(rtt * 1000) : null, mons };
+    s.lastHs = { codec, from: s.codecFrom, enc: impl, availMbps: +(avail / 1e6).toFixed(1), targetMbps: +(target / 1e6).toFixed(1), rtt: rtt != null ? Math.round(rtt * 1000) : null, mons };
     try { if (s.dc.readyState === 'open') s.dc.send(JSON.stringify({ t: 'hs', ...s.lastHs })); } catch {}
     if (last) {
       const mbps = ((bytes - last.bytes) * 8) / ((now - last.t) / 1000) / 1e6;
@@ -626,6 +655,7 @@ async function onMessage(m) {
     if (!firstTime(m)) return; // replay
     try { await startSession(m); } catch (e) {
       log('오류: ' + e.message);
+      api.sourcesFailed(); // the monitors main keeps listed may be out of date: it asks Windows again next time
       // Only the session this hello started; a newer one may have taken its place meanwhile. No 'bye':
       // that would tell the client not to try again.
       if (session && session.sid === m.sid) teardown('오류', true);

@@ -41,7 +41,8 @@ the client app instead).
 - **Never read, print, log, or commit the access key.** It lives DPAPI-encrypted in
   `%APPDATA%\my-remote-host\config.json` (`keyEnc`); on Linux in `~/.config/my-remote-host/config.json`,
   encrypted with the desktop's keyring or, without one, only obscured (reading that file is reading
-  the key). Do not decrypt it, do not ask the user to paste it
+  the key). The copies `config.json.bad-<time>` that the host keeps of a broken file next to it hold
+  the key just the same: never read them either. Do not decrypt it, do not ask the user to paste it
   into the chat, and do not put it in a URL, file, or commit. The user copies it with the host window's
   `키 복사` button.
 - **Never bake a key into `my-remote-client.html`.** The committed client contains no key by design.
@@ -91,10 +92,37 @@ the client app instead).
   - The images carry no pointer, so the system cursors are not hidden in this mode
     (`s.cursorHidden` is still reported as true: the video has no pointer in it).
   - The sound still comes from the engine's capture of the first monitor; its video track is stopped.
-  - A still screen is sent `REPEATS` more times (`preload.js`) so the encoder brings it to full
-    quality, then nothing is sent. A monitor nobody looks at is not captured at all (`show`).
-  - A monitor in HDR mode or rotated, or any failure: the session is renegotiated with the engine's
-    capturer (`nativeOff`). Not tried on such a monitor.
+    Each start of that capture costs the main process about 40 MB for a moment and leaves two
+    sections and two mutexes behind there (Chromium; measured with a bare Electron script: 16 of each
+    after 8 starts, with or without sound, while `desktopCapturer.getSources` and peer connections
+    leave nothing). So the sound track outlives its session by a minute (`keepSpareAudio` in
+    `host.js`) and the next session takes it over: a reconnect starts no capture at all.
+  - Each `mc_open`/`mc_close` pair leaves one section and one mutex behind in the host page's process
+    (measured: 150 cycles, 150 of each; no GPU memory and no measurable commit held). It happens when a
+    D3D device that received duplicated frames is destroyed: 60 duplications on one device that is kept
+    left nothing, and neither do device or factory creation alone. Keeping each capturer's device
+    across `mc_close`/`mc_open` would avoid it (not done; it needs a rebuilt DLL).
+  - After a change the last image is sent `REPEATS` (45) more times (`preload.js`) so the encoder
+    brings it to full quality, then nothing is sent; after a change below 1% of the picture (DXGI's
+    dirty and move rectangles, `mc_next`'s `info[4]`: a blinking caret, a typed letter) only `FEW` (6),
+    and a running series is never cut short. Every `show` (connected, back on screen, new size, the
+    client's `view`) re-sends it with a full series: the encoder drops frames before it runs, and a
+    `MediaStreamTrackGenerator` cannot answer its refresh request. A monitor nobody looks at is not
+    captured at all.
+  - A lost duplication (lock screen, UAC, mode change, a full-screen program) or a lost device (driver
+    restart, TDR) is rebuilt inside the DLL (a new device when the old one was removed), at once and
+    then up to once a second; meanwhile `mc_next` returns 2, the preload sends `paused` (host log), the
+    session stays up and the client keeps the last picture. Only failures that last 10 s (the lock
+    screen and session switches do not count) give -4, which, like a monitor in HDR mode or rotated
+    (-2), renegotiates with the engine's capturer (`nativeOff`, until the host page restarts); -3 (a
+    size change) renegotiates and stays native. `mc_test_lose(handle, 1|2|3)` simulates the losses.
+    Recovery from a real lock screen, UAC prompt or driver restart has not been tried.
+  - `desktopCapturer.getSources` sets DXGI duplication up twice on the main thread (the one that
+    injects input) and starts a thread; `getSources()` in `main.js` keeps its list until the displays
+    change (or a session start failed), so a reconnect does not pay for it again.
+  - Sessions open their loops one at a time (the preload knows loops by monitor number only, and
+    `close` ends all of them); a loop's `failed` counts only for the session that opened it; an `open`
+    without an answer in 4 s turns native capture off until the host page restarts.
 
 - **Mouse buttons held on the host.** Reported from a real session (2026-11-12): a window dragged
   across host monitors stopped half way, and after letting go the window still followed the pointer
@@ -129,7 +157,18 @@ the client app instead).
   files into the folder they were dropped on (desktop, or an Explorer window whose folder it asks the
   shell for through PowerShell); for other targets it puts the data on the clipboard and, within 8 s of
   the drop, clicks once at the drop point and presses Ctrl+V. That click and key press are the only
-  input the client app ever injects.
+  input the client app ever injects, and only after a drop it saw the person make: the app reads the
+  real buttons itself (`input.buttonsHeld()`, `GetAsyncKeyState`, while one of its windows has focus or
+  a button is held), and a drop counts when a button pressed over one of its windows went up at most
+  0.4 s before the page asked (`shell:dropPoint`), once per release; never onto the taskbar, the Start
+  menu or a console (`NO_CLICK`). Saving into a folder is not gated that way (the `--dragout-check`
+  B/C events are synthetic while the host holds the real button). Files that fit neither a folder nor
+  the clipboard go into Downloads (always on macOS, which has no input module). The app grants no
+  clipboard-read permission, lets the page open only blank windows and blocks navigation away from it.
+  In the app, "outside" also means another program's window lies over ours (`mrShell.pointerOwn()`,
+  the window under the real pointer, asked every 50 ms while a button is held; it counts for real
+  events only, since the B/C events are made up). While carrying out, every window shows the `copy`
+  cursor; whether it shows outside the windows depends on the browser (not checked).
 
 - **Files dragged or pasted in (client -> host).** The page uploads them on an `upload` channel;
   `main.js` writes them under `%TEMP%\my-remote-in\<id>` (asynchronously: input shares that thread)
@@ -158,6 +197,28 @@ the client app instead).
   path with no drop point, so `shell.dropFiles` puts them on the client's clipboard. A person who
   presses Ctrl+V on the client before a large transfer is done pastes nothing (the toast shows the
   progress).
+- **The host page going away, and the config file.** When the host page reloads or its process
+  dies, `pageGone()` in `main.js` releases held keys and buttons, restores the cursors, drops offered
+  drag-out files and unfinished uploads and sets the tray to idle (the page's own teardown does not
+  run then). A crashed page is loaded again after 1 s, doubling to at most a minute (crashes counted
+  over ten minutes); starting the host again does it at once. `새 키 발급` saves the new key first, ends
+  the session with `bye` (`kick`, so the client does not keep trying the dead key) and reloads 400 ms
+  later. Only a missing `config.json` makes a key by itself: a file that cannot be read, is not valid
+  JSON, has no key or a key that cannot be decrypted is never replaced without asking. A copy is kept
+  (`config.json.bad-<time>`, once per content); the key is still used when it can be found in a broken
+  file (the host then runs on the defaults and says so in a dialog); without a usable key the host
+  asks before starting (retry / new key / quit). The file is written to a temporary file and renamed
+  over the old one. After `키 복사` the key is taken off the clipboard after a minute (and when the host
+  quits) if it is still there. The config and crash paths were checked with a Node harness of
+  `main.js` with a fake Electron; in Electron only the reloads of the self-test ran through
+  `pageGone()`; a real renderer crash and the start-up dialogs have not been exercised.
+- **Throwaway profiles.** Every isolated run (`--selftest`, `--localtest`, `--bench`, and the bench's
+  client side) starts `profile-cleanup.js` as a small detached process of its own, which removes the
+  run's `%TEMP%\myremote-local-*` / `myremote-peer-*` profile once the run's process has ended and then
+  sweeps old ones (older than 10 min, their run dead, never while another run is going on, at low
+  priority). On Windows a detached child inherits Electron's std handles and would keep whatever
+  started the run waiting (a script that reads the self-test's output, `spawnSync` in `bench-run.js`),
+  so `watch()` clears their inherit flag around the spawn.
 - **The drop-in check once dragged a real folder of the user's.** Explorer scrolls its list sideways
   while something is dragged past its edge; a press point computed as "item left + 40 px" then lay on
   the navigation pane, which showed the user's `서버` folders, and that folder was dragged (the read
@@ -268,7 +329,7 @@ Run from `host/` with Electron's env var cleared.
 | `npm run bench -- --native-probe --capture-probe ...` | Bench with a native observer of the same display: reports when the picture was on the host's own screen and how long after that the capturer in use had it. Needs `tools/native/capprobe.dll` |
 | `electron . --selftest --dragout-check` | Only real drags out of a real Explorer window this check opens on a temp folder (`dragcheck.js`): A straight on the host, B and C through a client window running the real page in the client app's shell (held outside; let go at once, before Explorer started its drag). INJECTS INPUT for about half a minute, so only with the user's agreement; skipped when the clipboard holds more than text, which is put back |
 | `electron . --selftest --dropin-check` | Only real drags IN (`dragcheck.js runIn`): from an Explorer window on the second display onto a client window's picture of the first, dropped by the host into another Explorer window (empty space; a folder icon; a whole folder). Needs two displays. INJECTS INPUT for about half a minute: only with the user's agreement |
-| `electron . --selftest --soak=<minutes>` | A long session instead of the rest of the self-test, to find what grows: the view-only client keeps switching monitors and going to the overview, and the host drops the session every minute so the client reconnects. Memory of every process (the host page and the client page separately) and both pages' script heaps every 20 s; fails when what each session leaves behind (median of the last third of the samples minus the first, per reconnect, after the first 3 minutes) passes 2 MB. First run, 2026-11-13, 15 min, 13 reconnects: script heaps flat, about 1 MB per reconnect in the main process and about 2.5 MB in the renderers (native memory) |
+| `electron . --selftest --soak=<minutes>` | A long session instead of the rest of the self-test, to find what grows: the view-only client keeps switching monitors and going to the overview, and the host drops the session every minute so the client reconnects. Every 20 s (15, 35 and 55 s after a reconnect), after collecting garbage in every process (the pages through the debugger protocol, the main process through V8's `gc()`): memory of every process (the host page and the client page separately), the script heaps of both pages and of the main process, and on Windows the kernel/GDI/USER handles of the main process and the host page. Fails when what each session leaves behind in the main process and both pages together (median of the last third of the samples minus the first, per reconnect, after the first 3 minutes) passes 2 MB. `--soak-heap=<folder>` writes two heap snapshots of the main process (they hold the test's throwaway key; delete them), `--soak-no-audio` leaves the system sound out after the first session. 2026-11-13, before that day's fixes: about +1.2 MB and +8 to +10 kernel handles (sections and mutexes) per reconnect in the main process. Traced with a bare Electron script to the engine's desktop capture started for the sound of every session (2 sections and 2 mutexes per start; `desktopCapturer.getSources` and peer connections leave nothing) and fixed (the sound is taken over, the source list cached). After: 10 min, 9 reconnects, main process 85-86 MB and its handles flat, both pages flat; the host page still gains about 2 handles per monitor per session (see "Native capture") |
 | `electron . --selftest --clip-check` | Same, plus putting two files on this PC's clipboard and reading them back. Only runs when the clipboard holds nothing or plain text, which is put back |
 | `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first. Windows only |
 | `electron . --selftest --input-check` | Linux (X11) only (`inputcheck.js`): the pointer read back after an XTest move, whether the engine's video has the pointer in it (INFO), all 133 keys of the table, five buttons and the wheel into a test window, window-or-desktop under the pointer, text and a file dragged out of a second program it starts, and the client app's drop placement. INJECTS INPUT: on a virtual display only, or with the user's agreement |
@@ -297,14 +358,15 @@ must then be given the new file). Run `npm run selftest` after either.
 | `start-client.bat` | Launcher for the client app (uses the Electron installed under `host/node_modules`) |
 | `setup.sh`, `start-host.sh`, `start-client.sh`, `local-test.sh` | The same for Linux (bash, executable in git, LF line endings) |
 | `host/linux-launch.sh` | Sourced by those: Electron's path, X11 session and sandbox checks, starting Electron in the background |
-| `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js`: Win32 or X11). Exposes `window.mrShell`. `main.js --loader=<file>` shows another loader with a profile of its own (self-test, local trial on Linux). These files are not updated through the loader: the page must feature-detect what an installed app offers |
+| `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js`: Win32 or X11, and `host/files.js`). Exposes `window.mrShell` (`fileAbort` and `pointerOwn` from 2026-11-13 on). `main.js --loader=<file>` shows another loader with a profile of its own (self-test, local trial on Linux). These files are not updated through the loader: the page must feature-detect what an installed app offers |
 | `host/main.js` | Electron main: config and key storage, monitor enumeration, tray, IPC, isolated modes |
 | `host/preload.js` | The only bridge between the renderer and main (`window.hostApi`). Also runs the native capturer's loops and hands their frames to the page over a message port |
 | `host/host.html`, `host/host.js` | Host UI and the WebRTC side: capture, encoding control, data-channel routing |
 | `native/capture.cpp` | The native screen capturer (DXGI Desktop Duplication) |
 | `host/bin/capture.dll`, `capture.dll.json` | That capturer built by `native/build.js` (stripped, no time stamp: the same source and compiler give the same file), and the record of the source hash, DLL hash, compiler and command. Committed. The host loads it when it is there; without it the engine's capturer is used |
 | `native/shellops.cpp`, `host/bin/shellops.dll` (+ `.json`) | `so_drop`: drops files onto whatever is under the pointer as a real drag-and-drop (see Gotchas). Committed like `capture.dll` |
-| `host/files.js` | Safe names and paths for files from the other side (`stagedPath` never leaves its folder), sweeping old transfers |
+| `host/files.js` | Safe names and paths for files from the other side (`stagedPath` never leaves its folder), sweeping old transfers. Used by the host and the client app |
+| `host/profile-cleanup.js` | Removes an isolated run's throwaway profile once the run has ended, and old ones (see Gotchas) |
 | `host/dragcheck.js` | The opt-in real-input checks `--dragout-check` and `--dropin-check` |
 | `native/capprobe.cpp` | Bench only: watches a display natively and reports when each bench frame was presented and handed over |
 | `native/build.js` | Sends the sources in `native/` to a Linux machine, builds them there with mingw-w64 and brings the DLLs back: `capture.dll` (and its record) into `host/bin`, the rest into `tools/native` |
@@ -336,7 +398,18 @@ Bootstrap (loader, before anything else; same channel and encryption as signalin
 
 The loader stores the page in localStorage, sets `window.__mrBoot = {key, remember, preset, updated}`
 and replaces its own document with the page (`document.open/write`); the page then connects as below.
-The host builds the page once at start, so page and host always match.
+The host builds the page once at start, so page and host always match. Loaders built from 2026-11-13
+on check a stored page's SHA-256 against the hash the host confirmed (at least 20 hex digits) and
+otherwise fetch it again (Chrome and Edge share one localStorage among all `file://` pages); older
+copies do not.
+
+A receiver drops a message of more than 40 chunks (120,000 characters, about 90 KB deflated). Every
+loader handed out has this limit and cannot be changed, so the `app` reply with the whole page must
+fit: the self-test fails above 36 chunks (19 on 2026-11-13). New code also drops a message that
+inflates past 1 MiB. The relay subscription (`signal.js`) resubscribes by itself when EventSource
+gives up (2 s, doubling to 60 s), when a subscription has not opened within 2 minutes, and when a
+stream that brought ntfy keepalives stays silent for 3 minutes; what is published in that gap is
+lost and the sender retries. Checked with Node tests against a fake EventSource and relay only.
 
 Signaling (through the relay, each message deflated, encrypted, chunked to 3000 chars):
 
@@ -347,7 +420,11 @@ Signaling (through the relay, each message deflated, encrypted, chunked to 3000 
 
 The host appends `x-google-start-bitrate` to the answer's video codec parameters so the bandwidth
 estimate does not start near 300 kbps. ICE is non-trickle (candidates are gathered before sending). The host rejects messages older than five
-minutes and replayed `sid` values. A new `hello` replaces the current session.
+minutes or without a numeric `ts`, a `sid` over 64 characters, and replayed `sid` values; the sids it
+took are kept in the host page's localStorage (`mr_host_seen`) for as long as they could pass the
+five-minute test, so a restart does not forget them. A new `hello` replaces the current session: a
+session is current from its hello on, a teardown during its setup closes what it has, and the host
+ends a session as soon as its input channel closes.
 
 Data channel `input` (JSON text):
 
@@ -362,15 +439,15 @@ Data channel `input` (JSON text):
 | client -> host | `dragout` | The pointer was let go outside every client window while the host reported a drag; `b` = button. The host ends its drag, copies what was dragged and answers with `dragdata` |
 | client -> host | `dragq` | The pointer just left every client window with a button held: the host checks for a drag-and-drop every 15 ms for 1.2 s and sends `drag` the moment one starts |
 | both | `clip` | Clipboard text, at most 60000 chars |
-| host -> client | `cur` | Current host cursor: `c` = CSS cursor name, or `img` (PNG data URL) with hotspot `hx`,`hy` for an app-specific cursor |
-| host -> client | `hs` | Host-side statistics every 2 s (codec, encoder, bitrate, per-monitor capture/encode fps and limiting factor) for the client's diagnostics report |
+| host -> client | `cur` | Current host cursor: `c` = CSS cursor name, or `img` (PNG data URL) with hotspot `hx`,`hy` for an app-specific cursor. The host page asks main about 30 times a second and passes the cursor it has, so the picture is copied over IPC only when it changes |
+| host -> client | `hs` | Host-side statistics every 2 s (codec and `from`, whose choice it was: `client` (the 진단 dialog, kept in the client's localStorage `mr_codec`), `config` or `auto`; encoder, bitrate, per-monitor capture/encode fps and limiting factor) for the client's diagnostics report; the host's diagnostics log gets the same |
 | host -> client | `drag` | `on`: whether a drag-and-drop is under way on the host |
 | host -> client | `dragdata` | Answer to `dragout`: `kind` `text` (`s`, `cut`), `files` (`files:[{id,name,size,dir?}]`, `skipped`; the bytes follow on the `file` channel; `name` may be a path 'folder/sub/file') or `none` with `why`: `nodrag`, `nocopy`, `empty`, `toobig` |
 | host -> client | `clipfiles` | Files were copied on the host during the session: `seq` (the clipboard's change count), `n` items, `dirs` of them folders, `bytes` of the plain files, `names` (at most 3, no paths). Files already on the clipboard when the session began are not announced |
 | client -> host | `clipget` | Fetch the files of `clipfiles` `seq`; refused (`dragdata` `none`, `why:'changed'`) when the clipboard changed since. The answer is a `dragdata` with `clip: true`, the bytes on a `file` channel as for dragging out. The client asks when focus leaves all of its windows (the person went to the client's own programs to paste), at most 512 MB, the app only; the files go onto the client's clipboard |
-| host -> client | `others` | `crd`: a Chrome Remote Desktop session is connected to the host as well (`remoting_desktop.exe` runs); `outline`: the host drags windows as an outline only. Checked every 10 s, sent when it changes; the client shows a warning. Both are checked on Windows only (elsewhere always false) |
+| host -> client | `others` | `crd`: a Chrome Remote Desktop session is connected to the host as well (`remoting_desktop.exe` runs); `outline`: the host drags windows as an outline only. Checked every 10 s, sent when it changes; the client shows a warning. Both are checked on Windows only (elsewhere always false). The process list is a Toolhelp snapshot taken on a koffi worker thread (`input.processRunning`; about 67 ms for 479 processes on the test PC, so never on the main thread), not `tasklist` |
 | host -> client | `bye` | Deliberate close; the client must not auto-reconnect |
-| host -> client | `renew` | Host monitors changed; the client reconnects at once and keeps its windows |
+| host -> client | `renew` | Host monitors changed (or the capture method); the client reconnects at once and keeps its windows. A session whose input channel is not open yet gets it when it opens. After a native capturer's size renew, the matching `displays-changed` is ignored when the next session already has the current monitors (10 s) |
 
 Data channel `upload` (client -> host, opened by the client per transfer, ordered): text
 `{t:'begin', mode:'drop'|'paste', at:{d,x,y}|null}`, `{t:'dir', name}` for empty folders, per file
@@ -386,7 +463,13 @@ then the bytes in binary messages of at most 60000, text `{t:'fileend', id}`; an
 dragged folder as `{t:'dir', name}`; after the last file `{t:'filesdone'}`, or `{t:'fileerror'}`. The
 client app stages one transfer under one folder (`shell.fileBegin(name, group)`, names made safe part
 by part, never leaving the staging folder) and moves its top-level files and folders to the target. The host only sends files it found on its own clipboard in the
-`dragout` step; the client cannot ask for a path.
+`dragout` step; the client cannot ask for a path. The client refuses a file whose bytes differ from
+its `size` (and closes the channel), and takes a close or error before `filesdone`, a channel that
+does not open within 12 s of `dragdata` or a lost connection as a failure: the app throws away what it
+staged (`shell.fileAbort`). A browser keeps the pieces in 16 MB Blobs, stops at 2 GB and saves each
+file as a download. On the host a transfer ends when its channel or its session closes and then
+releases only its own files; the files of one drag-out stay readable while another starts, and
+offers nobody read for ten minutes are dropped.
 
 Monitor coordinates are physical pixels (`screen.dipToScreenRect`), mapped to the 0..65535 virtual
 desktop range for `SendInput`. Keys are sent as set-1 scancodes so the host's keyboard layout applies;
@@ -398,6 +481,13 @@ host presses itself (`tap`: Escape, Ctrl+C, Ctrl+V for drag-out and pasted files
 themselves. On X11 the physical pixels are the
 root window's coordinates as they are, and keys go as X key codes (Linux evdev code + 8), which the
 host's keyboard layout applies to in the same way.
+
+On the client side: a second button pressed or let go while another is held arrives as a move and is
+sent as `md`/`mu`; a `mu` is sent only for a button the page pressed (a release on its own would reach
+the host as a stray button-up, a right one opening a context menu). On a Mac client, Cmd goes as Ctrl,
+Cmd+V is the paste shortcut, and keys pressed under Cmd are released with it (macOS sends no key-up for
+them). AltGr (`getModifierState('AltGraph')`) never triggers the `Ctrl+Alt` shortcuts. Not tried on a
+Mac or with an AltGr layout.
 
 ## Client layout model
 
@@ -418,6 +508,11 @@ aspect ratio, so pointer mapping is a plain proportion of the element. Policy, i
   screen that needs one and closes the window of an emptied screen (the main window shows a hint
   instead). A click on a host tile turns it off and remembers where it was. While the panel is open
   every monitor is requested at tile size, so tiles of unused monitors are live too.
+- Windows are matched to client screens by where their centre is now (`screenMap`: one window per
+  screen, the main window first; a further window on a taken screen counts as on none), and an
+  overview (`'all'`) counts last in `currentAssign`. After `applyAssign` or `spread`, a window not
+  placed on a screen gives up any monitor now shown elsewhere and closes when left with none
+  (`notTwice`).
 - `Ctrl+Alt` + arrows / digits / Enter are local shortcuts and are not forwarded (user can turn them off).
 - An exact integer enlargement is drawn with `image-rendering: pixelated`; anything else is smoothed.
 - Browsers allow one popup and one fullscreen request per click and restrict window placement, so in
@@ -426,6 +521,11 @@ aspect ratio, so pointer mapping is a plain proportion of the element. Policy, i
   in both; keep app-only behaviour behind `if (shell)`.
 - The offer carries the hash of the page the host serves (`app`). An open page whose stored hash
   differs reloads through the loader to fetch the new one, so clients follow host updates by themselves.
+  The key never goes into the address for that (the browser would keep it in its history): the page
+  puts it where the loader keeps a remembered key (`mr_key`) and, when the person had not asked to keep
+  it there, leaves a mark in the tab (sessionStorage `mr_forget_key`) so that the new page removes it at
+  once. sessionStorage `mr_respread` brings the spread windows back afterwards (the app; a browser is
+  told which button to press).
 
 ## Performance
 
@@ -524,7 +624,8 @@ JSON lines, numbers only, rotated at 3 MB).
 Read this file when the user reports stutter or lag instead of guessing: compare host capture fps,
 encode fps and the limiting factor (`cpu`, `bandwidth`, `none`) with the client's received fps, freeze
 count, packet loss, round-trip time and jitter-buffer delay. An entry may carry `slow`: main-process
-calls that took over 50 ms since the previous entry (`input mm`, `clip-read`, `cursor`, ...) and
+calls that took over 50 ms since the previous entry (`input mm`, `clip-read`, `clip-files`,
+`drag clipboard` (reading the clipboard waits for its owner), `cursor`, ...) and
 `paused` (the main thread itself did not run for over a second), each as count, total and longest ms.
 The client's input is injected on that thread, so a stall there is a stall of every click. Entries
 written many at once after a gap mean the same. `released`: buttons the host let go because the
@@ -534,7 +635,8 @@ browser ended a pointer while a button was held), `lost` (pointer capture went a
 cancel), and `xfer` for dragging out: `out` (dragouts sent), `late` (let go before the host's drag
 started, carried out after waiting), `files`, `placed`, `text`, `none`, `failed`, and the last `why`
 code and placement `how` (fixed words, no names or paths). It never contains the key; `config.json`
-in the same folder does, so do not read that one.
+in the same folder does (and so do its `config.json.bad-*` copies), so do not read those. The
+client's own report (`진단`) compares counters within one connection only: a reconnect starts them again.
 
 ## Verified and unverified
 
@@ -572,6 +674,18 @@ dropped by the host into another Explorer window, its folder icon, and a whole f
 Chromium handing over files copied in Explorer in a paste event. Not verified: dropping into other
 programs (mail, chat, browser upload fields), the desktop, an elevated target (Windows blocks it),
 a paste into Explorer through the host, a real second PC, folders whose reading throws.
+
+Audit fixes of 2026-11-13 (signaling, session lifecycle, the main process, the client page, the client
+app, native capture): after merging them all, the self-test with `--clip-check` (41 checks),
+`--dragout-check` A/B/C and `--dropin-check` D/E/F passed on this PC. Each group was also checked on
+its own with Node harnesses and fakes (a fake EventSource and relay, `host.js` and the client page in a
+vm, `main.js` with a fake Electron, the repeat policy simulated); those cover behaviour the self-test
+does not reach. Not verified: a real relay reconnect after a 502 or 429, a real renderer crash and the
+start-up key dialog, native capture recovering from a real lock screen, UAC prompt or driver restart
+(the DLL's recovery code has not run), the `FEW`/`SMALL` repeat counts on the bench, a Mac client,
+`pointerOwn` with a real window lying over a client window, the `copy` cursor outside the windows,
+touch and pen, AltGr layouts, the browser's fullscreen click after spreading, the app spreading again
+after a self-update, and a browser download of a large file through Blobs.
 
 Verified by the self-test: the arrangement rules, applying an arrangement (two monitors together, an
 empty screen), the panel showing every monitor live, and a drag and a click done with synthetic pointer

@@ -509,9 +509,19 @@ function physicalRect(d) {
   const s = d.scaleFactor || 1, b = d.bounds;
   return { x: Math.round(b.x * s), y: Math.round(b.y * s), width: Math.round(b.width * s), height: Math.round(b.height * s) };
 }
+// desktopCapturer.getSources sets up DXGI desktop duplication twice on this thread (the one that
+// injects the client's input) and starts a thread, at every session start. The list it gives only
+// changes with the displays, so it is kept until they change (or a session could not use it).
+let screenSrcs = null; // { key, list: [{ id, display_id }] }
+function forgetSources() { screenSrcs = null; }
 async function getSources() {
   const displays = screen.getAllDisplays().sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
-  const srcs = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+  const key = JSON.stringify(displays.map((d) => [d.id, d.bounds, d.scaleFactor, d.rotation]));
+  if (!screenSrcs || screenSrcs.key !== key) {
+    const list = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+    screenSrcs = { key, list: list.map((s) => ({ id: s.id, display_id: s.display_id })) };
+  }
+  const srcs = screenSrcs.list;
   const primaryId = screen.getPrimaryDisplay().id;
   const rects = [], out = [];
   const color = input.displayColor(); // which displays Windows has in HDR mode (they are captured too bright)
@@ -637,6 +647,8 @@ else {
     ipcMain.handle('cfg', () => cfg);
     ipcMain.handle('sources', getSources);
     ipcMain.handle('client-app', getClientApp);
+    ipcMain.handle('client-hash', () => getClientApp().hash); // a session needs only this, not the 250 KB page
+    ipcMain.on('sources-failed', () => forgetSources()); // a capture could not use the list: ask Windows again next time
     // Measurements of each session (numbers only), for finding out why something felt slow.
     const diagFile = path.join(app.getPath('userData'), 'diag.log');
     const diagWrite = (entry) => {
@@ -665,14 +677,23 @@ else {
     // remoting_desktop.exe only while one of its sessions is connected. Stalls of this process's input
     // were seen to end exactly when such a session (re)connected, so the client is told. Also whether
     // windows are dragged as an outline only, which does not look like dragging at the real desk.
-    ipcMain.handle('others', () => new Promise((resolve) => {
-      const outline = !input.dragFullWindows();
-      if (process.platform !== 'win32') return resolve({ crd: false, outline }); // only checked for on Windows
-      require('child_process').execFile('tasklist', ['/FI', 'IMAGENAME eq remoting_desktop.exe', '/NH', '/FO', 'CSV'], { windowsHide: true, timeout: 5000 },
-        (err, out) => resolve({ crd: !err && /remoting_desktop\.exe/i.test(String(out)), outline }));
-    }));
+    // Asked every 10 s of a session; a snapshot of the process list, taken off this thread (Windows
+    // only; elsewhere false).
+    ipcMain.handle('others', async () => {
+      let crd = false, outline = false;
+      try { outline = !input.dragFullWindows(); crd = (await input.processRunning('remoting_desktop.exe')) === true; } catch (e) { console.error('others', e.message); }
+      return { crd, outline };
+    });
     ipcMain.handle('dragging', () => timed('dragging', () => { try { return input.dragging(); } catch { return false; } }));
-    ipcMain.handle('cursor', () => timed('cursor', () => { try { return { ...currentCursor(), drag: input.dragging() }; } catch { return { k: '0', c: 'default', drag: false }; } }));
+    // Asked about 30 times a second while a client is connected. `last`: the cursor the page already
+    // has; then its picture (a data URL of up to tens of KB) is not copied over again.
+    ipcMain.handle('cursor', (_e, last) => timed('cursor', () => {
+      try {
+        const c = currentCursor(), drag = input.dragging();
+        if (last != null && c.k === last) { const { img, ...same } = c; return { ...same, drag }; }
+        return { ...c, drag };
+      } catch { return { k: '0', c: 'default', drag: false }; }
+    }));
     ipcMain.handle('drag-out', async (_e, button) => {
       // Local trials never press keys on this PC, except the opt-in drag-out check (dragcheck.js).
       if (ISOLATED && !process.argv.includes('--dragout-check')) return { kind: 'none', why: 'not in a local trial' };
@@ -697,7 +718,9 @@ else {
       const seq = input.clipSeq();
       if (seq === lastSeq) return { seq };
       const files = await clipFilesNow(seq);
-      return files ? { seq, files } : { seq, text: timed('clip-read', () => clipboard.readText()) };
+      if (files) return { seq, files };
+      const text = timed('clip-read', () => clipboard.readText());
+      return { seq, text: text.length <= CLIP_MAX ? text : '' }; // longer text is not sent to the client: not copied to the page either
     });
     ipcMain.handle('clip-get', async (_e, seq) => { try { return await clipGet(Number(seq)); } catch (e) { console.error('clip get', e.message); return { kind: 'none', why: 'error' }; } });
     ipcMain.on('clip-write', (_e, text) => { if (cfg.clipboard && typeof text === 'string' && text.length <= CLIP_MAX) timed('clip-write', () => clipboard.writeText(text)); });
@@ -751,6 +774,7 @@ else {
     // Monitor plugged/unplugged or resolution changed: the renderer renegotiates the session.
     let displayTimer = null;
     const displaysChanged = () => {
+      forgetSources();
       clearTimeout(displayTimer);
       displayTimer = setTimeout(() => { if (win && !win.isDestroyed()) win.webContents.send('displays-changed'); }, 1500);
     };
