@@ -225,6 +225,12 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 
 **그다음부터:** 앱 메뉴(Activities)에서 "My Remote Host"를 누르면 됩니다. 설치할 때 "My Remote Host"와 "My Remote Client"가 이 사용자의 앱 메뉴에 추가됩니다. 지우려면 `~/.local/share/applications/my-remote-*.desktop`을 지우세요.
 
+**화면 앞에 없는 PC(SSH로만 접속하는 서버 등):**
+
+1. 그 PC의 데스크톱에 이 사용자로 한 번 로그인해 둡니다. 로그인 화면에서 "Ubuntu on Xorg"를 고르세요. 화면 잠금과 화면 끄기는 꺼 둡니다(설정 → 개인 정보 → 화면 잠금, 설정 → 전원 → 화면 끄기 "안 함"). 잠긴 화면은 원격으로 조작할 수 없습니다.
+2. SSH 터미널(MobaXterm 등)에서 `./start-host.sh`를 실행합니다. 터미널에는 화면이 없으므로 그 PC에 로그인되어 있는 데스크톱에서 호스트가 뜹니다. MobaXterm의 X11 포워딩 화면은 쓰지 않습니다. 데스크톱에 로그인되어 있지 않으면 먼저 로그인하라고 안내합니다.
+3. `./start-host.sh --show-key`를 실행하면 접속 키가 터미널에 출력됩니다. 비밀번호 관리자에 옮겨 두고 `clear`로 터미널에서 지우세요. 키는 화면에만 출력되고 어디에도 기록되지 않습니다.
+
 막힐 수 있는 곳과 그때 나오는 안내:
 
 | 상황 | 안내 |
@@ -237,6 +243,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 
 ```bash
 ./start-host.sh       # 호스트 (처음엔 설치부터). 백그라운드로 뜨고, 출력은 $XDG_RUNTIME_DIR/my-remote-host.log
+./start-host.sh --show-key   # 이 PC의 접속 키를 터미널에 출력 (SSH로 관리하는 PC용)
 ./start-client.sh     # 클라이언트 앱 (처음엔 설치부터)
 ./setup.sh            # 설치만 다시, 자체 테스트 포함 (문제를 찾을 때)
 ./local-test.sh       # 이 PC에서만 체험 (보기 전용 클라이언트가 클라이언트 앱으로 열림)
@@ -275,6 +282,7 @@ Windows와 다른 점:
 
 - **접속 키가 유일한 인증 수단입니다.** 키를 가진 사람은 그 PC를 조작할 수 있습니다. 2단계 인증은 없습니다.
 - 키는 호스트 PC의 `%APPDATA%\my-remote-host\config.json`에 Windows 계정으로 암호화(DPAPI)되어 저장됩니다. 저장소에는 들어가지 않습니다. Linux는 [Linux](#linux)의 "접속 키" 참고.
+- Linux에서는 그 사용자로 로그인할 수 있는 사람(SSH 포함)이면 `./start-host.sh --show-key`로 키를 볼 수 있습니다. 키를 키링에 넣어 둔 경우에는 키링이 열려 있을 때만 보입니다. 설정 파일을 직접 읽는 것과 같은 범위이며, 새로 열리는 구멍은 없습니다.
 - `키 복사`로 클립보드에 올린 키는 1분 뒤(또는 호스트를 끌 때) 다른 것을 복사하지 않았다면 클립보드에서 지워집니다.
 - 키가 노출됐다고 의심되면 호스트 창의 `새 키 발급`을 누르세요. 기존 키는 즉시 무효가 되고, 접속 중이던 클라이언트는 끊긴 뒤 다시 붙지 않습니다.
 - 클라이언트 브라우저는 호스트가 보내 준 화면(코드)을 실행합니다. 따라서 키를 가진 사람은 호스트를 조작할 수 있을 뿐 아니라, 호스트인 척하며 클라이언트 브라우저에 코드를 보낼 수도 있습니다. 키 관리가 양쪽 모두의 보안입니다.

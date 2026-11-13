@@ -87,12 +87,63 @@ check_libs() {
 
 # Only X11 sessions are supported: on Wayland, capturing the screen and injecting input go through the
 # desktop's portals, which this program does not use. (Electron would still start, through Xwayland.)
+# Started over ssh (no display in the terminal, or only the ssh client's forwarded one, which is not this
+# PC's screen), it runs on the desktop session this user is logged in to on this PC, as if started there.
 check_session() {
+  local disp="${DISPLAY:-}" r=0
+  if [ -n "${SSH_CONNECTION:-}" ] && [ -n "${disp%%:*}" ] && [ "${disp%%:*}" != unix ]; then disp=""; fi # localhost:10.0
+  if [ -z "$disp" ]; then
+    desktop_env || r=$?
+    [ "$r" = 2 ] && fail "You are logged in at this PC's desktop with Wayland, which My Remote does not support. Log out there," \
+      "and on the login screen pick \"Ubuntu on Xorg\" (the gear icon at the bottom right, after choosing your name)."
+    [ "$r" = 0 ] || fail "No desktop to run on: this terminal has no display, and you ($(id -un)) are not logged in at this PC's" \
+      "desktop. Log in there first (on Ubuntu pick \"Ubuntu on Xorg\" on the login screen), then run this again."
+    echo "No display in this terminal: starting on the desktop you are logged in to on this PC (display $DISPLAY)."
+  fi
   if [ "${XDG_SESSION_TYPE:-}" = "wayland" ]; then
     fail "This is a Wayland session, which My Remote does not support. Log out, and on the login" \
       "screen pick \"Ubuntu on Xorg\" (the gear icon at the bottom right, after choosing your name), then start it again."
   fi
-  [ -n "${DISPLAY:-}" ] || fail "No X11 display (DISPLAY is not set). Run this from the desktop session of this PC."
+}
+
+# This user's graphical session on this PC (logind): exports its DISPLAY, XAUTHORITY, session bus and
+# desktop variables, read from a process of that session. 1: there is none; 2: there is one, on Wayland.
+desktop_env() {
+  local uid s u t c st d k v p envs="" found="" var val
+  uid="$(id -u)"
+  command -v loginctl >/dev/null 2>&1 || return 1
+  while read -r s u _; do
+    [ "$u" = "$uid" ] || continue
+    t=""; c=""; st=""; d=""
+    while IFS='=' read -r k v; do
+      case "$k" in Type) t="$v" ;; Class) c="$v" ;; State) st="$v" ;; Display) d="$v" ;; esac
+    done < <(loginctl show-session "$s" -p Type -p Class -p State -p Display 2>/dev/null)
+    { [ "$c" = user ] && [ "$st" != closing ]; } || continue
+    case "$t" in x11) found="$s"; break ;; wayland) found=wayland ;; esac
+  done < <(loginctl list-sessions --no-legend 2>/dev/null)
+  [ "$found" = wayland ] && return 2
+  [ -n "$found" ] || return 1
+  # A process of that session (its cgroup is the session's scope) knows the display's authority file,
+  # which display managers put in different places.
+  for p in $(pgrep -u "$uid" 2>/dev/null); do
+    grep -q "/session-$found\.scope" "/proc/$p/cgroup" 2>/dev/null || continue
+    envs="$(tr '\0' '\n' < "/proc/$p/environ" 2>/dev/null)" || continue
+    printf '%s\n' "$envs" | grep -q '^DISPLAY=' && break
+    envs=""
+  done
+  for var in DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP DESKTOP_SESSION GDMSESSION XCURSOR_THEME XCURSOR_SIZE; do
+    val="$(printf '%s\n' "$envs" | sed -n "s/^$var=//p" | head -n 1)"
+    if [ -n "$val" ]; then export "$var=$val"; fi
+  done
+  if [ -z "$envs" ]; then # no process to read: what logind and the usual places say
+    [ -n "$d" ] || return 1
+    export DISPLAY="$d"
+    if [ -f "/run/user/$uid/gdm/Xauthority" ]; then export XAUTHORITY="/run/user/$uid/gdm/Xauthority"
+    elif [ -f "$HOME/.Xauthority" ]; then export XAUTHORITY="$HOME/.Xauthority"; fi
+  fi
+  [ -n "${DISPLAY:-}" ] || return 1
+  export XDG_SESSION_TYPE=x11
+  unset WAYLAND_DISPLAY
 }
 
 # Chromium's sandbox needs either its setuid helper (chrome-sandbox owned by root, mode 4755: npm does
@@ -120,6 +171,35 @@ check_sandbox() {
     "./setup.sh offers to do it):" \
     "  sudo chown root:root \"$sandbox_helper\" && sudo chmod 4755 \"$sandbox_helper\"" \
     "or run without the sandbox: MY_REMOTE_NO_SANDBOX=1 $0"
+}
+
+# ./start-host.sh --show-key: prints the access key in this terminal, for a host reached over ssh (its
+# window, with the 키 복사 button, is on a screen nobody sits at). In the foreground, and never into a log
+# file: the key goes to stdout only. No display is used (an ssh client's X11 forwarding is left alone);
+# a desktop session's keyring is reached through the user's session bus, as from a terminal on that desktop.
+show_key() {
+  [ -x "$electron" ] || fail "My Remote is not set up in this folder yet: run ./start-host.sh on this PC's desktop first."
+  check_libs
+  check_sandbox
+  local bus="${DBUS_SESSION_BUS_ADDRESS:-}" run="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  [ -z "$bus" ] && [ -S "$run/bus" ] && bus="unix:path=$run/bus"
+  # A key that is only obscured ("v10", its encrypted form starts with "djEw") needs no keyring. Electron
+  # asks one anyway when the bus has one, and a keyring that cannot be unlocked from here (its password
+  # prompt needs a display) answers only after D-Bus's time-out of 25 s: such a key is read without the bus.
+  grep -q '"keyEnc": *"djEw' "${XDG_CONFIG_HOME:-$HOME/.config}/my-remote-host/config.json" 2>/dev/null && bus="unix:path=/dev/null/none"
+  local err status=0
+  err="$(mktemp)"
+  # The engine's own messages (no display, no GPU) are left out; the app's are marked [show-key].
+  env -u DISPLAY -u WAYLAND_DISPLAY ${bus:+DBUS_SESSION_BUS_ADDRESS="$bus"} \
+    "$electron" "${sandbox_args[@]}" --ozone-platform=headless --disable-gpu "$root/host" --show-key 2>"$err" </dev/null || status=$?
+  if grep -q '^\[show-key\] ' "$err"; then
+    sed -n 's/^\[show-key\] //p' "$err" >&2
+  elif [ "$status" != 0 ]; then
+    echo "It stopped (exit code $status). The end of its output:" >&2
+    tail -n 12 "$err" >&2
+  fi
+  rm -f "$err"
+  exit "$status"
 }
 
 # Starts Electron in the background, as the .bat files do on Windows; its output goes to a log file

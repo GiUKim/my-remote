@@ -29,7 +29,8 @@ When the user asks you to set this up, do the following in order.
    failures. The self-test is local only (relay on 127.0.0.1, no STUN, throwaway key and profile,
    view-only client), so it is safe to run without asking. It does capture the screen for about a minute.
 4. **Do not start the real host yourself.** Tell the user to double-click `start-host.bat` (Linux: run
-   `./start-host.sh`). Starting the
+   `./start-host.sh`; run over ssh, it starts on the desktop the user is logged in to on that PC, and the
+   user then reads the key with `./start-host.sh --show-key` in their own terminal). Starting the
    host connects the PC to an external server and makes it reachable with the key, so that step is the
    user's decision and action. Tell them a Windows Firewall prompt may appear on first run.
 5. **Hand over the usage steps** from README.md "사용 방법": copy the key from the host window into a
@@ -48,7 +49,9 @@ the client app instead).
   the key). The copies `config.json.bad-<time>` that the host keeps of a broken file next to it hold
   the key just the same: never read them either. Do not decrypt it, do not ask the user to paste it
   into the chat, and do not put it in a URL, file, or commit. The user copies it with the host window's
-  `키 복사` button.
+  `키 복사` button, or, on a Linux PC reached over ssh, reads it in their own terminal with
+  `./start-host.sh --show-key`. Never run `--show-key` yourself, in any form and on any machine: its
+  output is the key.
 - **Never bake a key into `my-remote-client.html`.** The committed client contains no key by design.
 - **Keep the loader and its bootstrap protocol stable.** `my-remote-client.html` is a loader that users
   receive once and keep; old copies stay in use. Changing the `ver`/`app` exchange, the key derivation
@@ -328,6 +331,25 @@ the client app instead).
   - No keyring (`safeStorage` backend `basic_text`, usual outside a GNOME/KDE session): the key is only
     obscured ('v10', a fixed password); the host prints a warning and keeps `config.json` at mode 0600.
     The asynchronous calls work there without `setUsePlainTextEncryption` (the synchronous ones needed it).
+    They ask the Secret Service whenever the session bus has one, whatever `--password-store` says, and a
+    keyring that cannot ask for its password (no display for its prompter; a user who never logged in at
+    the desktop has no keyring yet) answers only at D-Bus's time-out: the call takes 25 s (measured over
+    ssh) and then falls back to 'v10'. The host then starts 25 s late.
+  - Started over ssh (no display in the terminal, or only the ssh client's forwarded one, such as
+    MobaXterm's `localhost:10.0`), the launchers run on the desktop session the user is logged in to on
+    that PC (`desktop_env` in `host/linux-launch.sh`: this user's X11 session from logind, its DISPLAY,
+    XAUTHORITY, bus and desktop variables read from a process in the session's scope). Without such a
+    session they say to log in there first; a Wayland session is named as such. Checked with stand-ins
+    for `loginctl` only, not yet with a real display manager's session.
+  - `--show-key` (`showKey` in `main.js`, `show_key` in the launcher) is for a host reached over ssh: the
+    key goes to stdout, reasons go to stderr marked `[show-key]` (the launcher shows only those lines of
+    Electron's output). It opens no window, takes no lock and needs no display (`--ozone-platform=headless`;
+    DISPLAY is unset so that an ssh client's X server is not asked). Setting `DBUS_SESSION_BUS_ADDRESS`
+    from `main.js` is too late (measured), so the launcher reads the stored key's scheme (`"keyEnc":
+    "djEw` is 'v10') and gives Electron no bus for such a key; a 'v11' key needs the user's bus and an
+    unlocked keyring. Checked with made-up keys in temporary folders: 'v10' under the user's real bus in
+    0.2 s (25 s before that change), 'v11' with a throwaway unlocked GNOME keyring on a bus of its own in
+    0.2 s, the same keyring locked, broken JSON, no key, no file.
   - Electron 45 links GTK 3 and other desktop libraries (NSS, ALSA, GBM, AT-SPI, ...) directly: on a
     system without a desktop, or a minimal one, it does not start at all ("error while loading shared
     libraries: libgtk-3.so.0"). `need_electron` in `host/linux-launch.sh` (setup and every launcher)

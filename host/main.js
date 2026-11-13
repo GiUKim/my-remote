@@ -21,6 +21,11 @@ const benchCfg = (() => {
   return arg ? JSON.parse(fs.readFileSync(arg.slice('--bench-config='.length), 'utf8')) : {};
 })();
 const ISOLATED = SELFTEST || LOCALTEST || BENCH;
+// --show-key (./start-host.sh --show-key): prints this PC's access key in the terminal and ends. For a
+// host reached over ssh, whose window with its 키 복사 button is on a screen nobody sits at. It only reads
+// the key, as the host does: never makes one, writes or copies no file, opens no window, needs no display
+// and takes no single-instance lock (the host may be running). Agents never run it: it prints the key.
+const SHOW_KEY = !ISOLATED && process.argv.includes('--show-key');
 
 // Settings of the browser engine's video transport ("field trials"). The engine's defaults for
 // screen content suit slide sharing, not working on a remote PC; these were chosen by measuring
@@ -435,6 +440,15 @@ async function decryptKey(keyEnc) {
   const r = await safeStorage.decryptStringAsync(Buffer.from(keyEnc, 'base64'));
   return typeof r === 'string' ? { text: r, again: false } : { text: r && r.result, again: !!(r && r.shouldReEncrypt) };
 }
+const validKey = (k) => /^[A-Za-z0-9_-]{43}$/.test(k || ''); // 32 bytes, base64url, as newKey() makes them
+// The encrypted key in the config file's text; also found in a file that is not valid JSON.
+const keyEncIn = (body) => (/"keyEnc"\s*:\s*"([A-Za-z0-9+/=]+)"/.exec(body) || [])[1] || '';
+// Linux without a keyring: true. The synchronous calls (an Electron before 45) need to be told then.
+function obscuredOnly() {
+  if (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text') return false;
+  if (!ASYNC_SAFE_STORAGE) safeStorage.setUsePlainTextEncryption(true);
+  return true;
+}
 const encryptionReady = async () => (ASYNC_SAFE_STORAGE ? safeStorage.isAsyncEncryptionAvailable() : safeStorage.isEncryptionAvailable());
 const encryptKey = async (key) => (ASYNC_SAFE_STORAGE ? safeStorage.encryptStringAsync(key) : safeStorage.encryptString(key));
 async function loadConfig() {
@@ -456,7 +470,7 @@ async function loadConfig() {
       const at = /position (\d+)/.exec(e.message), line = at ? body.slice(0, Number(at[1])).split('\n').length : 0;
       problem(`설정 파일이 올바른 JSON 형식이 아닙니다${line ? ` (${line}번째 줄 근처)` : ''}.`, `is not valid JSON${line ? ` (near line ${line})` : ''}`);
       // The key alone can usually still be found, and remote access then goes on as before.
-      keyEnc = (/"keyEnc"\s*:\s*"([A-Za-z0-9+/=]+)"/.exec(body) || [])[1] || '';
+      keyEnc = keyEncIn(body);
     }
   }
   cfg = { ...DEFAULTS, ...saved };
@@ -466,14 +480,11 @@ async function loadConfig() {
   // Linux without a keyring (no GNOME Keyring or KWallet running): Electron can then only obscure
   // the key with a fixed password. The host keeps working that way, says so, and the file is
   // readable by this user only.
-  if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') {
-    if (!ASYNC_SAFE_STORAGE) safeStorage.setUsePlainTextEncryption(true); // the synchronous calls need it there
-    console.warn(`[host] WARNING: no OS keyring (basic_text): the access key in ${cfgPath()} is not encrypted, only obscured; the file is readable by this user only`);
-  }
+  if (obscuredOnly()) console.warn(`[host] WARNING: no OS keyring (basic_text): the access key in ${cfgPath()} is not encrypted, only obscured; the file is readable by this user only`);
   let key = null, again = false;
   if (keyEnc) {
     try { ({ text: key, again } = await decryptKey(keyEnc)); } catch {}
-    if (!/^[A-Za-z0-9_-]{43}$/.test(key || '')) { // 32 bytes, base64url, as newKey() makes them
+    if (!validKey(key)) {
       key = null;
       problem(process.platform === 'win32'
         ? '설정 파일의 접속 키를 이 Windows 계정으로 풀 수 없습니다 (다른 PC에서 옮겨 온 프로필이거나, 관리자가 계정 암호를 초기화한 경우 등).'
@@ -551,6 +562,33 @@ async function askForKey() {
       console.error('[host] saving a new key failed:', e.code || e.message);
     }
   }
+}
+// --show-key: the key on stdout, nothing else there; what went wrong on stderr, marked for the launcher
+// (which shows only those lines of the engine's output). Exit code 0 only with a key.
+async function showKey() {
+  const done = (code, out, err) => {
+    const end = () => app.exit(code); // at once: nothing of the profile (which the host may be using) is written
+    if (out) process.stdout.write(out + '\n', end);
+    else process.stderr.write(`[show-key] ${err}\n`, end);
+  };
+  let body;
+  try { body = fs.readFileSync(cfgPath(), 'utf8').replace(/^﻿/, ''); } catch (e) {
+    return done(1, '', e.code === 'ENOENT' ? `No access key yet (${cfgPath()} is not there): start the host once to make one.`
+      : `${cfgPath()} cannot be read (${e.code || e.message}).`);
+  }
+  let keyEnc = '';
+  try { keyEnc = JSON.parse(body).keyEnc; } catch {}
+  if (typeof keyEnc !== 'string' || !keyEnc) keyEnc = keyEncIn(body);
+  if (!keyEnc) return done(1, '', `${cfgPath()} holds no access key.`);
+  obscuredOnly();
+  // A keyring that would have to ask for its password cannot do so without a display: do not wait forever.
+  const key = await Promise.race([decryptKey(keyEnc).then((r) => r.text, () => null), new Promise((r) => setTimeout(() => r(null), 20000))]);
+  if (!validKey(key)) {
+    return done(1, '', process.platform === 'linux'
+      ? 'The access key cannot be decrypted here. The host keeps it in the desktop\'s keyring when there is one: run this while you are logged in at this PC\'s desktop (the keyring is unlocked then), from a terminal of the same user.'
+      : 'The access key cannot be decrypted with this user account.');
+  }
+  done(0, key);
 }
 
 const builder = require('./build-client');
@@ -685,7 +723,8 @@ function createTray() {
   tray.on('click', showWindow);
 }
 
-if (!ISOLATED && !app.requestSingleInstanceLock()) app.quit();
+if (SHOW_KEY) app.whenReady().then(showKey);
+else if (!ISOLATED && !app.requestSingleInstanceLock()) app.quit();
 else {
   // Started again: after an update restart; while the page waits to be loaded again after a crash, at once.
   app.on('second-instance', () => { if (codeStamp() !== startedStamp) restart(); else { reloadCrashedPage(); showWindow(); } });

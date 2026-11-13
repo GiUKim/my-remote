@@ -3,6 +3,7 @@
 # Connects this PC to the signaling server and makes it reachable with its access key.
 set -euo pipefail
 . "$(dirname "$0")/host/linux-launch.sh"
+[ "${1:-}" = "--show-key" ] && show_key # prints the access key here and ends (for a PC reached over ssh)
 ensure_setup
 check_session
 check_sandbox
