@@ -844,10 +844,19 @@ captured once from PulseAudio (the track arrived; audibility not checked). Not v
 real desktop session (GNOME, KDE, Xfce) with a window manager, a real file manager as the drag source
 or drop target (Nautilus, Dolphin; the clipboard formats were only read back by this program), the
 desktop-icons detection on a real desktop, several monitors (Xvfb's RandR here kept no extra monitor),
-HiDPI scaling, Xwayland, a Korean input method receiving the Hangul key, a Linux client against a
-Windows host or the reverse over a real network, the tray icon, the keyring path (the server had none;
-the fallback warning was seen), `npm install` itself, Ubuntu 23.10+ (the sandbox message). macOS: no
-input backend; the view-only path was not run anywhere.
+HiDPI scaling, Xwayland, a Korean input method receiving the Hangul key, the tray icon on a real desktop,
+the keyring path in the host itself (a throwaway gnome-keyring was tried with a safeStorage harness only),
+`npm install` itself, Ubuntu 23.10+ (the sandbox message). macOS: no input backend; the view-only path
+was not run anywhere.
+
+Verified across the two OSes over the LAN (2026-11-13, Electron 45): a Windows client (this PC, the real
+page in a hidden window, throwaway profile) controlling a Linux host (the server: `--localtest` on Xvfb,
+its local relay tunnelled over ssh, its own client app stopped): a direct connection (host candidates,
+UDP, 1 ms), AV1 by libaom at 60 fps, the offer's `os` ("Ubuntu 22.04.5 LTS"), a pointer move landing on
+the exact pixel computed, a click into a window there, and keys with Shift plus a phone keyboard's text
+with Hangul typed into it in order ("Hi é 한글" and Enter). The other way, a Linux client controlling a
+Windows host, only the picture was measured (the two-machine bench); its input would land on this PC's
+desktop and was not tried.
 
 Verified between two machines on one LAN (see "Performance"): connecting across subnets without STUN,
 AV1 and H.264 decoding on a second machine, the delay and quality figures. Not verified: anything in
