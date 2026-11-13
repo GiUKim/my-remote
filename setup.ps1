@@ -51,6 +51,11 @@ Push-Location $hostDir
 try {
     & (Join-Path $nodeHome 'npm.cmd') install --no-fund --no-audit
     if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
+    # npm install no longer fetches Electron's program itself (seen with Electron 45; it would come at
+    # first start through the npm package); fetch it now (checksums verified by @electron/get), so that
+    # the launchers, which start dist\electron.exe directly, find it.
+    & (Join-Path $nodeHome 'node.exe') 'node_modules\electron\install.js'
+    if ($LASTEXITCODE -ne 0) { throw "Downloading Electron failed with exit code $LASTEXITCODE" }
 } finally { Pop-Location }
 
 $electron = Join-Path $hostDir 'node_modules\electron\dist\electron.exe'

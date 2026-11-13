@@ -35,6 +35,10 @@ done
 
 echo "[setup] npm install (downloads Electron, about 100 MB)"
 (cd "$root/host" && npm install --no-fund --no-audit)
+# npm install no longer fetches Electron's program itself (seen with Electron 45; it would come at
+# first start through the npm package); fetch it now (checksums verified by @electron/get), so that
+# the launchers, which start dist/electron directly, find it.
+(cd "$root/host" && node node_modules/electron/install.js)
 need_electron
 
 if [ "$skip" = 0 ]; then
