@@ -180,7 +180,9 @@ check_sandbox() {
 show_key() {
   [ -x "$electron" ] || fail "My Remote is not set up in this folder yet: run ./start-host.sh on this PC's desktop first."
   check_libs
-  check_sandbox
+  # It opens no window and loads no page, so Chromium's sandbox guards nothing here: where it cannot run
+  # (Ubuntu 23.10 and later without its helper), this runs without it instead of stopping.
+  sandbox_ok || sandbox_args=(--no-sandbox)
   local bus="${DBUS_SESSION_BUS_ADDRESS:-}" run="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
   [ -z "$bus" ] && [ -S "$run/bus" ] && bus="unix:path=$run/bus"
   # A key that is only obscured ("v10", its encrypted form starts with "djEw") needs no keyring. Electron

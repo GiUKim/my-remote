@@ -367,7 +367,8 @@ the client app instead).
   - `--show-key` (`showKey` in `main.js`, `show_key` in the launcher) is for a host reached over ssh: the
     key goes to stdout, reasons go to stderr marked `[show-key]` (the launcher shows only those lines of
     Electron's output). It opens no window, takes no lock and needs no display (`--ozone-platform=headless`;
-    DISPLAY is unset so that an ssh client's X server is not asked). Setting `DBUS_SESSION_BUS_ADDRESS`
+    DISPLAY is unset so that an ssh client's X server is not asked), and runs without Chromium's sandbox
+    where that cannot run (Ubuntu 23.10+ without the helper): it loads no page. Setting `DBUS_SESSION_BUS_ADDRESS`
     from `main.js` is too late (measured), so the launcher reads the stored key's scheme (`"keyEnc":
     "djEw` is 'v10') and gives Electron no bus for such a key; a 'v11' key needs the user's bus and an
     unlocked keyring. Checked with made-up keys in temporary folders: 'v10' under the user's real bus in
@@ -939,7 +940,12 @@ captured once from PulseAudio (the track arrived; audibility not checked). Nativ
 (`platform/x11capture.js`, 2026-11-13, Electron 45, the same server and Xvfb): the whole self-test with
 `--input-check`, `--clip-check` and `--client-app-check` runs on it (49 checks, ALL PASS), among them
 "the native capture has no pointer in the video" (0 pixels under the pointer changed when it moved away).
-Not verified on Linux: a
+Ubuntu 24.04 (another server, the first run there, Electron 45 without Chromium's sandbox, which 24.04
+restricts): the self-test with `--input-check` and `--clip-check` on Xvfb, 48 checks, ALL PASS; and the
+plain self-test on a virtual desktop as a person would use one on a PC without a monitor (Xvfb, GNOME
+Shell 46 started directly with `--x11 --mode=ubuntu` on a session bus of its own, since GNOME 45's
+gnome-session has no `--builtin` and runs only inside a systemd login; the host without a session bus,
+so that the locked keyring is never asked), 32 checks, ALL PASS. Not verified on Linux: a
 real desktop session (GNOME, KDE, Xfce) with a window manager, a real file manager as the drag source
 or drop target (Nautilus, Dolphin; the clipboard formats were only read back by this program), the
 desktop-icons detection on a real desktop, several monitors (Xvfb's RandR here kept no extra monitor),
