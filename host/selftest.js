@@ -668,6 +668,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         const a = path.join(cdir, 'copied-a.bin'), b = path.join(cdir, 'copied-b.txt');
         fs.writeFileSync(a, require('crypto').randomBytes(200000)); fs.writeFileSync(b, 'copied on the host\n');
         const shaOf = (f) => require('crypto').createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+        let idir = null;
         try {
           await js(`window.__rd.keepFiles = true; window.__rd.files = []; 1`);
           const notes0 = (await state()).xfer.clipNotes;
@@ -679,10 +680,33 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
           check('files copied on the host are announced and fetched when the client leaves its windows', noted && got
             && files.some((f) => f.name === 'copied-a.bin' && f.sha === shaOf(a)) && files.some((f) => f.name === 'copied-b.txt' && f.sha === shaOf(b)),
             `announced ${!!noted}, received ${files.map((f) => f.name).join(', ') || 'nothing'}`);
+          // Files the client sent itself (a paste: they lie in the host's inbox) are not announced back.
+          fs.mkdirSync(path.join(os.tmpdir(), 'my-remote-in'), { recursive: true });
+          idir = fs.mkdtempSync(path.join(os.tmpdir(), 'my-remote-in', 'selftest-'));
+          const c = path.join(idir, 'from-client.txt');
+          fs.writeFileSync(c, 'sent by the client\n');
+          const notes1 = (await state()).xfer.clipNotes;
+          await input.setClipboardFiles([c]);
+          const [echoed] = await until((x) => x.xfer.clipNotes > notes1, 3);
+          check('files the client sent are not announced back to it', !echoed);
+          // Text from the client is on the clipboard before the input that follows it is injected: the
+          // paste shortcut comes right after the text, and since Electron 44 a write completes later.
+          if (process.platform === 'win32') {
+            const seen = [], handle = input.handle;
+            input.handle = (t) => { if (/"t":"kd"/.test(t)) seen.push(input.clipSeq()); return handle(t); };
+            try {
+              const seq0 = input.clipSeq();
+              await hostWin.webContents.executeJavaScript(`api.writeClip('self-test paste'); api.input(JSON.stringify({ t: 'kd', c: 'F24', k: 'F24' })); api.input(JSON.stringify({ t: 'ku', c: 'F24', k: 'F24' })); 1`);
+              await sleep(1200);
+              await js(`pendingClip = null; 1`); // the host passed the text on: not to be written here later
+              check('text from the client is on the clipboard before the next input is injected', seen.length === 1 && seen[0] !== seq0, `clipboard change count ${seq0} before, ${seen.join(', ') || 'no key seen'} at the key`);
+            } finally { input.handle = handle; }
+          }
         } finally {
           await js(`window.__rd.keepFiles = false; 1`);
           await restoreClipboard(keep);
           try { fs.rmSync(cdir, { recursive: true, force: true }); } catch {}
+          if (idir) try { fs.rmSync(idir, { recursive: true, force: true }); } catch {}
         }
       } else info('copied-files check skipped: the clipboard holds more than text');
     }

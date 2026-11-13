@@ -231,8 +231,13 @@ async function offerPaths(paths) {
 let clipFiles = null; // { seq, paths }
 // The sizes are looked at asynchronously: files on a network share can take seconds to answer, and the
 // client's input waits on this thread meanwhile. Reading the list itself waits for the clipboard's owner.
+// Files the client sent (its paste, or a drop nothing took, which putDone puts on this clipboard) are
+// not announced back: it has them already, and fetching them would replace its own clipboard with
+// copies of them from a staging folder.
+const fromClient = (p) => { const r = path.relative(inbox(), p); return !!r && !r.startsWith('..') && !path.isAbsolute(r); };
 async function clipFilesNow(seq) {
   const paths = await timedAsync('clip-files', () => input.clipboardFiles());
+  if (paths.length && paths.every(fromClient)) { clipFiles = null; return { own: true }; }
   clipFiles = paths.length ? { seq, paths } : null;
   if (!clipFiles) return null;
   let bytes = 0, dirs = 0;
@@ -344,11 +349,30 @@ async function putDone(gid, at, mode) {
   return { how: 'clipboard', n };
 }
 
+// The client's input, injected here (on this thread, as the client sends it). Text from the client goes
+// onto the clipboard just before the paste shortcut that uses it (the page holds the key back until the
+// browser's paste event has given it the text), and since Electron 44 a clipboard write completes
+// asynchronously: input that arrives meanwhile waits for it, or Ctrl+V could paste what was there before.
+let clipWriting = 0, clipWrites = 0; // the write the input waits for (0: none)
+let inputWaiting = [];
+function injectInput(text) {
+  timed('input ' + ((/"t":"(\w{1,8})"/.exec(String(text)) || [])[1] || '?'), () => { try { input.handle(String(text)); } catch (e) { console.error('input', e); } });
+}
+function releaseInput(id) {
+  if (clipWriting !== id) return; // a later write: the input waits for that one
+  clipWriting = 0;
+  const q = inputWaiting;
+  inputWaiting = [];
+  for (const t of q) injectInput(t);
+}
+
 // What this process did for the host page's session, undone. The page does this itself when a
 // session ends (teardown in host.js), but not when it goes away instead: its process crashed (it runs
 // the native capturer), or it reloads (after a new key). Without this, keys and buttons held for the
 // client stay down, the cursors stay hidden and the tray keeps saying someone is connected.
 function pageGone() {
+  clipWriting = 0; // input of the page that went away is not injected after the reset below
+  inputWaiting = [];
   try { input.reset(); } catch (e) { console.error('input reset', e); }
   try { setCursorsHidden(false); } catch (e) { console.error('cursor restore', e); }
   closeDragFiles(null);
@@ -672,7 +696,7 @@ else {
       for (const k of keys) { o[k] = { n: slow[k].n, ms: Math.round(slow[k].ms), max: Math.round(slow[k].max) }; delete slow[k]; }
       return o;
     };
-    ipcMain.on('input', (_e, text) => timed('input ' + ((/"t":"(\w{1,8})"/.exec(String(text)) || [])[1] || '?'), () => { try { input.handle(String(text)); } catch (e) { console.error('input', e); } }));
+    ipcMain.on('input', (_e, text) => { if (clipWriting) inputWaiting.push(text); else injectInput(text); });
     ipcMain.on('log', (_e, text) => console.log('[host]', text));
     ipcMain.on('diag', (_e, entry) => {
       const s = takeSlow(), r = input.takeReleased();
@@ -730,13 +754,18 @@ else {
       const seq = input.clipSeq();
       if (seq === lastSeq) return { seq };
       const files = await clipFilesNow(seq);
-      if (files) return { seq, files };
+      if (files) return files.own ? { seq } : { seq, files };
       if (input.clipboardPrivate()) return { seq }; // a password manager's: not passed on to the client
       const text = String((await timedAsync('clip-read', () => clipboard.readText())) || '');
       return { seq, text: text.length <= CLIP_MAX ? text : '' }; // longer text is not sent to the client: not copied to the page either
     });
     ipcMain.handle('clip-get', async (_e, seq) => { try { return await clipGet(Number(seq)); } catch (e) { console.error('clip get', e.message); return { kind: 'none', why: 'error' }; } });
-    ipcMain.on('clip-write', (_e, text) => { if (cfg.clipboard && typeof text === 'string' && text.length <= CLIP_MAX) timedAsync('clip-write', () => clipboard.writeText(text)).catch((e) => console.error('clip write', e.message)); });
+    ipcMain.on('clip-write', (_e, text) => {
+      if (!cfg.clipboard || typeof text !== 'string' || text.length > CLIP_MAX) return;
+      const id = (clipWriting = ++clipWrites);
+      setTimeout(() => releaseInput(id), 500); // the input never waits longer than that
+      timedAsync('clip-write', () => clipboard.writeText(text)).catch((e) => console.error('clip write', e.message)).finally(() => releaseInput(id));
+    });
     ipcMain.on('session', (_e, live) => {
       setTray(!!live);
       if (live && !SELFTEST && !BENCH && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: '원격 접속이 시작되었습니다.' }).show();
