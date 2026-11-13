@@ -1,4 +1,139 @@
-# My Remote
+<h1 align="center">
+  <img src="docs/img/banner.svg" alt="My Remote" width="880">
+</h1>
+
+<p align="center">
+  <b>다른 곳에 있는 내 PC를, 그 앞에 앉은 것처럼 쓰는 원격 데스크톱</b><br>
+  <sub>🔗 P2P 직접 연결 &nbsp;·&nbsp; 🔒 종단간 암호화 &nbsp;·&nbsp; 🖥️ 다중 모니터 &nbsp;·&nbsp; 📂 파일 끌어다 놓기 &nbsp;·&nbsp; 📋 클립보드 공유 &nbsp;·&nbsp; 🚪 포트 개방 불필요</sub>
+</p>
+
+<p align="center">
+  <a href="https://github.com/GiUKim/my-remote-releases/releases/latest/download/MyRemote-Windows-x64.zip"><img src="docs/img/download-windows.svg" alt="Windows용 내려받기" width="280"></a>
+  &nbsp;&nbsp;
+  <a href="https://github.com/GiUKim/my-remote-releases/releases/latest/download/MyRemote-Linux-x64.tar.gz"><img src="docs/img/download-linux.svg" alt="Linux용 내려받기" width="280"></a>
+</p>
+
+<p align="center">
+  <sub>⊞ Windows 10 · 11 (64비트) &nbsp;|&nbsp; 🐧 Linux X11 세션 (Ubuntu 22.04 · 24.04) &nbsp;|&nbsp; 🍎 macOS용은 아직 없습니다 &nbsp;|&nbsp; <a href="https://github.com/GiUKim/my-remote-releases/releases">모든 버전</a></sub>
+</p>
+
+## 🚀 3단계로 시작
+
+<p align="center">
+  <img src="docs/img/steps.svg" alt="1 두 PC에 설치, 2 호스트에서 키 복사, 3 클라이언트에서 접속" width="880">
+</p>
+
+| | 할 일 | 방법 |
+|:-:|---|---|
+| 1️⃣ | **두 PC에 설치** | 내려받아 압축을 풀고 실행합니다. Windows `My Remote.exe` · Linux `./my-remote.sh` |
+| 2️⃣ | **호스트에서 키 복사** | 조종받을 PC에서 `호스트 시작` → 창의 `키 복사` → 비밀번호 관리자에 보관 |
+| 3️⃣ | **클라이언트에서 접속** | 내가 앉은 PC에서 `클라이언트 시작` → 키 붙여넣기 → `접속` |
+
+> 💡 **앱은 하나입니다.** 두 PC에 같은 앱을 설치하고, 처음 실행할 때 **호스트**(조종받을 PC)인지 **클라이언트**(내가 앉은 PC)인지만 고릅니다.
+>
+> 🛡️ Windows에서 "Windows의 PC 보호" 창이 뜨면 `추가 정보` → `실행`을 누르세요.
+
+## ✨ 한눈에 보는 기능
+
+<table>
+  <tr>
+    <td align="center" valign="top" width="33%">
+      <img src="docs/img/feat-monitors.svg" alt="호스트 모니터와 이 PC의 모니터를 짝지은 그림" width="270"><br>
+      <b>🖥️ 모니터마다 한 화면</b><br>
+      <sub>호스트 모니터를 내 모니터에 하나씩 펼칩니다.<br>짝은 끌어다 놓아 바꿉니다.</sub>
+    </td>
+    <td align="center" valign="top" width="33%">
+      <img src="docs/img/feat-drag.svg" alt="원격 화면과 이 PC 사이로 파일이 오가는 그림" width="270"><br>
+      <b>📂 파일 끌어다 놓기</b><br>
+      <sub>원격 화면에서 내 PC로, 내 PC에서 원격 화면으로.<br>폴더째로도 됩니다.</sub>
+    </td>
+    <td align="center" valign="top" width="33%">
+      <img src="docs/img/feat-clipboard.svg" alt="두 PC가 클립보드 하나를 함께 쓰는 그림" width="270"><br>
+      <b>📋 하나의 클립보드</b><br>
+      <sub>한쪽에서 복사해 다른 쪽에 붙여넣습니다.<br>글자도, 파일도.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <img src="docs/img/feat-fullscreen.svg" alt="전체화면에서는 호스트가, 창 모드에서는 이 PC가 시스템 키를 받는 그림" width="270"><br>
+      <b>⌨️ 전체화면은 호스트, 창은 내 PC</b><br>
+      <sub>전체화면에서는 <kbd>Alt</kbd>+<kbd>Tab</kbd>, <kbd>Win</kbd> 키도<br>호스트로 갑니다.</sub>
+    </td>
+    <td align="center" valign="top">
+      <img src="docs/img/feat-phone.svg" alt="휴대폰에서 손가락으로 조작하는 그림" width="270"><br>
+      <b>📱 휴대폰·태블릿</b> <sub>(시험 단계)</sub><br>
+      <sub>탭, 길게 누르기, 두 손가락 확대로<br>조작합니다.</sub>
+    </td>
+    <td align="center" valign="top">
+      <img src="docs/img/feat-update.svg" alt="새 버전을 알리는 카드와 서명 확인, 되돌림 그림" width="270"><br>
+      <b>🔄 스스로 업데이트</b><br>
+      <sub>새 버전을 알려 줍니다. 시작되지 않으면<br>이전 버전으로 돌아갑니다.</sub>
+    </td>
+  </tr>
+</table>
+
+## ⌨️ 단축키
+
+| | 키 | 동작 |
+|:-:|---|---|
+| ↔️ | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd> | 이전 / 다음 모니터 |
+| 🔢 | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd> | 그 번호의 모니터 |
+| 🗺️ | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>↑</kbd> 또는 <kbd>0</kbd> | 전체 보기 (모든 모니터를 한 창에) |
+| 🔍 | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>↓</kbd> | 화면에 맞춤 ↔ 원본 크기(1:1) |
+| 🖥️ | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Enter</kbd> | 전체화면 켜기 / 끄기 |
+| 📋 | <kbd>Ctrl</kbd>+<kbd>C</kbd> → <kbd>Ctrl</kbd>+<kbd>V</kbd> | 한 PC에서 복사, 다른 PC에서 붙여넣기 (글자·파일) |
+
+<sub><kbd>Ctrl</kbd>+<kbd>Alt</kbd> 조합은 호스트로 가지 않습니다. 호스트에서 같은 조합을 써야 하면 툴바의 <code>단축키</code>에서 끌 수 있습니다.</sub>
+
+**어느 PC가 키를 받나요?**
+
+| 키 | 🖥️ 전체화면 | 🔲 창 모드 |
+|---|:-:|:-:|
+| <kbd>Win</kbd> · <kbd>Alt</kbd>+<kbd>Tab</kbd> · <kbd>Alt</kbd>+<kbd>F4</kbd> · <kbd>PrtSc</kbd> | 호스트 | 이 PC |
+| 그 밖의 키 (글자, 방향키, <kbd>Ctrl</kbd>+<kbd>C</kbd> …) | 호스트 | 호스트 |
+| <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Del</kbd> · <kbd>Win</kbd>+<kbd>L</kbd> | 이 PC | 이 PC |
+
+## 🖱️ 마우스·터치 동작
+
+| | 이렇게 하면 | 이렇게 됩니다 |
+|:-:|---|---|
+| 📤 | 원격 화면 속 파일·글자를 끌어 **창 밖**에 놓기 (창 모드) | 놓은 곳(이 PC)으로 가져옵니다 |
+| ⚡ | <kbd>Ctrl</kbd>을 누른 채 끌고 나가기 | 기다리지 않고 바로 이 PC 쪽으로 넘어옵니다 |
+| 📥 | 이 PC의 파일·폴더를 **원격 화면 위**에 놓기 | 호스트의 그 자리에 놓입니다 |
+| ↔️ | 원격 화면 속 창을 끌어 가장자리 너머로 | 호스트의 옆 모니터로 넘어갑니다 |
+| 🧩 | `모니터 배치`에서 모니터 그림 끌어다 놓기 | 자리 바꾸기 · <kbd>Ctrl</kbd>+끌기는 나란히 함께 · 클릭은 끄기/켜기 |
+
+**📱 손가락으로** <sub>(휴대폰·태블릿, 시험 단계)</sub>
+
+| | 손가락 | 결과 |
+|:-:|---|---|
+| 👆 | 탭 | 클릭 |
+| ⏳ | 길게 누르기 | 우클릭 |
+| ✊ | 잠깐 누르고 있다가 끌기 | 드래그 (글자 선택, 창 옮기기) |
+| ↕️ | 쓸기 | 스크롤 |
+| 🤏 | 두 손가락 벌리기·오므리기 | 확대·축소, 화면 이동 |
+| ⌨️ | 툴바의 `⌨ 키보드` · `특수키` | 글자 입력 · Esc, Tab, Ctrl, Alt, 방향키 등 |
+
+## 🔄 업데이트
+
+- 🔔 **일반 업데이트** — 새 버전을 알려 주고, `지금 업데이트`를 눌러야 설치합니다.
+- 🚨 **중요 업데이트** — 심각한 문제를 고친 버전은 묻지 않고 설치합니다. 호스트는 원격 접속이 없을 때 다시 시작합니다.
+- ↩️ **되돌리기** — 새 버전이 시작되지 않으면 스스로 이전 버전으로 돌아갑니다.
+
+## ⚠️ 알아 둘 점
+
+- 🔒 **잠금 화면과 권한 확인(UAC) 창은 보이지도 조작되지도 않습니다.** 호스트 PC는 잠그지 말고, 절전 모드를 꺼 두세요.
+- 🏢 **PC의 화면과 입력을 통째로 넘기는 도구입니다.** 회사 PC라면 보안 정책에서 허용되는지 먼저 확인하세요.
+- 🔑 **접속 키가 유일한 인증 수단입니다.** 비밀번호 관리자에 보관하고, 노출이 의심되면 호스트 창의 `새 키 발급`을 누르세요.
+- 🐧 **Linux는 X11 세션에서만 됩니다**(Wayland 미지원). macOS용은 아직 없습니다.
+- 🧪 개인이 만든 프로그램이며 **보안 감사를 받지 않았습니다.**
+
+## 📚 자세히
+
+<sub>아래는 접어 둔 설명서입니다. 제목을 누르면 펼쳐집니다.</sub>
+
+<details>
+<summary>📖 <b>소개 · 먼저 읽어 주세요</b></summary>
 
 개인용 P2P 원격 데스크톱입니다. 회사 PC(호스트)의 화면을 집 PC(클라이언트)의 브라우저에서 보고 조작합니다.
 Chrome 원격 데스크톱과 같은 기술(WebRTC)을 쓰되, **멀티 모니터를 모니터별 창으로 펼쳐 쓰는 것**에 맞췄습니다.
@@ -12,14 +147,21 @@ Chrome 원격 데스크톱과 같은 기술(WebRTC)을 쓰되, **멀티 모니�
 > - 개인이 만든 코드이며 **보안 감사를 받지 않았습니다.**
 > - **화면이 잠기면 쓸 수 없습니다.** 잠금 화면과 UAC 창은 보이지도 조작되지도 않습니다. ([한계](#한계) 참고)
 
-## 앱으로 설치하기 (Windows, Linux)
+</details>
+
+**설치와 업데이트**
+
+<details>
+<summary>📦 <b>앱으로 설치하기 (Windows, Linux)</b> — 받는 파일, 처음 실행, 바로가기</summary>
+
+### 앱으로 설치하기 (Windows, Linux)
 
 소스 폴더와 설치 스크립트 없이, 내려받은 묶음을 풀어 바로 실행하는 **설치형 앱**입니다. 호스트와 클라이언트가 한 앱에 들어 있고, 새 버전은 앱이 알아서 확인합니다.
 
 | 운영체제 | 받는 파일 | 실행 |
 |---|---|---|
-| Windows 10/11 (64비트) | `MyRemote-<버전>-win32-x64.zip` | 원하는 곳에 풀고 `My Remote.exe` 실행 |
-| Linux (X11 세션, Ubuntu 22.04·24.04에서 시험) | `MyRemote-<버전>-linux-x64.tar.gz` | 원하는 곳에 풀고 `./my-remote.sh` 실행 |
+| Windows 10/11 (64비트) | `MyRemote-Windows-x64.zip` | 원하는 곳에 풀고 `My Remote.exe` 실행 |
+| Linux (X11 세션, Ubuntu 22.04·24.04에서 시험) | `MyRemote-Linux-x64.tar.gz` | 원하는 곳에 풀고 `./my-remote.sh` 실행 |
 | macOS | 아직 없습니다 | Apple 개발자 서명이 있어야 실행할 수 있어 만들지 못했습니다 |
 
 1. 처음 실행하면 **호스트**(이 PC를 원격으로 조종받기)로 쓸지 **클라이언트**(다른 PC에 접속하기)로 쓸지 묻습니다. "바로가기 만들기"를 켜 두면 시작 메뉴(Linux는 앱 메뉴)에 `My Remote 호스트`와 `My Remote 클라이언트`가 생기고, 다음부터는 그것을 누르면 됩니다.
@@ -27,7 +169,12 @@ Chrome 원격 데스크톱과 같은 기술(WebRTC)을 쓰되, **멀티 모니�
 3. Windows에서 처음 실행할 때 "Windows의 PC 보호" 창이 뜨면 "추가 정보 → 실행"을 누릅니다. 아직 코드 서명 인증서가 없어서 나오는 경고입니다.
 4. 사용법은 아래 [사용 방법](#사용-방법)과 같습니다. 소스 폴더로 쓰던 PC에 앱을 설치해도 접속 키는 그대로 이어집니다(같은 설정 폴더를 씁니다).
 
-### 업데이트
+</details>
+
+<details>
+<summary>🔄 <b>업데이트</b> — 일반·중요 업데이트, 서명 확인, 되돌리기</summary>
+
+#### 업데이트
 
 앱은 켜져 있는 동안 인터넷이 되면 새 버전이 있는지 확인합니다(시작 20초 뒤, 그 뒤로 6시간마다).
 
@@ -43,9 +190,14 @@ Chrome 원격 데스크톱과 같은 기술(WebRTC)을 쓰되, **멀티 모니�
 - 버전은 호스트 창 제목 옆에 `v0.3.0`처럼 보입니다. 트레이 메뉴의 `업데이트 확인`으로 바로 확인할 수 있습니다.
 - 아래 "빠른 시작"처럼 **소스 폴더에서 실행하는 경우에는 자동 업데이트가 없습니다.** `git pull` 뒤 설치 스크립트를 다시 실행합니다.
 
-## 빠른 시작 (소스 폴더에서 실행)
+</details>
 
-### Claude Code를 쓰는 경우
+<details>
+<summary>🧰 <b>소스 폴더에서 실행하기</b> — git clone, setup.ps1 (자동 업데이트 없음)</summary>
+
+### 빠른 시작 (소스 폴더에서 실행)
+
+#### Claude Code를 쓰는 경우
 
 이 저장소를 클론한 폴더에서 Claude Code를 열고 이렇게 말하면 됩니다.
 
@@ -53,7 +205,7 @@ Chrome 원격 데스크톱과 같은 기술(WebRTC)을 쓰되, **멀티 모니�
 이 저장소의 CLAUDE.md를 읽고 호스트 셋업을 진행해줘
 ```
 
-### 직접 하는 경우
+#### 직접 하는 경우
 
 호스트로 쓸 PC에서:
 
@@ -71,9 +223,16 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 
 마지막에 `[selftest] ALL PASS`가 나오면 준비가 끝난 것입니다. Linux에서는 zip을 풀고 `./start-host.sh`만 실행하면 처음에 알아서 설치합니다([Linux](#linux) 참고).
 
-## 사용 방법
+</details>
 
-### 호스트 PC (원격으로 조작될 PC)
+**사용 방법**
+
+<details>
+<summary>🖥️ <b>호스트 PC 사용법</b> — 켜기, 키 복사, 트레이</summary>
+
+### 사용 방법
+
+#### 호스트 PC (원격으로 조작될 PC)
 
 1. `start-host.bat`을 실행합니다. 처음에는 Windows 방화벽 팝업이 뜰 수 있습니다.
 2. 창에 초록색 점과 "대기 중"이 보이면 정상입니다.
@@ -82,7 +241,12 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 
 창을 닫아도 트레이에 남아 계속 동작합니다. 완전히 끄려면 트레이 아이콘 우클릭 → `종료`.
 
-### 클라이언트 PC (조작하는 쪽)
+</details>
+
+<details>
+<summary>💻 <b>클라이언트 PC 사용법</b> — 클라이언트 앱과 브라우저, 기능 전체 표</summary>
+
+#### 클라이언트 PC (조작하는 쪽)
 
 두 가지 방법이 있습니다. 화면 내용은 어느 쪽이든 호스트에서 자동으로 받아오므로 같습니다.
 
@@ -136,7 +300,12 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 
 `Ctrl+Alt` 단축키는 호스트로 전달되지 않습니다. 호스트의 프로그램에서 같은 조합이 필요하면 툴바의 `단축키`에서 끌 수 있습니다.
 
-### 전체화면과 창 모드
+</details>
+
+<details>
+<summary>⌨️ <b>전체화면과 창 모드</b> — 어떤 키가 어느 PC로 가는지</summary>
+
+#### 전체화면과 창 모드
 
 원칙은 하나입니다. **전체화면은 호스트 PC 앞에 앉은 것**, **창 모드는 이 PC에서 프로그램 하나를 쓰는 것**입니다.
 
@@ -148,7 +317,12 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 
 `Ctrl+Alt+Del`과 `Win+L`은 Windows가 막아 두어 전체화면에서도 이 PC에서 동작합니다. 전체화면에서 시스템 키를 잡는 것은 브라우저(Chrome·Edge·클라이언트 앱)의 키보드 잠금 기능이 해 줍니다.
 
-### 모니터 배치
+</details>
+
+<details>
+<summary>🧩 <b>모니터 배치</b> — 끌어다 놓기 규칙</summary>
+
+#### 모니터 배치
 
 창 모드(전체화면이 아닐 때)의 툴바에서 `모니터 배치`를 누르면 설정창이 열립니다. 위쪽에는 호스트 PC의 모니터가 번호·해상도와 함께 실제 화면이 나오는 모니터 그림으로, 아래쪽에는 이 PC의 모니터가 보입니다. "호스트 PC"와 "이 PC" 옆에는 각 PC의 OS가 로고와 이름(예: Windows 10, Ubuntu 22.04)으로 나옵니다. 같은 색과 선으로 이어진 것끼리 짝입니다. 꺼진(보내지 않는) 호스트 모니터는 회색으로 표시됩니다.
 
@@ -162,7 +336,12 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 
 끌고 가는 동안 놓았을 때의 결과가 미리 보입니다. 바꾼 배치는 바로 적용되고, 모니터 개수 조합별로 기억되어 다음에 `모니터에 펼치기`를 누르면 그대로 펼쳐집니다. 이 PC에 모니터가 여러 개인데 아직 펼치지 않았다면, 설정창을 여는 순간 호스트 1, 2, …번을 이 PC의 1, 2, …번에 띄운 상태에서 시작합니다. 브라우저에서는 다른 모니터에 창을 띄울 때 팝업과 창 관리 권한이 필요하고, 클라이언트 앱에서는 묻지 않습니다.
 
-### 호스트에서 끌어내기
+</details>
+
+<details>
+<summary>📤 <b>호스트에서 끌어내기</b> — 호스트 → 이 PC</summary>
+
+#### 호스트에서 끌어내기
 
 창 모드(전체화면이 아닐 때)에서 원격 화면 안의 파일(탐색기, Nautilus 등)이나 선택해 둔 글자를 마우스로 끌어 창 밖으로 가지고 나와 놓으면, 놓은 곳으로 가져옵니다. 창 밖으로 나오는 순간 "놓으면 이 PC로 복사됩니다"가 뜨고, 원격 화면 속 끌기 아이콘은 창 가장자리에서 기다립니다. 클라이언트 앱에서는 창 밖에서도 포인터 옆에 가져오는 것(리눅스 호스트면 파일 이름과 개수, Windows 호스트면 "끌어온 항목")이 따라다니며 표시되고, 놓으면 사라집니다. 브라우저에서는 창 밖에 표시를 그릴 수 없어 커서만 보이지만, 놓으면 가져옵니다. 클라이언트 앱에서는 원격 창 위에 겹쳐 있는 이 PC의 다른 프로그램 창에 놓아도 창 밖으로 칩니다.
 
@@ -185,7 +364,12 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 
 탐색기는 끌기를 시작하기까지 0.3~0.5초가 걸립니다. 그 전에 창 밖으로 나가거나 바로 놓아도 되도록, 버튼을 누른 채 창 밖으로 나가면 호스트의 포인터는 그 자리에서 기다리고 클라이언트는 호스트에 끌기 여부를 바로 묻습니다(최대 0.7초). 끌기가 시작되면 가져오고, 아니면(창 이동, 글자 선택 등) 기다린 자리에서 버튼을 놓거나, 0.7초 넘게 밖에 있으면 화면 가장자리 너머로 계속 움직입니다. 가져오지 못하면 이유가 표시됩니다.
 
-### 호스트로 끌어넣기·붙여넣기
+</details>
+
+<details>
+<summary>📥 <b>호스트로 끌어넣기·붙여넣기</b> — 이 PC → 호스트</summary>
+
+#### 호스트로 끌어넣기·붙여넣기
 
 이 PC의 파일이나 폴더를 원격 화면 위로 끌어 와서 놓으면, 호스트로 보낸 뒤 **호스트에서 그 자리에 직접 끌어다 놓은 것과 똑같이** 놓습니다. 탐색기 폴더 창이면 그 폴더에, 폴더 아이콘 위면 그 폴더 안에, 바탕화면이면 바탕화면에, 메일·메신저 창이면 첨부로 들어갑니다. 같은 이름이 있으면 탐색기가 바꿀지 물어봅니다. 끌고 있는 동안 호스트의 포인터가 따라 움직여 어디에 놓일지 보입니다. 브라우저에서도 됩니다.
 
@@ -193,7 +377,12 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 - 이 PC에서 파일을 복사(Ctrl+C)하고 원격 화면에서 `Ctrl+V`를 누르면, 호스트의 클립보드로 보낸 뒤 호스트에서 붙여넣기를 눌러 줍니다(폴더 붙여넣기는 아직 안 됩니다. 폴더는 끌어 놓으세요).
 - 한 번에 파일 5000개·합계 2GB까지입니다. 받은 파일은 호스트의 임시 폴더를 거쳐 가고, 하루 지나면 지워집니다.
 
-### 호스트에서 복사 → 이 PC에서 붙여넣기 (클라이언트 앱)
+</details>
+
+<details>
+<summary>📋 <b>호스트에서 복사 → 이 PC에서 붙여넣기</b> (클라이언트 앱)</summary>
+
+#### 호스트에서 복사 → 이 PC에서 붙여넣기 (클라이언트 앱)
 
 창을 줄이지 않고도 호스트의 파일을 이 PC로 옮길 수 있습니다. 원격 화면 안에서 파일이나 폴더를 복사(`Ctrl+C`)한 뒤, 이 PC의 다른 프로그램(바탕화면, 탐색기 등)으로 가서 붙여넣기(`Ctrl+V`) 하면 됩니다.
 
@@ -201,7 +390,12 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 - 받는 동안에는 원격 창에 진행 상황이 표시됩니다. 큰 파일은 다 받은 뒤에 붙여넣으세요.
 - 512MB가 넘는 묶음은 자동으로 가져오지 않습니다(끌어내기로 가져오세요). 브라우저에서는 이 기능이 없습니다.
 
-### 모니터 개수와 해상도가 다를 때
+</details>
+
+<details>
+<summary>📐 <b>모니터 개수와 해상도가 다를 때</b></summary>
+
+#### 모니터 개수와 해상도가 다를 때
 
 호스트 모니터가 N개, 이 PC의 모니터가 M개일 때 이렇게 동작합니다.
 
@@ -215,7 +409,12 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 | 화면 비율이 다름 | 늘이지 않고 비율을 유지합니다(남는 부분은 검은 여백) |
 | 모니터마다 해상도가 다름 | 실제로 보내는 화소 수에 비례해 비트레이트를 배분합니다 |
 
-### 휴대폰·태블릿에서 (시험 단계)
+</details>
+
+<details>
+<summary>📱 <b>휴대폰·태블릿에서</b> (시험 단계)</summary>
+
+#### 휴대폰·태블릿에서 (시험 단계)
 
 클라이언트 화면이 손가락 조작을 알아듣습니다. 휴대폰 브라우저(Chrome, Safari)에서 `my-remote-client.html`을 열어 접속하면, 휴대폰에 맞는 툴바로 바뀝니다.
 
@@ -233,12 +432,24 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 
 아직 실제 휴대폰에서는 시험하지 않았습니다(자체 테스트에서 손가락 동작을 흉내 내어 확인). 휴대폰은 내려받은 HTML 파일을 열기 어렵기 때문에(특히 iPhone), `my-remote-client.html`을 휴대폰에서 여는 방법은 따로 정해야 합니다. 호스트가 Windows일 때만 휴대폰 키보드의 글자 입력이 됩니다.
 
-### 이 PC에서만 체험하기
+</details>
+
+<details>
+<summary>🧪 <b>이 PC에서만 체험하기</b></summary>
+
+#### 이 PC에서만 체험하기
 
 `local-test.bat`을 실행하면 호스트와 보기 전용 클라이언트가 같은 PC에서 뜹니다.
 임시 키와 PC 내부 중계만 쓰며 인터넷과 통신하지 않습니다.
 
-## Linux
+</details>
+
+**플랫폼 · 원리 · 보안**
+
+<details>
+<summary>🐧 <b>Linux</b> — 설치, SSH로 관리하는 PC, Windows와 다른 점</summary>
+
+### Linux
 
 호스트와 클라이언트 앱은 Linux의 **X11 세션**에서도 동작합니다(Ubuntu 22.04와 24.04 대상, 22.04에서 시험).
 
@@ -297,7 +508,12 @@ Windows와 다른 점:
 
 검증된 범위: 가상 디스플레이(Xvfb, 모니터 1개, 창 관리자 없음) 위에서 자체 테스트 전체와 실제 입력 시험(포인터 위치, 키 133개, 마우스 버튼 5개와 휠, 다른 프로그램에서 글자와 파일 끌어내기, 클라이언트 앱의 놓기)을 통과했습니다. 실제 데스크톱(GNOME, KDE 등), 모니터 여러 개, 화면 배율, 실제 파일 관리자와의 끌어 놓기·붙여넣기, 한글 입력기, 서로 다른 PC 사이의 실사용은 검증되지 않았습니다.
 
-## 동작 원리
+</details>
+
+<details>
+<summary>🔗 <b>동작 원리</b></summary>
+
+### 동작 원리
 
 ```
 호스트 PC ──(암호화된 연결 협상 메시지)──▶ 중개 서버(ntfy.sh) ◀── 클라이언트 PC
@@ -309,7 +525,12 @@ Windows와 다른 점:
 - 연결 협상 메시지는 접속 키에서 파생한 키로 AES-256-GCM 암호화됩니다. 중개 서버는 내용을 볼 수 없고, 키가 없으면 중간자 공격도 성립하지 않습니다.
 - 클라이언트 파일은 작은 로더입니다. 키를 입력하면 같은 암호화 채널로 호스트에게 현재 버전을 물어, 다르면 새 클라이언트 화면을 받아 브라우저에 저장하고 실행합니다. 키가 틀리면 호스트가 응답하지 않습니다.
 
-## 보안
+</details>
+
+<details>
+<summary>🔐 <b>보안</b></summary>
+
+### 보안
 
 - **접속 키가 유일한 인증 수단입니다.** 키를 가진 사람은 그 PC를 조작할 수 있습니다. 2단계 인증은 없습니다.
 - 키는 호스트 PC의 `%APPDATA%\my-remote-host\config.json`에 Windows 계정으로 암호화(DPAPI)되어 저장됩니다. 저장소에는 들어가지 않습니다. Linux는 [Linux](#linux)의 "접속 키" 참고.
@@ -322,7 +543,14 @@ Windows와 다른 점:
 - 설치형 앱은 새 버전을 확인하려고 업데이트 서버(릴리스 파일을 올려 둔 곳)에 접속합니다. 이때 그 서버는 PC의 공인 IP를 볼 수 있고, 접속 키나 사용 내용은 보내지 않습니다. 받은 업데이트는 릴리스 서명 키로 만든 서명이 맞아야만 설치됩니다. 그 서명 키를 가진 사람은 설치된 모든 앱에 코드를 보낼 수 있으므로, 키 관리가 곧 모든 사용자의 보안입니다.
 - 접속 중의 측정값(fps, 지연, 손실, 해상도 같은 숫자만)이 호스트 PC의 `%APPDATA%\my-remote-host\diag.log`(Linux: `~/.config/my-remote-host/diag.log`)에 기록됩니다. 화면 내용이나 입력, 키는 기록하지 않으며 외부로 보내지 않습니다.
 
-## 한계
+</details>
+
+**문제가 생겼을 때**
+
+<details>
+<summary>🚧 <b>한계</b></summary>
+
+### 한계
 
 | 한계 | 설명 |
 |---|---|
@@ -340,7 +568,12 @@ Windows와 다른 점:
 | 실사용 검증 | 같은 PC 안에서의 자체 테스트와 지연 측정(회선은 흉내 낸 것)만 거쳤습니다. 서로 다른 네트워크 사이의 속도와 안정성은 검증되지 않았습니다 |
 | 느린 회선 | 호스트의 업로드가 수 Mbps 수준이면 스크롤할 때 화질과 프레임이 크게 떨어지고 지연이 0.3~1초까지 늘 수 있습니다 |
 
-## 문제 해결
+</details>
+
+<details>
+<summary>🩺 <b>문제 해결</b></summary>
+
+### 문제 해결
 
 | 증상 | 원인과 조치 |
 |---|---|
@@ -356,7 +589,14 @@ Windows와 다른 점:
 | 호스트를 켤 때 "접속 키를 불러오지 못했습니다" | `config.json`이 깨졌거나, 다른 PC·다른 Windows 계정에서 옮겨 왔거나, 관리자가 계정 암호를 초기화한 경우입니다. 원인을 고쳤으면 `다시 시도`, 아니면 `새 키 발급`(클라이언트에 새 키를 다시 알려 줘야 함). 원래 파일은 `config.json.bad-<시각>`으로 남겨 둡니다 |
 | 호스트를 켤 때 "설정 파일을 읽지 못해 기본 설정으로 실행합니다" | `config.json`을 고치다 생긴 문법 오류(쉼표 등)입니다. 키는 파일에서 찾아 그대로 쓰므로 접속은 됩니다. 파일을 고친 뒤 트레이 메뉴의 `다시 시작`을 누르세요 |
 
-## 설정
+</details>
+
+**설정과 배포**
+
+<details>
+<summary>🛠️ <b>설정</b> — config.json 항목</summary>
+
+### 설정
 
 `%APPDATA%\my-remote-host\config.json`(Linux: `~/.config/my-remote-host/config.json`)을 호스트 종료 후 편집합니다.
 
@@ -379,7 +619,12 @@ Windows와 다른 점:
 
 `keyEnc` 항목은 암호화된 접속 키이므로 건드리지 마세요. 메모장이나 PowerShell로 저장해 파일 앞에 BOM이 붙어도 됩니다. 파일에 문법 오류가 있으면 호스트는 파일을 바꾸지 않고 사본(`config.json.bad-<시각>`)을 남긴 뒤, 키를 찾을 수 있으면 기본 설정으로 실행하며 그렇다고 알려 줍니다. 사본에도 암호화된 키가 들어 있습니다.
 
-### 네이티브 캡처 모듈
+</details>
+
+<details>
+<summary>⚡ <b>네이티브 캡처 모듈</b></summary>
+
+#### 네이티브 캡처 모듈
 
 화면을 가져오는 부분을 C++로 만든 모듈입니다(소스 `native/capture.cpp`, 빌드 결과 `host\bin\capture.dll`). 브라우저 엔진의 캡처보다 반응이 약 20ms 빠르고 초당 장수가 많으며, 영상에 커서가 들어가지 않아 호스트의 커서를 숨길 필요가 없습니다. 저장소에 빌드된 파일이 들어 있으므로 받기만 하면 사용됩니다. 쓰지 않으려면 설정에서 `capture`를 `engine`으로 바꾸면 됩니다.
 
@@ -393,7 +638,12 @@ DLL이 소스에서 그대로 빌드된 것인지는 `host\bin\capture.dll.json`
 node native/build.js 사용자@리눅스PC주소
 ```
 
-## 릴리스 만들기 (배포하는 사람)
+</details>
+
+<details>
+<summary>🚢 <b>릴리스 만들기</b> (배포하는 사람)</summary>
+
+### 릴리스 만들기 (배포하는 사람)
 
 설치형 앱에 새 버전을 내보내는 절차입니다. 앱은 **업데이트 폴더**(https로 받을 수 있는 곳이면 어디든)에서 아래 세 파일만 읽습니다.
 
@@ -407,9 +657,11 @@ node native/build.js 사용자@리눅스PC주소
 2. 자체 테스트와 `node release/test-update.js`, `node release/test-app.js --packaged`를 통과시킨 뒤 커밋하고 태그를 붙입니다(`git tag v<버전>`).
 3. `node release/build.js`를 실행합니다. 커밋된 내용으로 `dist/release`에 위 세 파일을 만듭니다.
    - 반드시 설치돼야 하는 수정이면 `--critical`을 붙입니다. 그 버전보다 낮은 앱은 묻지 않고 업데이트합니다. 이때 바뀌는 `release/policy.json`도 커밋하세요(이후 릴리스가 계속 그 버전 미만을 강제합니다).
-4. 실행 틀이 바뀌었거나 처음 배포할 때는 설치 묶음도 만듭니다. 운영체제마다 그 운영체제에서 `node release/package.js`를 실행합니다(`dist/pack`에 zip 또는 tar.gz).
+4. 실행 틀이 바뀌었거나 처음 배포할 때는 설치 묶음도 만듭니다. 운영체제마다 그 운영체제에서 `node release/package.js`를 실행합니다(`dist/pack`에 `MyRemote-Windows-x64.zip` 또는 `MyRemote-Linux-x64.tar.gz`). 파일 이름에 버전이 없어서, 릴리스에 올리면 이 문서 맨 위의 내려받기 단추가 항상 최신 묶음을 가리킵니다.
 5. `dist/release`의 세 파일(과 설치 묶음)을 업데이트 폴더에 올립니다.
 
 **업데이트 폴더는 누구나 받을 수 있는 곳이어야 합니다.** 이 저장소가 비공개라면 저장소의 릴리스는 로그인 없이 받을 수 없으므로, 릴리스 파일만 올리는 공개 저장소나 자체 서버가 따로 필요합니다. 주소는 `app/update-config.json`의 `feed`(설치 묶음 내려받기 페이지는 `downloads`)이고, 앱에 들어가는 값이라 바꾸면 설치 묶음을 새로 배포해야 합니다. GitHub 공개 저장소의 릴리스를 쓰면 `https://github.com/<계정>/<저장소>/releases/latest/download/`가 항상 최신 릴리스의 파일을 가리킵니다.
 
 **서명 키**(`node release/keygen.js`가 만든 `~/.my-remote-release/update-signing-key.pem`)는 저장소에 없고, 넣어서도 안 됩니다. 이 키를 가진 사람은 설치된 모든 앱에 코드를 보낼 수 있습니다. 릴리스를 만드는 PC에만 두고, 오프라인 사본을 안전한 곳에 보관하세요. 잃어버리면 이미 설치된 앱은 더 이상 업데이트할 수 없습니다(새 키로 다시 설치해야 합니다).
+
+</details>

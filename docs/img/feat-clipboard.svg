@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="260" viewBox="0 0 420 260" font-family='"Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif'>
+  <title>하나의 클립보드</title>
+  <defs>
+    <g id="mon">
+      <rect width="110" height="70" rx="7" fill="#0e1014" stroke="#3a4350" stroke-width="2"/>
+      <rect x="5" y="5" width="100" height="60" rx="3" fill="#1e3152"/>
+      <rect x="48" y="71" width="14" height="8" fill="#39424e"/>
+      <rect x="32" y="78" width="46" height="5" rx="2.5" fill="#39424e"/>
+    </g>
+    <marker id="hb" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#4a8dff"/></marker>
+    <marker id="hg" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#3ecf8e"/></marker>
+  </defs>
+  <rect width="420" height="260" rx="18" fill="#14171c"/>
+  <rect x="1" y="1" width="418" height="258" rx="17" fill="none" stroke="#2c333d" stroke-width="2"/>
+
+  <use href="#mon" x="28" y="44"/>
+  <use href="#mon" x="282" y="44"/>
+  <text x="83" y="34" font-size="17" fill="#8b97a6" text-anchor="middle">이 PC</text>
+  <text x="337" y="34" font-size="17" fill="#8b97a6" text-anchor="middle">호스트 PC</text>
+
+  <!-- the clipboard between them -->
+  <rect x="184" y="50" width="52" height="66" rx="6" fill="#e6e8eb"/>
+  <rect x="197" y="43" width="26" height="14" rx="5" fill="#4a8dff"/>
+  <path d="M194 72 h32 M194 83 h32 M194 94 h20" stroke="#8b97a6" stroke-width="3" stroke-linecap="round"/>
+
+  <path d="M146 66 H176" stroke="#4a8dff" stroke-width="3.2" stroke-linecap="round" marker-end="url(#hb)"/>
+  <path d="M244 66 H274" stroke="#4a8dff" stroke-width="3.2" stroke-linecap="round" marker-end="url(#hb)"/>
+  <path d="M274 100 H244" stroke="#3ecf8e" stroke-width="3.2" stroke-linecap="round" marker-end="url(#hg)"/>
+  <path d="M176 100 H146" stroke="#3ecf8e" stroke-width="3.2" stroke-linecap="round" marker-end="url(#hg)"/>
+
+  <!-- copy here, paste there -->
+  <g font-size="15" font-weight="600" fill="#e6e8eb" text-anchor="middle">
+    <rect x="34" y="158" width="52" height="32" rx="6" fill="#2a313b" stroke="#566070" stroke-width="1.5"/>
+    <text x="60" y="179">Ctrl</text>
+    <rect x="102" y="158" width="32" height="32" rx="6" fill="#2a313b" stroke="#566070" stroke-width="1.5"/>
+    <text x="118" y="179">C</text>
+    <rect x="288" y="158" width="52" height="32" rx="6" fill="#2a313b" stroke="#566070" stroke-width="1.5"/>
+    <text x="314" y="179">Ctrl</text>
+    <rect x="356" y="158" width="32" height="32" rx="6" fill="#2a313b" stroke="#566070" stroke-width="1.5"/>
+    <text x="372" y="179">V</text>
+  </g>
+  <g font-size="15" fill="#8b97a6" text-anchor="middle">
+    <text x="94" y="179">+</text>
+    <text x="348" y="179">+</text>
+    <text x="84" y="220" font-size="17">복사</text>
+    <text x="338" y="220" font-size="17">붙여넣기</text>
+  </g>
+  <path d="M150 174 H264" stroke="#3a4350" stroke-width="2" stroke-dasharray="3 6" stroke-linecap="round"/>
+</svg>

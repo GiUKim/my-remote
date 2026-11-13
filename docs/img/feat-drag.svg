@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="260" viewBox="0 0 420 260" font-family='"Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif'>
+  <title>파일 끌어다 놓기</title>
+  <defs>
+    <g id="file">
+      <path d="M2 0 h17 l9 9 v25 a2 2 0 0 1 -2 2 H2 a2 2 0 0 1 -2 -2 V2 a2 2 0 0 1 2 -2 z" fill="#dfe6ee"/>
+      <path d="M19 0 v9 h9 z" fill="#aeb9c6"/>
+      <path d="M6 17 h16 M6 23 h16 M6 29 h10" stroke="#8b97a6" stroke-width="2" stroke-linecap="round"/>
+    </g>
+    <marker id="headOut" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="4.5" markerHeight="4.5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#4a8dff"/>
+    </marker>
+    <marker id="headIn" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="4.5" markerHeight="4.5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#3ecf8e"/>
+    </marker>
+  </defs>
+  <rect width="420" height="260" rx="18" fill="#14171c"/>
+  <rect x="1" y="1" width="418" height="258" rx="17" fill="none" stroke="#2c333d" stroke-width="2"/>
+
+  <!-- the remote picture, in a window -->
+  <rect x="24" y="40" width="190" height="158" rx="10" fill="#1d2229" stroke="#4a8dff" stroke-width="2"/>
+  <path d="M34 41 h170 a9 9 0 0 1 9 9 v13 H25 V50 a9 9 0 0 1 9 -9 z" fill="#2b6cff"/>
+  <text x="36" y="58" font-size="14" font-weight="600" fill="#fff">호스트</text>
+  <use href="#file" x="48" y="80"/>
+  <rect x="96" y="132" width="96" height="52" rx="5" fill="#232a33" stroke="#3a4350" stroke-width="1.5"/>
+
+  <!-- this PC: a folder -->
+  <text x="330" y="58" font-size="17" fill="#8b97a6" text-anchor="middle">이 PC</text>
+  <path d="M292 76 h26 l8 9 h40 a4 4 0 0 1 4 4 v38 a4 4 0 0 1 -4 4 h-74 a4 4 0 0 1 -4 -4 V80 a4 4 0 0 1 4 -4 z" fill="#e0b341"/>
+  <path d="M288 94 h82 v33 a4 4 0 0 1 -4 4 h-74 a4 4 0 0 1 -4 -4 z" fill="#f2c94c"/>
+
+  <!-- out of the picture -->
+  <path d="M82 96 C140 62 226 62 284 96" fill="none" stroke="#4a8dff" stroke-width="3.2" stroke-linecap="round" stroke-dasharray="7 7" marker-end="url(#headOut)"/>
+  <!-- into the picture -->
+  <use href="#file" x="318" y="166"/>
+  <path d="M310 190 C262 226 196 222 148 170" fill="none" stroke="#3ecf8e" stroke-width="3.2" stroke-linecap="round" stroke-dasharray="7 7" marker-end="url(#headIn)"/>
+</svg>

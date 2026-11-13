@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="540" height="120" viewBox="0 0 540 120" font-family='"Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif'>
+  <title>Windows용 내려받기</title>
+  <defs>
+    <linearGradient id="b" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4a8dff"/>
+      <stop offset="1" stop-color="#2b6cff"/>
+    </linearGradient>
+  </defs>
+  <rect width="540" height="120" rx="22" fill="url(#b)"/>
+  <rect x="1.5" y="1.5" width="537" height="117" rx="20.5" fill="none" stroke="#14171c" stroke-opacity="0.25" stroke-width="3"/>
+  <g fill="#fff">
+    <rect x="38" y="32" width="25" height="25" rx="2"/>
+    <rect x="67" y="32" width="25" height="25" rx="2"/>
+    <rect x="38" y="61" width="25" height="25" rx="2"/>
+    <rect x="67" y="61" width="25" height="25" rx="2"/>
+  </g>
+  <text x="118" y="58" font-size="30" font-weight="700" fill="#fff">Windows용 내려받기</text>
+  <text x="119" y="90" font-size="18" fill="#e3ecff">Windows 10 · 11 (64비트)</text>
+  <g transform="translate(486 58)" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M0 -18 V6 M-10 -3 L0 7 L10 -3"/>
+    <path d="M-16 20 H16"/>
+  </g>
+</svg>

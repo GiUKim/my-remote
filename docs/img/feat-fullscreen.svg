@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="260" viewBox="0 0 420 260" font-family='"Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif'>
+  <title>전체화면은 호스트, 창은 이 PC</title>
+  <defs>
+    <g id="stand">
+      <rect x="-7" y="0" width="14" height="8" fill="#39424e"/>
+      <rect x="-23" y="7" width="46" height="5" rx="2.5" fill="#39424e"/>
+    </g>
+    <!-- Win, Alt, Tab -->
+    <g id="keys" font-size="13" font-weight="600" fill="#e6e8eb" text-anchor="middle">
+      <rect x="0" y="0" width="36" height="30" rx="6" fill="#2a313b" stroke="#566070" stroke-width="1.5"/>
+      <g fill="#e6e8eb"><rect x="11" y="8" width="6" height="6"/><rect x="19" y="8" width="6" height="6"/><rect x="11" y="16" width="6" height="6"/><rect x="19" y="16" width="6" height="6"/></g>
+      <rect x="46" y="0" width="40" height="30" rx="6" fill="#2a313b" stroke="#566070" stroke-width="1.5"/>
+      <text x="66" y="20">Alt</text>
+      <rect x="92" y="0" width="42" height="30" rx="6" fill="#2a313b" stroke="#566070" stroke-width="1.5"/>
+      <text x="113" y="20">Tab</text>
+    </g>
+  </defs>
+  <rect width="420" height="260" rx="18" fill="#14171c"/>
+  <rect x="1" y="1" width="418" height="258" rx="17" fill="none" stroke="#2c333d" stroke-width="2"/>
+  <path d="M210 26 V234" stroke="#2c333d" stroke-width="2" stroke-dasharray="4 6"/>
+
+  <!-- fullscreen: the whole screen is the host -->
+  <text x="105" y="36" font-size="18" font-weight="700" fill="#e6e8eb" text-anchor="middle">전체화면</text>
+  <rect x="40" y="50" width="130" height="82" rx="7" fill="#1e3152" stroke="#4a8dff" stroke-width="3"/>
+  <rect x="54" y="64" width="62" height="40" rx="3" fill="#e6e8eb"/>
+  <rect x="54" y="64" width="62" height="9" rx="3" fill="#4a8dff"/>
+  <rect x="126" y="70" width="30" height="20" rx="2" fill="#35548a"/>
+  <use href="#stand" x="105" y="134"/>
+  <use href="#keys" x="38" y="160"/>
+  <path d="M105 196 v10" stroke="#4a8dff" stroke-width="3" stroke-linecap="round"/>
+  <path d="M99 203 l6 7 l6 -7" fill="none" stroke="#4a8dff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="105" y="237" font-size="17" font-weight="700" fill="#4a8dff" text-anchor="middle">호스트에서 동작</text>
+
+  <!-- a window: one program on this PC -->
+  <text x="315" y="36" font-size="18" font-weight="700" fill="#e6e8eb" text-anchor="middle">창 모드</text>
+  <rect x="250" y="50" width="130" height="82" rx="7" fill="#232a33" stroke="#3a4350" stroke-width="2"/>
+  <rect x="270" y="62" width="74" height="50" rx="4" fill="#1e3152" stroke="#4a8dff" stroke-width="2"/>
+  <rect x="270" y="62" width="74" height="9" rx="4" fill="#4a8dff"/>
+  <rect x="256" y="120" width="118" height="7" rx="2" fill="#39424e"/>
+  <use href="#stand" x="315" y="134"/>
+  <use href="#keys" x="248" y="160"/>
+  <path d="M315 196 v10" stroke="#3ecf8e" stroke-width="3" stroke-linecap="round"/>
+  <path d="M309 203 l6 7 l6 -7" fill="none" stroke="#3ecf8e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="315" y="237" font-size="17" font-weight="700" fill="#3ecf8e" text-anchor="middle">이 PC에서 동작</text>
+</svg>

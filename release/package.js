@@ -1,7 +1,10 @@
 // Makes the installable app for the platform this runs on, from a release built by release/build.js:
 //   node release/package.js [--release=dist/release] [--out=dist/pack] [--no-archive] [--config=<update-config.json>]
-// -> dist/pack/MyRemote-<version>-<platform>-<arch>/   the app: unpack anywhere and start it
-//    dist/pack/MyRemote-<version>-<platform>-<arch>.zip (Windows) or .tar.gz (Linux)
+// -> dist/pack/MyRemote/                       the app: unpack anywhere and start it
+//    dist/pack/MyRemote-Windows-x64.zip        (on Windows), MyRemote-Linux-x64.tar.gz (on Linux)
+// The names carry no version: the download links point at "the latest release's MyRemote-Windows-x64.zip"
+// (https://github.com/<owner>/<repo>/releases/latest/download/<name>), and the app updates itself, so a
+// version in the folder's name would soon be the wrong one. The version is in the folder's read-me.
 //
 // The app is Electron as npm installed it for this platform (host/node_modules/electron/dist, the very
 // program the self-test ran on; nothing else is downloaded), renamed, with resources/app holding the
@@ -30,7 +33,8 @@ function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(RO
   if (!fs.existsSync(path.join(dist, exe))) throw new Error('Electron is not installed under host/node_modules (run setup first)');
   if (process.platform === 'darwin') throw new Error('macOS packages are not made yet (they must be signed on a Mac)');
 
-  const name = `MyRemote-${version}-${process.platform}-${process.arch}`, dir = path.join(out, name);
+  const OS = { win32: 'Windows', linux: 'Linux', darwin: 'macOS' }[process.platform] || process.platform;
+  const folder = 'MyRemote', name = `MyRemote-${OS}-${process.arch}`, dir = path.join(out, folder);
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(out, { recursive: true });
   say(`copying Electron ${fs.readFileSync(path.join(dist, 'version'), 'utf8').trim()} ...`);
@@ -68,8 +72,8 @@ function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(RO
     fs.rmSync(file, { force: true });
     say(`packing ${path.basename(file)} ...`);
     // Windows' own tar (bsdtar) writes a zip when asked for one; on Linux gzip'd tar keeps the file modes.
-    if (win) execFileSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'), ['-a', '-c', '-f', file, '-C', out, name], { stdio: 'inherit' });
-    else execFileSync('tar', ['-czf', file, '-C', out, name], { stdio: 'inherit' });
+    if (win) execFileSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'), ['-a', '-c', '-f', file, '-C', out, folder], { stdio: 'inherit' });
+    else execFileSync('tar', ['-czf', file, '-C', out, folder], { stdio: 'inherit' });
   }
   return { dir, file, version, name, sha256: file ? core.sha256(fs.readFileSync(file)) : '' };
 }
@@ -77,7 +81,7 @@ function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(RO
 if (require.main === module) {
   try {
     const r = pack({ release: arg('release'), out: arg('out'), config: arg('config'), archive: !process.argv.includes('--no-archive') });
-    console.log(`${r.name}: ${r.dir}`);
+    console.log(`${r.name} ${r.version}: ${r.dir}`);
     if (r.file) console.log(`${path.basename(r.file)}: ${(fs.statSync(r.file).size / 1024 / 1024).toFixed(0)} MB, sha256 ${r.sha256}`);
   } catch (e) { console.error('packaging failed: ' + e.message); process.exit(1); }
 }

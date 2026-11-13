@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="260" viewBox="0 0 420 260" font-family='"Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif'>
+  <title>스스로 업데이트</title>
+  <rect width="420" height="260" rx="18" fill="#14171c"/>
+  <rect x="1" y="1" width="418" height="258" rx="17" fill="none" stroke="#2c333d" stroke-width="2"/>
+
+  <!-- the card the app shows -->
+  <rect x="44" y="38" width="332" height="118" rx="12" fill="#1d2229" stroke="#4a8dff" stroke-width="2"/>
+  <g transform="translate(88 97)" fill="none" stroke="#4a8dff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M-20 -6 A21 21 0 0 1 17 -12"/>
+    <path d="M18 -24 v13 h-13"/>
+    <path d="M20 6 A21 21 0 0 1 -17 12"/>
+    <path d="M-18 24 v-13 h13"/>
+  </g>
+  <text x="132" y="84" font-size="19" font-weight="700" fill="#e6e8eb">새 버전이 있습니다</text>
+  <rect x="132" y="102" width="130" height="36" rx="8" fill="#2b6cff"/>
+  <text x="197" y="126" font-size="15" font-weight="600" fill="#fff" text-anchor="middle">지금 업데이트</text>
+  <rect x="272" y="102" width="76" height="36" rx="8" fill="#343c48"/>
+  <text x="310" y="126" font-size="15" fill="#e6e8eb" text-anchor="middle">나중에</text>
+
+  <!-- signed, and going back when it does not start -->
+  <path d="M84 178 l22 8 v16 c0 14 -10 22 -22 28 c-12 -6 -22 -14 -22 -28 v-16 z" fill="#1b3a34" stroke="#3ecf8e" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M74 204 l8 8 l13 -15" fill="none" stroke="#3ecf8e" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="118" y="211" font-size="17" fill="#cfd6df">서명 확인</text>
+
+  <g transform="translate(250 204)" fill="none" stroke="#e0b341" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M-16 -4 A17 17 0 1 1 -11 13"/>
+    <path d="M-17 -18 v14 h14"/>
+  </g>
+  <text x="280" y="211" font-size="17" fill="#cfd6df">문제 시 되돌림</text>
+</svg>
