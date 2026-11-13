@@ -30,11 +30,20 @@ ensure_setup() {
     echo "First start: setting this folder up (Node.js if needed, then Electron; a few minutes)"
     if [ -t 1 ]; then
       MY_REMOTE_FROM_LAUNCHER=1 bash "$root/setup.sh" --skip-selftest || fail "Setup did not finish; see the messages above."
-    elif [ -n "${DISPLAY:-}" ] && command -v gnome-terminal >/dev/null 2>&1; then
-      gnome-terminal --wait --title="My Remote setup" -- env MY_REMOTE_FROM_LAUNCHER=1 bash "$root/setup.sh" --skip-selftest --hold >/dev/null 2>&1 || true
     else
-      local log="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/my-remote-setup.log"
-      (umask 077; MY_REMOTE_FROM_LAUNCHER=1 bash "$root/setup.sh" --skip-selftest >"$log" 2>&1) || fail "Setup did not finish. Its messages: $log" "Or run ./setup.sh in a terminal."
+      # A terminal window of its own; setup.sh marks that it ran (a window that cannot open - no desktop
+      # session - runs nothing, and then it runs here, into a log).
+      local mark ran=""
+      mark="$(mktemp)"
+      if [ -n "${DISPLAY:-}" ] && command -v gnome-terminal >/dev/null 2>&1; then
+        gnome-terminal --wait --title="My Remote setup" -- env MY_REMOTE_FROM_LAUNCHER=1 MY_REMOTE_SETUP_MARK="$mark" bash "$root/setup.sh" --skip-selftest --hold >/dev/null 2>&1 || true
+        ran="$(cat "$mark" 2>/dev/null || true)"
+      fi
+      rm -f "$mark"
+      if [ -z "$ran" ]; then
+        local log="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/my-remote-setup.log"
+        (umask 077; MY_REMOTE_FROM_LAUNCHER=1 bash "$root/setup.sh" --skip-selftest >"$log" 2>&1) || fail "Setup did not finish. Its messages: $log" "Or run ./setup.sh in a terminal."
+      fi
     fi
     [ -x "$electron" ] || fail "Setup did not finish. Run ./setup.sh in a terminal to see why."
   fi

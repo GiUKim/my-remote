@@ -22,6 +22,7 @@ if [ "$(uname -s)" != "Linux" ]; then
   echo "[setup] This script is for Linux. On Windows run setup.ps1." >&2
   exit 1
 fi
+[ -n "${MY_REMOTE_SETUP_MARK:-}" ] && echo started > "$MY_REMOTE_SETUP_MARK" # the launcher's terminal window did run this
 tmp=""
 finish() {
   local status=$?
