@@ -86,7 +86,8 @@ the client app instead).
   koffi (so the host window runs with `sandbox: false`; context isolation stays on) and runs one loop
   per monitor: `mc_next` waits for the next desktop image on a worker thread, the pixels become a
   `VideoFrame`, that goes over a message port to the page, and `host.js` writes it into a
-  `MediaStreamTrackGenerator` whose track is sent like any other. Things that bit:
+  `MediaStreamTrackGenerator` whose track is sent like any other. On Linux (X11) the same loops run on
+  `host/platform/x11capture.js` instead of the DLL (see the Linux notes). Things that bit:
   - A wait that is under way when the page's script environment is torn down (the window reloads,
     e.g. after a new key is issued) kills the renderer process. The loops are therefore closed in
     `beforeunload`; closing waits for the wait under way. Keep it that way.
@@ -294,9 +295,31 @@ the client app instead).
     displays by id.
   - The engine's capturer on X11 paints the pointer into every frame (measured with `--input-check`:
     the pixels under it change when it moves away), and X11 has no `SetSystemCursor`: `hideHostCursor`
-    does nothing there (`input.hidesCursors` false, offer `cursorHidden: false`), so the client sees its
-    own pointer and, slightly behind, the host's in the video. Fixing that needs a capturer that leaves
-    the pointer out (reading the screen through XShm does); not done.
+    does nothing there (`input.hidesCursors` false), so the client saw its own pointer and, slightly
+    behind, the host's in the video. Hence native capture on X11 too: `host/platform/x11capture.js`, the
+    calls of `capture.dll` (open, size, next, close, error) made in JavaScript, so the loops in `preload.js`,
+    the repeats and `host.js` are the same. XDamage on the root window (a connection of Xlib's, level
+    NonEmpty, the region fetched through XFixes) says what changed; the monitor's rectangle (`rect` in the
+    `open` message, root coordinates) is read with MIT-SHM (`xcb_shm_get_image` on a connection of XCB's)
+    and copied with `memcpy` into the loop's buffer. The X server leaves the pointer out of what is read,
+    so the offer says `cursorHidden: true` as with native capture on Windows. Things that bit:
+    - Nothing may run on another thread: a koffi `.async` call under way when the page reloads takes the
+      process with it (see "Native capture"), and Xlib's and XCB's reads would block the page's thread.
+      So the screen read is sent, and its answer (`xcb_poll_for_reply`) and new damage are looked for on
+      timers (4 ms, which Chromium's timer clamp gives anyway). The libraries are all ones Electron links
+      itself (libX11, libXdamage, libXfixes, libxcb, libxcb-shm); `libxcb-damage` is often missing.
+    - `koffi.view` (an ArrayBuffer over the shared memory) ends the process in Electron: V8's memory cage
+      allows no outside memory. Hence the copy.
+    - XCB's replies must be let go of with `XFree`, never with libc's `free` looked up through koffi:
+      Chromium replaces `malloc` in its processes (PartitionAlloc), XCB's `malloc` is that one, and libc's
+      own `free` on its blocks crashed the renderer (Node, without the replacement, was fine).
+    - The segment is attached read-write (`xcb_shm_attach` with read_only 0): ShmGetImage writes into it.
+    - Measured on Xvfb with a window changing colour every 100 ms: every change captured, p50 8 ms and
+      p95 11 ms after the window's frame; the same under GNOME Shell (mutter compositing) on Xvfb, p50 9,
+      p95 11. Not tried: a real desktop and graphics card (glamor, page flipping), several monitors,
+      HiDPI, an X server of another user (MIT-SHM is then refused and the engine's capturer is used).
+    - A still screen sends nothing, as on Windows. The self-test therefore puts a small counter in a
+      corner of a Linux display (a virtual display with the test's windows hidden never changes).
   - Cursor shape: `XFixesGetCursorImage` gives the picture and, for cursors loaded from a theme by name
     (GTK, Qt, libXcursor), the name. Chromium's own cursors and the X server's default cursor have none
     and go as pictures. `pixels` holds one `unsigned long` per pixel (8 bytes on x64).
@@ -364,8 +387,9 @@ the client app instead).
   - `--localtest` opens the client app, not the default browser (often Firefox, which the page is not
     made for). The launchers start Electron in the background like the `.bat` files; its output goes to
     `$XDG_RUNTIME_DIR/my-remote-*.log`.
-  - Windows-only: native capture, cursor hiding, HDR detection, the Chrome Remote Desktop and outline
-    checks (`others` is `{crd: false, outline: false}`), `--dragout-check`, `--cursor-check`.
+  - Windows-only: `capture.dll` (X11 has its own native capture, above), cursor hiding, HDR detection,
+    the Chrome Remote Desktop and outline checks (`others` is `{crd: false, outline: false}`),
+    `--dragout-check`, `--cursor-check`.
 
 - **`ELECTRON_RUN_AS_NODE`**: terminals inside VS Code / Cursor set it, and Electron then runs as plain
   Node and crashes with `Cannot read properties of undefined (reading 'requestSingleInstanceLock')` or
@@ -552,6 +576,7 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/input.js` | Input injection, platform-neutral half: the client's messages mapped to the desktop, held keys and buttons, the self-test's dry run; picks the platform module and exports one interface |
 | `host/platform/win32.js` | Win32 through koffi FFI: `SendInput`, cursor shape and picture, hiding/restoring the system cursors, HDR displays, drag detection, the clipboard's file list, the client app's drop helpers |
 | `host/platform/linux.js` | X11 through koffi FFI: XTest input, XFixes cursor and selection events, the dragged data read from `XdndSelection`, the window under the pointer, the clipboard's file list |
+| `host/platform/x11capture.js` | Native screen capture on X11 for `preload.js` (XDamage + MIT-SHM through koffi, no pointer in the picture): the calls of `capture.dll` in JavaScript |
 | `host/inputcheck.js` | `--input-check` (Linux): real input into windows and a second program it opens itself |
 | `host/cursor-guard.js` | Separate small process that restores the cursors if the host process dies (Windows) |
 | `host/signal.js` | Shared by host and client: key derivation, encrypted signaling channel |
@@ -910,7 +935,11 @@ both ways, text and a file dragged out of a second program in about 100 ms with 
 the client app's drop placement), `--client-app-check` (the client app as a process of its own shows
 the Linux host's picture), and the launchers (`setup.sh` with a stand-in for `npm install`,
 `start-host.sh --selftest`, `start-client.sh`, `local-test.sh`). Also seen there: system sound was
-captured once from PulseAudio (the track arrived; audibility not checked). Not verified on Linux: a
+captured once from PulseAudio (the track arrived; audibility not checked). Native capture on X11
+(`platform/x11capture.js`, 2026-11-13, Electron 45, the same server and Xvfb): the whole self-test with
+`--input-check`, `--clip-check` and `--client-app-check` runs on it (49 checks, ALL PASS), among them
+"the native capture has no pointer in the video" (0 pixels under the pointer changed when it moved away).
+Not verified on Linux: a
 real desktop session (GNOME, KDE, Xfce) with a window manager, a real file manager as the drag source
 or drop target (Nautilus, Dolphin; the clipboard formats were only read back by this program), the
 desktop-icons detection on a real desktop, several monitors (Xvfb's RandR here kept no extra monitor),

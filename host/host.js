@@ -99,7 +99,8 @@ async function openNativeLoops(s, sources) {
   for (let i = 0; i < sources.length; i++) {
     const r = await new Promise((done) => {
       nativeOpening.set(i, done);
-      port.postMessage({ t: 'open', i, x: sources[i].x + 8, y: sources[i].y + 8, gap: Math.max(0, Number(cfg.captureGap) || 0) });
+      port.postMessage({ t: 'open', i, x: sources[i].x + 8, y: sources[i].y + 8, gap: Math.max(0, Number(cfg.captureGap) || 0),
+        rect: { x: sources[i].x, y: sources[i].y, w: sources[i].width, h: sources[i].height } });
       // A capturer that has not answered in 4 s is not asked again: its answer, should it still come,
       // would be taken for the answer to a later request.
       setTimeout(() => { if (nativeOpening.get(i) === done) { nativeOpening.delete(i); nativeOff = true; } done({ ok: false, error: 'no answer' }); }, 4000);

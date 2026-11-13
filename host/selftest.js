@@ -192,6 +192,18 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
   fs.writeFileSync(file, buildClientHtml());
   await sleep(2500); // let the host subscribe first
   const hostWin = BrowserWindow.getAllWindows()[0];
+  // The native capturer sends a picture only when the screen changes (and then repeats it for about a
+  // second). A virtual display (Xvfb) with this test's windows hidden never changes, unlike a real
+  // desktop, where the test's own windows keep changing what is captured: a small counter in a corner
+  // keeps the picture moving there, as a person's screen would.
+  if (process.platform === 'linux') {
+    const b = screen.getPrimaryDisplay().bounds;
+    const tick = new BrowserWindow({ x: b.x + b.width - 70, y: b.y + b.height - 34, width: 64, height: 28, frame: false, focusable: false, skipTaskbar: true,
+      resizable: false, alwaysOnTop: true, show: false, backgroundColor: '#202830', webPreferences: { backgroundThrottling: false } });
+    await tick.loadURL('data:text/html,' + encodeURIComponent('<body style="margin:0;font:16px monospace;color:#9cf;background:#202830;overflow:hidden">'
+      + '<span id="n"></span><script>let i = 0; setInterval(() => { n.textContent = String(i++ % 10000).padStart(4, "0"); }, 50);</script></body>'));
+    tick.showInactive();
+  }
   const w = new BrowserWindow({ show: false, width: 1280, height: 720, webPreferences: { backgroundThrottling: false } });
   await w.loadFile(file, { hash: `k=${cfg.key}&auto&ro` });
   const js = (code) => w.webContents.executeJavaScript(code);
@@ -394,7 +406,8 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       return need && got > 0 && got >= need.w - 2 && (need.w >= x.mons[main].w || got < x.mons[main].w);
     }, 15);
     const encOf = (x) => (x.host && x.host.mons ? Object.entries(x.host.mons).map(([i, m]) => `monitor ${Number(i) + 1} ${m.res} ${m.impl}`).join('; ') : '?');
-    info('screen capture: ' + (await hostWin.webContents.executeJavaScript(`session && session.native ? 'native (native/capture.cpp)' : "the browser engine's"`)));
+    const nativeName = process.platform === 'linux' ? 'native (X11: XDamage and MIT-SHM, platform/x11capture.js)' : 'native (native/capture.cpp)';
+    info('screen capture: ' + (await hostWin.webContents.executeJavaScript(`session && session.native ? ${JSON.stringify(nativeName)} : "the browser engine's"`)));
     await sleep(4500); s = await state(); info('video encoder: ' + encOf(s) + ' (libaom = AV1 on the CPU, MediaFoundation = H.264 on the graphics card, OpenH264 = H.264 on the CPU)');
     check('sends only as many pixels as are shown', ok, `monitor ${main + 1} is ${s.mons[main].w}x${s.mons[main].h}, shown at ${JSON.parse(s.view).map((e) => e.w + 'x' + e.h)[0]}, received ${s.res[main]}`);
 
@@ -898,7 +911,10 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     }
 
     if (INPUT_CHECK) {
-      if (process.platform === 'linux') await require('./inputcheck').run({ check, info, js, until, dragOut });
+      if (process.platform === 'linux') {
+        const native = await hostWin.webContents.executeJavaScript('!!(session && session.native)');
+        await require('./inputcheck').run({ check, info, js, until, dragOut, native });
+      }
       else info('--input-check is for Linux (X11); on Windows input injection was verified separately');
       s = await state();
     }

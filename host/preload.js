@@ -56,6 +56,11 @@ let lib = null;
 function capturer() {
   if (lib !== null) return lib;
   lib = false;
+  if (process.platform === 'linux') {
+    // X11: the same calls, made in JavaScript (platform/x11capture.js): XDamage and MIT-SHM, no pointer in the picture
+    try { const x = require('./platform/x11capture'); if (x.available()) lib = x; else console.warn('native capture is not available:', x.error()); } catch (e) { console.error('native capture is not available:', e.message); }
+    return lib;
+  }
   if (process.platform !== 'win32') return lib; // a Windows DLL (DXGI Desktop Duplication); elsewhere the engine's capturer is used
   try {
     const file = path.join(__dirname, 'bin', 'capture.dll'); // built by native/build.js, committed
@@ -139,7 +144,8 @@ window.addEventListener('message', (e) => {
     const m = ev.data || {};
     if (m.t === 'open') {
       const c = capturer(), w = [0], h = [0];
-      const handle = c ? c.open(m.x, m.y) : -1;
+      // The DLL finds the monitor from a point inside it; X11 is told its rectangle on the root window.
+      const handle = !c ? -1 : c.openRect ? (m.rect ? c.openRect(m.rect) : -1) : c.open(m.x, m.y);
       if (handle < 0) return port.postMessage({ t: 'opened', i: m.i, ok: false, error: c ? c.error() : 'no native capturer' });
       c.size(handle, w, h);
       runs.set(m.i, captureLoop(port, m.i, handle, w[0], h[0], m.gap || 0));

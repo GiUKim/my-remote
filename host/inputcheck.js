@@ -3,7 +3,7 @@
 // display (Xvfb): it moves the pointer, clicks, scrolls and types, so not on a desktop someone uses.
 //
 // A. The pointer goes where the client said (read back with XQueryPointer).
-// B. Whether the browser engine's capturer puts the pointer into the video (an INFO line).
+// B. The native capture's video has no pointer in it (with the engine's capturer: whether it has, INFO).
 // C. Every key of the key table, the five buttons and the wheel arrive in a test window with the code,
 //    button and direction the client sent; the window under the pointer and the bare desktop are told
 //    apart (what the client app uses to place dropped files).
@@ -65,7 +65,7 @@ const DRAG_SOURCE_PRELOAD = `const { contextBridge, ipcRenderer } = require('ele
 contextBridge.exposeInMainWorld('dragFile', () => ipcRenderer.send('drag-file'));
 `;
 
-exports.run = async ({ check, info, js, until, dragOut }) => {
+exports.run = async ({ check, info, js, until, dragOut, native }) => {
   const why = input.viewOnlyReason();
   if (why) { check('X11: input can be injected', false, why); return; }
   const mons = await js(`monitors.map((m) => ({ x: m.x, y: m.y, width: m.width, height: m.height }))`);
@@ -99,9 +99,12 @@ exports.run = async ({ check, info, js, until, dragOut }) => {
     const on1 = await grab(), on2 = await grab();
     moveTo(goal.x + 240, goal.y + 120);
     const off = await grab();
-    const noise = diff(on1, on2), changed = diff(on1, off);
-    info(`the browser engine's capturer on X11 ${changed > 20 && changed > noise * 3 ? 'paints the pointer into the video' : 'leaves the pointer out of the video'}`
-      + ` (${changed} pixels under the pointer changed when it moved away, ${noise} without moving)`);
+    const noise = diff(on1, on2), changed = diff(on1, off), painted = changed > 20 && changed > noise * 3;
+    const how = `${changed} pixels under the pointer changed when it moved away, ${noise} without moving`;
+    // The native capturer (platform/x11capture.js) is there to leave the pointer out: the client shows its
+    // own, and the host's would trail behind it in the video.
+    if (native) check('X11: the native capture has no pointer in the video', !painted, how);
+    else info(`the browser engine's capturer on X11 ${painted ? 'paints the pointer into the video' : 'leaves the pointer out of the video'} (${how})`);
     await js(`setFit(mainView, 'fit')`);
   }
 
