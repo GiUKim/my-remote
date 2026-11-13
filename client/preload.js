@@ -1,5 +1,16 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
+// The window was minimized or hidden, or is back (shell.js). The app keeps its windows running
+// (backgroundThrottling off), so the page's document.visibilityState never says 'hidden'; this mark on
+// the document says it instead, and the page (which reads every window's document) stops asking the
+// host for what this window shows. From 2026-11-13 on; the page must not rely on it.
+ipcRenderer.on('shell:shown', (_e, shown) => {
+  const el = document.documentElement;
+  if (!el) return;
+  if (shown) delete el.dataset.mrHidden; else el.dataset.mrHidden = '1';
+  document.dispatchEvent(new Event('mrshown'));
+});
+
 // Seen by the client page as window.mrShell; its presence tells the page it runs in the app.
 contextBridge.exposeInMainWorld('mrShell', {
   screens: () => ipcRenderer.invoke('shell:screens'),

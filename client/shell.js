@@ -329,12 +329,21 @@ function stayOnPage(wc) {
   });
 }
 
+// Tells a window's page when the window is minimized or hidden and when it is back (see preload.js):
+// with backgroundThrottling off its visibilityState stays 'visible', and the host would go on sending
+// what nobody sees.
+function reportShown(bw) {
+  const send = () => { if (!bw.isDestroyed()) bw.webContents.send('shell:shown', bw.isVisible() && !bw.isMinimized()); };
+  for (const ev of ['minimize', 'restore', 'hide', 'show']) bw.on(ev, send);
+}
+
 function attach(win) {
   setupIpc();
   const wc = win.webContents;
   const state = { win, children: new Set() };
   shells.set(wc.id, state);
   win.on('closed', () => shells.delete(wc.id));
+  reportShown(win);
 
   wc.session.setPermissionRequestHandler((_wc, permission, cb) => cb(ALLOWED.has(permission)));
   wc.session.setPermissionCheckHandler((_wc, permission) => ALLOWED.has(permission));
@@ -358,6 +367,7 @@ function attach(win) {
     child.setMenuBarVisibility(false);
     child.webContents.setWindowOpenHandler(() => ({ action: 'deny' })); // the page opens its windows from the main one
     stayOnPage(child.webContents);
+    reportShown(child);
     child.on('closed', () => state.children.delete(child));
   });
   return state;

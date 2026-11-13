@@ -432,7 +432,7 @@ must then be given the new file). Run `npm run selftest` after either.
 | `start-client.bat` | Launcher for the client app (uses the Electron installed under `host/node_modules`) |
 | `setup.sh`, `start-host.sh`, `start-client.sh`, `local-test.sh` | The same for Linux (bash, executable in git, LF line endings) |
 | `host/linux-launch.sh` | Sourced by those: Electron's path, X11 session and sandbox checks, starting Electron in the background |
-| `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js`: Win32 or X11, and `host/files.js`). Exposes `window.mrShell` (`fileAbort`, `pointerOwn`, `clipPoll` and `clipWrite` from 2026-11-13 on). `main.js --loader=<file>` shows another loader with a profile of its own (self-test, local trial on Linux). These files are not updated through the loader: the page must feature-detect what an installed app offers |
+| `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js`: Win32 or X11, and `host/files.js`). Exposes `window.mrShell` (`fileAbort`, `pointerOwn`, `clipPoll` and `clipWrite` from 2026-11-13 on), and from 2026-11-13 on marks a minimized or hidden window's document (`data-mr-hidden`, event `mrshown`): its windows run with `backgroundThrottling` off, so `visibilityState` never says hidden there, and the page (`unseen()`) stops asking the host for what such a window shows. `main.js --loader=<file>` shows another loader with a profile of its own (self-test, local trial on Linux). These files are not updated through the loader: the page must feature-detect what an installed app offers |
 | `host/main.js` | Electron main: config and key storage, monitor enumeration, tray, IPC, isolated modes |
 | `host/preload.js` | The only bridge between the renderer and main (`window.hostApi`). Also runs the native capturer's loops and hands their frames to the page over a message port |
 | `host/host.html`, `host/host.js` | Host UI and the WebRTC side: capture, encoding control, data-channel routing |
@@ -770,7 +770,8 @@ the whole self-test with `--input-check`, `--clip-check` and `--client-app-check
 checks; they cover the clipboard helpers there, rewritten for the promise-based clipboard), with the key
 stored through the asynchronous `safeStorage` calls. Not yet checked on 45: the bench (latency and
 quality), on Windows `--clip-check`, `--client-app-check` and `--shell-check` (the client app), and
-`--dragout-check`/`--dropin-check`.
+`--dragout-check`/`--dropin-check`; the client app marking a real minimized window (the page's side,
+with the mark set by hand, is in the self-test).
 Not verified anywhere: a real phone, Keyboard Lock holding the Windows key on Windows, `shell:clipPoll`
 in a real client app with a real password manager.
 

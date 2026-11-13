@@ -403,6 +403,17 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     check('1:1 mode receives the full resolution', ok, `received ${s.res[main]}`);
     await js(`setFit(mainView, 'fit')`);
 
+    // A window the client app reports minimized (its preload marks the document, client/preload.js) is
+    // not asked for, and is again once it is back.
+    {
+      const mark = (on) => js(`${on ? "document.documentElement.dataset.mrHidden = '1'" : 'delete document.documentElement.dataset.mrHidden'}; document.dispatchEvent(new Event('mrshown')); 1`);
+      await mark(true);
+      const [paused, sp] = await until((x) => x.view === '[]' && !(x.fps[main] > 0), 12);
+      await mark(false);
+      const [back, sb] = await until((x) => JSON.parse(x.view || '[]').some((e) => e.i === main) && x.fps[main] > 0, 12);
+      check('a window the client app reports minimized is not sent, and is again when it is back', paused && back, `minimized: requested ${sp.view}, ${sp.fps[main]} fps; back: ${sb.fps[main]} fps`);
+    }
+
     if (N > 1) {
       [ok, s] = await until((x) => onlyFps(x, main), 12);
       check('only viewed monitors are sent', ok, `fps per monitor ${JSON.stringify(s.fps)}`);

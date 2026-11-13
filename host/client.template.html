@@ -299,8 +299,15 @@ function makeView(win, root, isMain) {
     if (win.document.fullscreenElement && hotkeysOn) toast(view, HINT, 3500);
   });
   win.document.addEventListener('visibilitychange', scheduleView);
+  win.document.addEventListener('mrshown', scheduleView); // the client app: see unseen()
   views.push(view);
   return view;
+}
+// A window nobody sees: hidden or minimized. A browser says so in visibilityState; the client app keeps
+// its windows running and never does, so its preload marks the document instead (from 2026-11-13 on).
+function unseen(win) {
+  const d = win.document;
+  return d.visibilityState === 'hidden' || !!(d.documentElement && d.documentElement.dataset.mrHidden);
 }
 function toast(view, text, ms) {
   if (!text || view.win.closed) return;
@@ -409,7 +416,7 @@ function sendView(force) {
   if (!monitors.length) return;
   const need = new Map();
   for (const view of liveViews()) {
-    if (view.win.document.visibilityState === 'hidden') continue;
+    if (unseen(view.win)) continue;
     const dpr = view.win.devicePixelRatio || 1;
     for (const p of view.panes) {
       let w = 0, h = 0; // 0 = full resolution
@@ -2181,10 +2188,9 @@ let last = null, connSeq = 0;
 // so a still screen counts as frozen. Here a shown frame counts as late when it came on screen later
 // after the frame before it than it was captured after it, by more than HITCH_MS: the capture times
 // come with the frames (RTP timestamps, 90 kHz). The same is counted for when the frames arrived (`rn`,
-// `rms`): late arrivals are the network's or the host's doing, the rest is this PC drawing late - or not
-// drawing at all: a minimized window. A browser reports such a window hidden and it is left out, but the
-// client app keeps its windows running (backgroundThrottling off) and they always count as visible.
-// Counted per connection, over every shown monitor.
+// `rms`): late arrivals are the network's or the host's doing, the rest is this PC drawing late. Windows
+// nobody sees (unseen) are left out; a client app from before 2026-11-13 cannot say so, and there a
+// minimized window shows up as frames drawn late. Counted per connection, over every shown monitor.
 const HITCH_MS = 50;
 const hitch = (window.__rd.hitch = { conn: 0, frames: 0, n: 0, ms: 0, worst: 0, rn: 0, rms: 0 });
 function watchFrames(v) {
@@ -2194,7 +2200,7 @@ function watchFrames(v) {
     if (!v.isConnected) return; // its pane is gone
     if (hitch.conn !== connSeq) Object.assign(hitch, { conn: connSeq, frames: 0, n: 0, ms: 0, worst: 0, rn: 0, rms: 0 });
     const t = meta.expectedDisplayTime || now, rtp = meta.rtpTimestamp, rx = meta.receiveTime || 0;
-    if (v.ownerDocument.visibilityState !== 'visible') prev = null;
+    if (!v.ownerDocument.defaultView || unseen(v.ownerDocument.defaultView)) prev = null;
     else if (typeof rtp === 'number') {
       // Another stream (a reconnect gives the element a new one) or another connection: start over.
       if (prev && prev.src === v.srcObject && prev.conn === connSeq) {
