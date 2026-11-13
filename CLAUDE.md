@@ -249,6 +249,19 @@ the client app instead).
     fail; they run in `guarded()` (our handler, `XSync`, the old handler back). Everything sent through
     XTest is checked first (key codes against `XDisplayKeycodes`, buttons against `XGetPointerMapping`):
     a `BadValue` would end the host.
+  - Text from a phone's keyboard (`typeText`): X11 cannot type a character as such, so empty keycodes are
+    lent to the characters' keysyms (Latin-1 = code point, else 0x1000000 + code point) and pressed,
+    like xdotool. Chromium (Electron, VS Code, Chrome) reads the keyboard map again in a task of its own
+    and reads a key with the map it has by then: measured on Xvfb, a keycode changed from one character
+    to another and pressed at once came out as the old character, and with 32 keycodes changed at once a
+    second change 30 ms later was what the first presses came out as. A keycode lent from empty comes out
+    right at once. So a lent keycode keeps its character until 1 s after its last press, is then emptied
+    and lent again only 0.5 s later, and presses wait 30 ms after a change; the map is read again before
+    each step (a layout switch replaces it). Typing therefore takes time when a text has more different
+    characters than there are empty keycodes (about 38 on Xvfb: 42 different ones took 3.3 s): typeText
+    returns a promise and input.js holds later input back until it is done. Checked by `--input-check`
+    (Latin, accents, Hangul, symbols, and the Enter after them) and a Node harness with a fake X server.
+    Not tried: a real desktop, an input method (ibus, fcitx) in front, Qt and GTK programs.
   - Keys: `KeyboardEvent.code` -> Linux evdev code, X key code = evdev + 8 (the evdev keymap of every
     current X server, Xvfb included); `HangulMode`/`HanjaMode` by meaning, like on Windows. Pointer:
     physical pixels are X root coordinates (`XTestFakeMotionEvent`), wheel = buttons 4-7, one click per
@@ -334,8 +347,8 @@ the client app instead).
   the picture locally (`view.zoom`, `view.pan` in `layout`; the host is asked for more pixels when
   zoomed). The phone's keyboard types into a hidden textarea (`#kbd`) that always keeps one space so
   Backspace has something to delete; what changes there goes as `text` (characters, Hangul composition
-  included) or Backspace/Enter/Tab keys. The host types `text` with `KEYEVENTF_UNICODE` (Windows only
-  so far; elsewhere it is dropped). A key row offers Esc, Tab, sticky Ctrl/Alt/Shift/Win (for the next
+  included) or Backspace/Enter/Tab keys. The host types `text` with `KEYEVENTF_UNICODE` on Windows; on
+  X11 with keycodes lent to the characters' keysyms (see the Linux gotchas). A key row offers Esc, Tab, sticky Ctrl/Alt/Shift/Win (for the next
   key), arrows, Home/End, PgUp/PgDn, Del, F5. Without the person's own codec choice a phone asks for
   H.264 unless `MediaCapabilities` says it decodes AV1 power-efficiently. Not tried on a real phone;
   how a phone gets the loader file (no file:// on iPhone) is not settled.
@@ -513,7 +526,7 @@ Data channel `input` (JSON text):
 | client -> host | `dragout` | The pointer was let go outside every client window while the host reported a drag; `b` = button. The host ends its drag, copies what was dragged and answers with `dragdata` |
 | client -> host | `dragq` | The pointer just left every client window with a button held: the host checks for a drag-and-drop every 15 ms for 1.2 s and sends `drag` the moment one starts |
 | both | `clip` | Clipboard text, at most 60000 chars (see "The clipboard is shared both ways") |
-| client -> host | `text` | `s`: characters typed on a phone's keyboard, at most 400 at a time; the host types them as characters (`KEYEVENTF_UNICODE`), whatever its layout and input method. Windows hosts only |
+| client -> host | `text` | `s`: characters typed on a phone's keyboard, at most 400 at a time; the host types them as characters (Windows `KEYEVENTF_UNICODE`; X11 keycodes lent to their keysyms, typed over time with later input held back), whatever its layout and input method |
 | host -> client | `lock` | `on`, `why`: `lock` (the host's session is locked) or `secure` (a UAC prompt or another secure desktop has the screen). Sent when a session starts and when it changes; the client says so over the picture |
 | host -> client | `cur` | Current host cursor: `c` = CSS cursor name, or `img` (PNG data URL) with hotspot `hx`,`hy` for an app-specific cursor. The host page asks main about 30 times a second and passes the cursor it has, so the picture is copied over IPC only when it changes |
 | host -> client | `hs` | Host-side statistics every 2 s (codec and `from`, whose choice it was: `client` (the 진단 dialog, kept in the client's localStorage `mr_codec`), `config` or `auto`; encoder, bitrate, per-monitor capture/encode fps and limiting factor) for the client's diagnostics report; the host's diagnostics log gets the same |

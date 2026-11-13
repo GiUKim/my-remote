@@ -28,7 +28,7 @@ const LOCKS = new Set(['CapsLock', 'NumLock', 'ScrollLock']); // pressed twice, 
 
 const TEST_PAGE = `<!doctype html><body style="margin:0;height:100vh;background:#345" tabindex="0"><script>
 window.ev = [];
-for (const t of ['keydown', 'keyup']) addEventListener(t, (e) => { ev.push([t, e.code]); e.preventDefault(); }, true);
+for (const t of ['keydown', 'keyup']) addEventListener(t, (e) => { ev.push([t, e.code]); if (!window.typing) e.preventDefault(); }, true);
 for (const t of ['mousedown', 'mouseup']) addEventListener(t, (e) => ev.push([t, e.button]), true);
 addEventListener('wheel', (e) => ev.push(['wheel', Math.sign(e.deltaX), Math.sign(e.deltaY)]), true);
 for (const t of ['contextmenu', 'auxclick']) addEventListener(t, (e) => e.preventDefault(), true);
@@ -144,6 +144,18 @@ exports.run = async ({ check, info, js, until, dragOut }) => {
     const btns = ev2.filter((e) => e[0] === 'mousedown').map((e) => e[1]), wheels = ev2.filter((e) => e[0] === 'wheel').map((e) => e[1] + ',' + e[2]);
     check('X11: the five buttons and the wheel arrive as the client sent them', JSON.stringify(btns) === '[0,1,2,3,4]' && JSON.stringify(wheels) === JSON.stringify(['0,1', '0,-1', '1,0', '-1,0']),
       `buttons ${JSON.stringify(btns)}, wheel (x,y direction) ${JSON.stringify(wheels)}`);
+
+    // A phone's keyboard: characters typed as such (typeText), in more batches than there are free keycodes.
+    await tjs(`window.typing = true; const ta = document.createElement('textarea'); ta.id = 'ta'; ta.style.cssText = 'position:fixed;left:10px;top:10px;width:400px;height:120px'; document.body.appendChild(ta); ta.focus(); 1`);
+    await sleep(300);
+    const TEXT = 'Abc 123 é ñ ß 한글 입력 € — ' + 'abcdefghijklmnopqrstuvwxyz'.split('').reverse().join('');
+    send({ t: 'text', s: TEXT });
+    send({ t: 'kd', c: 'Enter', k: 'Enter' }); send({ t: 'ku', c: 'Enter', k: 'Enter' }); // waits for the text (input.js)
+    let typed = '';
+    for (let n = 0; n < 40 && !typed.endsWith('\n'); n++) { await sleep(500); typed = await tjs(`document.getElementById('ta').value`); }
+    typed = typed.replace(/\n$/, '');
+    await tjs(`window.typing = false; document.getElementById('ta').remove(); 1`);
+    check('X11: text from a phone keyboard is typed as characters (Latin, accents, Hangul, symbols)', typed === TEXT, `typed ${JSON.stringify(typed)}`);
   } finally { tw.destroy(); }
 
   // ---- D ----

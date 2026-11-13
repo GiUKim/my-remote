@@ -9,7 +9,7 @@ const NEUTRAL = {
   hidesCursors: false, // whether hideCursors() can keep the pointer out of the engine's captured video
   virtualDesktop: () => null, // null: the area the monitors cover
   move() {}, button() {}, wheel() {}, keyOf: () => null, sendKey() {},
-  typeText() {}, // characters as such (a phone's keyboard); Windows only so far
+  typeText() {}, // characters as such (a phone's keyboard): Windows (KEYEVENTF_UNICODE) and X11 (keycodes lent to keysyms)
   maskKey() {}, // a key that keeps a lone Alt or Windows key release from opening a menu (Windows)
   clipboardPrivate: () => false, // whether a password manager marked the clipboard's content as private
   cursorState: () => ({ key: '0', name: 'default' }),
@@ -97,6 +97,7 @@ function key(code, keyName, up, shortcut) {
 }
 
 function reset() {
+  queued.length = 0; // input that waited for typing to end is not injected after this
   // Alt or the Windows key let go with nothing pressed in between opens the program's menu bar or the
   // Start menu (a client that left with Alt+Tab, say, held Alt here): a key that means nothing in between.
   if ([...down.keys()].some((c) => /^(Alt|Meta)/.test(c))) { if (dry) dry.push({ key: 'mask', up: false }); else backend.maskKey(); }
@@ -106,7 +107,24 @@ function reset() {
   buttonsDown = 0;
 }
 
+// While the backend is still typing text it was given (X11 types it over some time, see typeText in
+// platform/linux.js), later input waits for it, so a key pressed after the text arrives after it.
+let typing = null;
+const queued = [];
+function typed(p) {
+  const mine = (typing = p.catch(() => {}).then(() => {
+    if (typing !== mine) return;
+    typing = null;
+    const q = queued.splice(0);
+    for (let i = 0; i < q.length; i++) {
+      handle(q[i]);
+      if (typing) { queued.push(...q.slice(i + 1)); break; } // more text: the rest waits for that too
+    }
+  }));
+}
+
 function handle(text) {
+  if (typing) { if (queued.length < 5000) queued.push(text); return; }
   let m;
   try { m = JSON.parse(text); } catch { return; }
   if (!m || typeof m !== 'object') return;
@@ -140,10 +158,12 @@ function handle(text) {
     }
     case 'kd': key(String(m.c), String(m.k || ''), false); break;
     case 'ku': key(String(m.c), String(m.k || ''), true); break;
-    case 'text': { // characters from a phone's keyboard, typed as such (see typeText in platform/win32.js)
+    case 'text': { // characters from a phone's keyboard, typed as such (see typeText in platform/*.js)
       const s = String(m.s || '').slice(0, 1000);
       if (!s) break;
-      if (dry) dry.push({ text: s }); else backend.typeText(s);
+      if (dry) { dry.push({ text: s }); break; }
+      const p = backend.typeText(s); // Windows types at once; X11 returns a promise
+      if (p && typeof p.then === 'function') typed(p);
       break;
     }
     case 'reset': reset(); break;

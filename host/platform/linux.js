@@ -52,6 +52,8 @@ function open() {
       XGetWindowProperty: x11.func('int XGetWindowProperty(void *dpy, unsigned long w, unsigned long property, long offset, long length, int del, unsigned long type, _Out_ unsigned long *actualType, _Out_ int *actualFormat, _Out_ unsigned long *count, _Out_ unsigned long *bytesAfter, _Out_ void **data)'),
       XFree: x11.func('int XFree(void *data)'),
       XDisplayKeycodes: x11.func('int XDisplayKeycodes(void *dpy, _Out_ int *min, _Out_ int *max)'),
+      XGetKeyboardMapping: x11.func('void *XGetKeyboardMapping(void *dpy, uint8_t first, int count, _Out_ int *perKeycode)'),
+      XChangeKeyboardMapping: x11.func('int XChangeKeyboardMapping(void *dpy, int first, int perKeycode, unsigned long *keysyms, int count)'),
       XGetPointerMapping: x11.func('int XGetPointerMapping(void *dpy, uint8_t *map, int count)'),
       XSetErrorHandler: x11.func('MrXErrorHandler *XSetErrorHandler(MrXErrorHandler *handler)'),
       XCreateSimpleWindow: x11.func('unsigned long XCreateSimpleWindow(void *dpy, unsigned long parent, int x, int y, unsigned int width, unsigned int height, unsigned int border, unsigned long borderColour, unsigned long background)'),
@@ -271,6 +273,115 @@ function sendKey(kc, up) {
   x.f.XFlush(x.dpy);
 }
 
+// ---- text as characters (a phone's keyboard) ------------------------------------------
+// X11 has no "type this character": a key is pressed, and what it means is in the keyboard map. So
+// keycodes with nothing on them are lent to the characters: their entries are set to the characters'
+// keysyms (Latin-1 keysyms are the code point, every other character's is 0x1000000 + code point)
+// and pressed; xdotool does the same. Each keysym fills every column of its entry, so a held Shift or
+// another group changes nothing.
+// Programs learn of a changed map from an event that comes before the key events, but Chromium
+// (Electron, VS Code, Chrome) reads the map again later, in a task of its own, and reads a key event
+// with the map it has by then. Measured on Xvfb: a key pressed right after its keycode got another
+// keysym came out as the one before (unless the keycode had been empty: that one comes out right), and
+// with 32 keycodes changed at once Chromium took longer than 30 ms, so keys pressed before a second
+// change came out as what that change put there. So a keycode is changed only while nobody can still
+// be reading a press of it: one that holds a character keeps it until HOLD after its last press, is
+// then emptied, and is lent again only SETTLE after that; and presses wait TYPE_GAP after a change.
+// Text is typed over time therefore (typeText returns a promise; input.js holds later input back).
+const KEYSYM = { '\n': 0xff0d, '\r': 0xff0d, '\t': 0xff09 };
+const TYPE_GAP = 30, HOLD = 1000, SETTLE = 500; // ms
+const lent = new Map();    // keycode -> { sym, last }: what it holds, and when it was last pressed (or lent)
+const emptied = new Map(); // keycode -> when it was emptied again
+let typingChain = Promise.resolve(), giveBackTimer = 0, noFreeSaid = false;
+const later = (ms) => new Promise((r) => setTimeout(r, ms));
+// The keyboard map as it is now: another program may have replaced it meanwhile (a layout switch loads
+// a whole new one), so what was lent is checked against it, and only keycodes still empty or still
+// holding what was lent to them are used (and given back). Returns the empty ones.
+function emptyKeycodes(x) {
+  const [min, max] = x.keycodes, n = max - min + 1, per = [0];
+  const map = x.f.XGetKeyboardMapping(x.dpy, min, n, per);
+  const free = [];
+  if (!map) { lent.clear(); return free; }
+  try {
+    const ks = longs(map, n * per[0]), at = (kc) => ks.slice((kc - min) * per[0], (kc - min + 1) * per[0]);
+    for (const [kc, l] of [...lent]) if (at(kc)[0] !== l.sym) lent.delete(kc);
+    for (let kc = max; kc >= min && free.length + lent.size < 48; kc--) { // from the top: the low ones are real keys
+      if (!lent.has(kc) && !at(kc).some(Boolean)) free.push(kc);
+    }
+  } finally { x.f.XFree(map); }
+  return free;
+}
+function giveBack() {
+  clearTimeout(giveBackTimer);
+  giveBackTimer = 0;
+  const x = open();
+  if (!x || !lent.size) return;
+  emptyKeycodes(x); // forgets what is no longer ours
+  const now = Date.now();
+  let left = false;
+  for (const [kc, l] of [...lent]) {
+    if (now - l.last < HOLD) { left = true; continue; }
+    x.f.XChangeKeyboardMapping(x.dpy, kc, 2, [0, 0], 1);
+    lent.delete(kc);
+    emptied.set(kc, now);
+  }
+  x.f.XFlush(x.dpy);
+  if (left) giveBackTimer = setTimeout(giveBack, 250);
+}
+async function typeNow(syms) {
+  const x = open();
+  if (!x) return;
+  for (let i = 0, idle = 0; i < syms.length;) {
+    const now = Date.now();
+    const ready = emptyKeycodes(x).filter((kc) => now - (emptied.get(kc) || 0) >= SETTLE);
+    if (!ready.length && !lent.size && !emptied.size) {
+      if (!noFreeSaid) { noFreeSaid = true; console.error('X11: no free keycode to type characters with; text from a phone keyboard is dropped'); }
+      return;
+    }
+    // The characters from here on that are lent already or can have a ready keycode; then their presses.
+    const keyOf = new Map([...lent].map(([kc, l]) => [l.sym, kc]));
+    const change = [], order = [];
+    for (; i < syms.length; i++) {
+      let kc = keyOf.get(syms[i]);
+      if (kc === undefined) {
+        kc = ready.shift();
+        if (kc === undefined) break;
+        keyOf.set(syms[i], kc);
+        change.push([kc, syms[i]]);
+      }
+      lent.set(kc, { sym: syms[i], last: now }); // not given back while this press may still be read
+      order.push(kc);
+    }
+    if (change.length) {
+      for (const [kc, sym] of change) x.f.XChangeKeyboardMapping(x.dpy, kc, 2, [sym, sym], 1);
+      x.f.XSync(x.dpy, 0);
+      await later(TYPE_GAP);
+    }
+    if (order.length) {
+      for (const kc of order) { x.f.XTestFakeKeyEvent(x.dpy, kc, 1, 0); x.f.XTestFakeKeyEvent(x.dpy, kc, 0, 0); }
+      x.f.XSync(x.dpy, 0);
+      const t = Date.now();
+      for (const kc of order) lent.get(kc).last = t;
+      idle = 0;
+    } else if (++idle > 100) return; // nothing became free in 10 s: give up on the rest
+    if (!giveBackTimer) giveBackTimer = setTimeout(giveBack, HOLD);
+    if (i < syms.length) await later(100); // every keycode is in use: wait for one to be given back
+  }
+}
+// Returns a promise that resolves when the text is typed; texts are typed one after the other.
+function typeText(s) {
+  const syms = [];
+  for (const ch of String(s)) {
+    const cp = ch.codePointAt(0);
+    const sym = KEYSYM[ch] || (cp < 0x20 || cp === 0x7f ? 0 : (cp <= 0x7e || (cp >= 0xa0 && cp <= 0xff)) ? cp : 0x1000000 + cp);
+    if (sym) syms.push(sym);
+  }
+  if (!syms.length || !open()) return null;
+  const run = typingChain.then(() => typeNow(syms));
+  typingChain = run.catch((e) => console.error('X11 typing', e.message));
+  return run;
+}
+
 // ---- cursor shape -----------------------------------------------------------------
 // XFixes hands over the current cursor's picture and, for cursors loaded from a theme by name (what
 // GTK, Qt and libXcursor do), that name. The usual names become the CSS names the client knows;
@@ -409,7 +520,7 @@ function underPointer() {
 
 module.exports = {
   viewOnlyReason, hidesCursors: false, // X11 has no way to swap every program's cursor for a transparent one
-  move, button, wheel, keyOf, sendKey,
+  move, button, wheel, keyOf, sendKey, typeText,
   cursorState, cursorBitmap, dragging, dragData, clipSeq, clipboardFiles, setClipboardFiles, underPointer,
   keyCodes: Object.keys(EVDEV), // for the self-test's --input-check
 };
