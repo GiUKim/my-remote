@@ -405,7 +405,16 @@ const cfgPath = () => path.join(app.getPath('userData'), 'config.json');
 
 function newKey() { return crypto.randomBytes(32).toString('base64url'); }
 
-function loadConfig() {
+// The key is encrypted with Electron's asynchronous safeStorage calls (the synchronous ones are
+// deprecated in Electron 45 and gone in 46). Each reads what the other wrote, and Electron 45 reads what
+// Electron 33 wrote and the reverse: checked on Windows, and on Linux with a keyring (gnome-libsecret,
+// 'v11') and without one ('v10', only obscured), where the asynchronous calls need no
+// setUsePlainTextEncryption. `again`: Electron asks for the key to be encrypted anew (its key changed).
+async function decryptKey(keyEnc) {
+  const r = await safeStorage.decryptStringAsync(Buffer.from(keyEnc, 'base64'));
+  return typeof r === 'string' ? { text: r, again: false } : { text: r && r.result, again: !!(r && r.shouldReEncrypt) };
+}
+async function loadConfig() {
   cfgIssue = '';
   cfgBackup = '';
   const problem = (ko, en) => { cfgIssue = cfgIssue || ko; console.warn(`[host] WARNING: ${cfgPath()} ${en}`); };
@@ -434,13 +443,12 @@ function loadConfig() {
   // Linux without a keyring (no GNOME Keyring or KWallet running): Electron can then only obscure
   // the key with a fixed password. The host keeps working that way, says so, and the file is
   // readable by this user only.
-  if (process.platform === 'linux' && !safeStorage.isEncryptionAvailable()) {
-    safeStorage.setUsePlainTextEncryption(true);
-    console.warn(`[host] WARNING: no OS keyring (${safeStorage.getSelectedStorageBackend()}): the access key in ${cfgPath()} is not encrypted, only obscured; the file is readable by this user only`);
+  if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') {
+    console.warn(`[host] WARNING: no OS keyring (basic_text): the access key in ${cfgPath()} is not encrypted, only obscured; the file is readable by this user only`);
   }
-  let key = null;
+  let key = null, again = false;
   if (keyEnc) {
-    try { if (safeStorage.isEncryptionAvailable()) key = safeStorage.decryptString(Buffer.from(keyEnc, 'base64')); } catch {}
+    try { ({ text: key, again } = await decryptKey(keyEnc)); } catch {}
     if (!/^[A-Za-z0-9_-]{43}$/.test(key || '')) { // 32 bytes, base64url, as newKey() makes them
       key = null;
       problem(process.platform === 'win32'
@@ -449,8 +457,10 @@ function loadConfig() {
     }
   }
   if (!key && text === null && !cfgIssue) { // the first start: no file yet
-    try { const k = newKey(); saveConfig(k); key = k; } catch (e) { problem(`새 접속 키를 저장하지 못했습니다 (${e.code || e.message}).`, `could not be written (${e.code || e.message})`); }
+    try { const k = newKey(); await saveConfig(k); key = k; } catch (e) { problem(`새 접속 키를 저장하지 못했습니다 (${e.code || e.message}).`, `could not be written (${e.code || e.message})`); }
   }
+  // Only a file that is fine otherwise is rewritten for that; the key stays the same.
+  if (key && again && !cfgIssue) { try { await saveConfig(key); } catch (e) { console.error('[host] encrypting the key anew failed:', e.code || e.message); } }
   if (cfgIssue && text !== null) { try { cfgBackup = backupConfig(); } catch (e) { console.error('config backup', e.message); } }
   cfg.key = key; // null: there is no usable key (askForKey)
 }
@@ -485,11 +495,14 @@ function writeConfigFile(text) {
     }
   }
 }
-function saveConfig(key) {
-  if (!safeStorage.isEncryptionAvailable()) throw new Error('OS 암호화 저장소(DPAPI)를 사용할 수 없습니다');
+// The encrypted key is decrypted again before it is written: a file whose key cannot be read back would
+// cost every client its access.
+async function saveConfig(key) {
+  if (!(await safeStorage.isAsyncEncryptionAvailable())) throw new Error('OS 암호화 저장소(DPAPI)를 사용할 수 없습니다');
+  const enc = await safeStorage.encryptStringAsync(key); // Windows: DPAPI, only this Windows user can decrypt
+  if ((await decryptKey(enc.toString('base64'))).text !== key) throw new Error('암호화한 키를 다시 풀 수 없습니다');
   if (cfgIssue) cfgBackup = backupConfig(); // the file as it was, before it is replaced
-  const out = { ...savedCfg, keyEnc: safeStorage.encryptString(key).toString('base64') }; // DPAPI: only this Windows user can decrypt
-  writeConfigFile(JSON.stringify(out, null, 2));
+  writeConfigFile(JSON.stringify({ ...savedCfg, keyEnc: enc.toString('base64') }, null, 2));
   cfgIssue = '';
 }
 // There is no usable key (cfgIssue says why): ask the person at this PC. A new key is made only when
@@ -502,11 +515,11 @@ async function askForKey() {
       detail: `${cfgIssue}\n\n${cfgPath()}${cfgBackup ? `\n원래 파일의 사본: ${path.basename(cfgBackup)}` : ''}\n\n` +
         "원인을 고쳤으면 '다시 시도'를 누르세요. '새 키 발급'은 새 접속 키를 만들어 저장합니다. 기존 키로는 더 이상 접속할 수 없으므로 새 키를 클라이언트에 다시 알려 주어야 합니다.",
     });
-    if (response === 0) { loadConfig(); if (cfg.key) return true; continue; }
+    if (response === 0) { await loadConfig(); if (cfg.key) return true; continue; }
     if (response !== 1) return false;
     try {
       const key = newKey();
-      saveConfig(key);
+      await saveConfig(key);
       cfg.key = key;
       return true;
     } catch (e) {
@@ -655,7 +668,7 @@ else {
   app.on('before-quit', () => { quitting = true; input.reset(); setCursorsHidden(false); clearKeyClip(); });
   process.on('exit', () => { if (cursorsHidden) input.restoreCursors(); });
   app.whenReady().then(async () => {
-    loadConfig();
+    await loadConfig();
     if (!cfg.key && !(await askForKey())) { quitting = true; app.quit(); return; }
     cfg.viewOnly = input.viewOnlyReason(); // '' = input from the client is injected here
     if (cfg.viewOnly) console.warn(`[host] WARNING: the host is view-only, input from the client is not injected: ${cfg.viewOnly}`);
@@ -785,7 +798,7 @@ else {
       });
       if (r.response !== 1) return false;
       const key = newKey();
-      try { saveConfig(key); } catch (e) {
+      try { await saveConfig(key); } catch (e) {
         console.error('[host] saving a new key failed:', e.code || e.message);
         dialog.showMessageBox(win, { type: 'error', message: '새 키를 저장하지 못했습니다', detail: `${e.code || e.message}\n\n기존 키를 그대로 씁니다.` }).catch(() => {});
         return false;

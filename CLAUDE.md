@@ -279,8 +279,9 @@ the client app instead).
     a `_NET_WM_WINDOW_TYPE_DESKTOP` window, or GNOME's desktop-icons window) go into
     `app.getPath('desktop')`, anything else onto the clipboard and the page says to paste. Received
     files wait in `~/.cache/my-remote-drop` (on Linux `/tmp` is shared by all users).
-  - No keyring (`safeStorage` backend `basic_text`, usual outside a GNOME/KDE session): the host calls
-    `setUsePlainTextEncryption(true)`, prints a warning and keeps `config.json` at mode 0600.
+  - No keyring (`safeStorage` backend `basic_text`, usual outside a GNOME/KDE session): the key is only
+    obscured ('v10', a fixed password); the host prints a warning and keeps `config.json` at mode 0600.
+    The asynchronous calls work there without `setUsePlainTextEncryption` (the synchronous ones needed it).
   - Chromium's sandbox needs its setuid helper (npm does not install it so) or unprivileged user
     namespaces: Ubuntu 22.04 has them (the self-test ran with the sandbox on), 23.10 and later restrict
     them through AppArmor. `host/linux-launch.sh` then stops and names the two ways out (the helper,
@@ -357,10 +358,14 @@ the client app instead).
   start `dist/electron` directly). `setup.ps1`/`setup.sh` run `node node_modules/electron/install.js`
   after `npm install`. A host that runs while `npm install` replaces Electron makes it fail: stop the
   host first. The package needs Node >= 22.12 (the setup scripts check). `safeStorage` ciphertexts of
-  33 and 45, sync and async calls, are interchangeable (same profile, checked with a throwaway profile
-  that was let quit normally: the key lives in its Local State, which an immediate `app.exit()` never
-  writes); the sync calls are deprecated in 45 and removed in 46, so `loadConfig`/`saveConfig` must move
-  to the async ones before an upgrade past 45. Measured risks of the upgrade, still to be benched
+  33 and 45, sync and async calls, are interchangeable in both directions (checked with a throwaway
+  profile and a made-up secret on Windows, where the key lives in the profile's Local State, which an
+  immediate `app.exit()` never writes, so let such a test quit normally; and on Linux with a keyring,
+  gnome-libsecret 'v11', and without one, 'v10'). The sync calls are deprecated in 45 and removed in 46:
+  `loadConfig`/`saveConfig` use the async ones (`decryptStringAsync`, `encryptStringAsync`,
+  `isAsyncEncryptionAvailable`), and `saveConfig` decrypts what it encrypted before it writes the file.
+  When `decryptStringAsync` says `shouldReEncrypt`, a file that is fine otherwise is written again with
+  the same key (not seen yet). Measured risks of the upgrade, still to be benched
   (Chromium 130 -> 156, WebRTC branch 6723 -> 8078): the libaom AV1 encoder now changes its speed
   setting by itself (`WebRTC-EncoderSpeed`, `dynamic_speed`; in smooth mode it may go down to speed 7
   where 130 used a fixed 10: more CPU; `dynamic_speed:false,av1_camera:normal` restores the old
@@ -750,9 +755,12 @@ Electron 45.3.1 (2026-11-13, was 33.4.11): the self-test passes on it (44 checks
 the host's clipboard reaching the client, the lock notice, a phone's gestures and keyboard traced from
 synthetic touch events, the fullscreen/window key rule and the clipboard poll's logic). The first
 self-test on 45 passed too while the clipboard text never reached the client (see the clipboard gotcha):
-the code was ported after a review of the breaking changes from 34 to 45. Not yet checked on 45: the
-bench (latency and quality), `--clip-check`, `--client-app-check` and `--shell-check` (the client
-app), `--dragout-check`/`--dropin-check`, Linux (the clipboard helpers there were rewritten unseen).
+the code was ported after a review of the breaking changes from 34 to 45. On Linux (the server, Xvfb)
+the whole self-test with `--input-check`, `--clip-check` and `--client-app-check` passes on 45 (42
+checks; they cover the clipboard helpers there, rewritten for the promise-based clipboard), with the key
+stored through the asynchronous `safeStorage` calls. Not yet checked on 45: the bench (latency and
+quality), on Windows `--clip-check`, `--client-app-check` and `--shell-check` (the client app), and
+`--dragout-check`/`--dropin-check`.
 Not verified anywhere: a real phone, Keyboard Lock holding the Windows key on Windows, `shell:clipPoll`
 in a real client app with a real password manager.
 
