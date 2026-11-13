@@ -532,8 +532,10 @@ async function run() {
     js = remote.js;
   } else {
     const cw = mk({ x: cd.bounds.x + cd.bounds.width - CW, y: cd.bounds.y + cd.bounds.height - CH, width: CW, height: CH });
-    cw.webContents.on('console-message', (_e, _l, m) => {
-      if (String(m).startsWith('BENCH-TARGET ')) ctl('/target', JSON.parse(String(m).slice(13))).catch(() => {});
+    // The message is on the event since Electron 35; the positional argument goes in 47.
+    cw.webContents.on('console-message', (e, _l, legacy) => {
+      const m = String(e && e.message !== undefined ? e.message : legacy);
+      if (m.startsWith('BENCH-TARGET ')) ctl('/target', JSON.parse(m.slice(13))).catch(() => {});
     });
     await cw.loadFile(C.clientFile, { hash: 'k=' + C.key + '&ro' });
     cw.showInactive();

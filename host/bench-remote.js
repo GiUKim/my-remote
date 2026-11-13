@@ -40,8 +40,10 @@ app.whenReady().then(() => {
         fs.writeFileSync(file, m.html);
         win = new BrowserWindow({ x: 0, y: 0, width: m.width || 320, height: m.height || 200, webPreferences: { backgroundThrottling: false } });
         // The link emulator on the host needs to know which of the host's addresses the page picked.
-        win.webContents.on('console-message', (_e, _l, text) => {
-          if (String(text).startsWith('BENCH-TARGET ')) { try { out({ event: 'target', value: JSON.parse(String(text).slice(13)) }); } catch {} }
+        // The message is on the event since Electron 35 (the other machine may run an older one).
+        win.webContents.on('console-message', (e, _l, legacy) => {
+          const text = String(e && e.message !== undefined ? e.message : legacy);
+          if (text.startsWith('BENCH-TARGET ')) { try { out({ event: 'target', value: JSON.parse(text.slice(13)) }); } catch {} }
         });
         await win.loadFile(file, { hash: m.hash });
       } else if (m.op === 'js') value = await win.webContents.executeJavaScript(m.code);

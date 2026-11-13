@@ -17,9 +17,9 @@ When the user asks you to set this up, do the following in order.
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File setup.ps1
    ```
-   It needs no admin rights. It downloads portable Node 22 LTS into `tools\node` if Node >= 20 is
+   It needs no admin rights. It downloads portable Node 22 LTS into `tools\node` if Node >= 22.12 is
    missing (SHA-256 verified), runs `npm install` in `host`, then runs the self-test.
-   On Linux (X11 session) run `./setup.sh` instead. It downloads no Node: without Node >= 20 and npm
+   On Linux (X11 session) run `./setup.sh` instead. It downloads no Node: without Node >= 22.12 and npm
    on PATH it says what to install and stops. Then `npm install` in `host` and the self-test, as above.
 3. **Check the result.** Success is `[selftest] ALL PASS` and exit code 0. `INFO` lines are not
    failures. The self-test is local only (relay on 127.0.0.1, no STUN, throwaway key and profile,
@@ -336,12 +336,31 @@ the client app instead).
   key), arrows, Home/End, PgUp/PgDn, Del, F5. Without the person's own codec choice a phone asks for
   H.264 unless `MediaCapabilities` says it decodes AV1 power-efficiently. Not tried on a real phone;
   how a phone gets the loader file (no file:// on iPhone) is not settled.
+- **Electron's main-process `clipboard` is promise-based since Electron 44**: `readText`, `writeText`,
+  `read`, `write` (an array of `ClipboardItem`) and `has` return promises; `availableFormats`,
+  `readBuffer`, `writeBuffer`, `readHTML` and `readRTF` are gone; formats without a MIME name go as
+  `electron application/osclipboard;format="..."`; `text/uri-list` is the native file list. An
+  unawaited `readText()` is a Promise whose `.length` is undefined: after the upgrade the host sent the
+  client no text and `키 복사` never cleared the key, silently, until every call was awaited. The
+  Linux helpers `clipboardFiles`/`setClipboardFiles` return promises now (callers await; the Win32
+  ones return at once). The self-test now fails when text on the host's clipboard does not reach the
+  client (it was an INFO line). `clearKeyClip` compares the clipboard's change count instead of
+  reading the text back, so it also works in `before-quit`.
 - **Electron 45's npm package no longer fetches Electron's program at install time** (it would at
   first start through the package's own launcher, which the `.bat`/`.sh` launchers do not use: they
   start `dist/electron` directly). `setup.ps1`/`setup.sh` run `node node_modules/electron/install.js`
   after `npm install`. A host that runs while `npm install` replaces Electron makes it fail: stop the
-  host first. `safeStorage` ciphertexts of 33 and 45, sync and async calls, are interchangeable (same
-  profile); the sync calls are deprecated in 45.
+  host first. The package needs Node >= 22.12 (the setup scripts check). `safeStorage` ciphertexts of
+  33 and 45, sync and async calls, are interchangeable (same profile, checked with a throwaway profile
+  that was let quit normally: the key lives in its Local State, which an immediate `app.exit()` never
+  writes); the sync calls are deprecated in 45 and removed in 46, so `loadConfig`/`saveConfig` must move
+  to the async ones before an upgrade past 45. Measured risks of the upgrade, still to be benched
+  (Chromium 130 -> 156, WebRTC branch 6723 -> 8078): the libaom AV1 encoder now changes its speed
+  setting by itself (`WebRTC-EncoderSpeed`, `dynamic_speed`; in smooth mode it may go down to speed 7
+  where 130 used a fixed 10: more CPU; `dynamic_speed:false,av1_camera:normal` restores the old
+  speeds), the frame cadence adapter (`refine`) and the receiver's timing were rewritten, and probing
+  also happens outside ALR. The three field trials in `ENGINE_TRIALS` are still read under the same
+  names.
 - **Cursor and the captured video.** Chromium always paints the cursor into captured frames
   (`cursor: 'never'` is ignored, and hiding it with the Magnification API does not affect capture). The
   host therefore swaps the system cursors for a transparent one (`SetSystemCursor`) *before* capture
@@ -721,10 +740,13 @@ Chromium handing over files copied in Explorer in a paste event. Not verified: d
 programs (mail, chat, browser upload fields), the desktop, an elevated target (Windows blocks it),
 a paste into Explorer through the host, a real second PC, folders whose reading throws.
 
-Electron 45.3.1 (2026-11-13, was 33.4.11): the self-test passes on it (43 checks, among them the
-lock notice, a phone's gestures and keyboard traced from synthetic touch events, the fullscreen/window
-key rule and the clipboard poll's logic). Not yet checked on 45: the bench (latency and quality),
-`--client-app-check` and `--shell-check` (the client app), `--dragout-check`/`--dropin-check`, Linux.
+Electron 45.3.1 (2026-11-13, was 33.4.11): the self-test passes on it (44 checks, among them text on
+the host's clipboard reaching the client, the lock notice, a phone's gestures and keyboard traced from
+synthetic touch events, the fullscreen/window key rule and the clipboard poll's logic). The first
+self-test on 45 passed too while the clipboard text never reached the client (see the clipboard gotcha):
+the code was ported after a review of the breaking changes from 34 to 45. Not yet checked on 45: the
+bench (latency and quality), `--clip-check`, `--client-app-check` and `--shell-check` (the client
+app), `--dragout-check`/`--dropin-check`, Linux (the clipboard helpers there were rewritten unseen).
 Not verified anywhere: a real phone, Keyboard Lock holding the Windows key on Windows, `shell:clipPoll`
 in a real client app with a real password manager.
 

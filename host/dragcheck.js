@@ -15,7 +15,7 @@
 // whoever uses this PC must not touch the mouse or keyboard meanwhile, so ask first. It runs only
 // when the clipboard holds nothing or text (plain, HTML, RTF), which is put back afterwards, and it
 // presses nothing when anything else covers the test file on the screen.
-const { BrowserWindow, clipboard, screen } = require('electron');
+const { BrowserWindow, screen } = require('electron');
 const { execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -220,9 +220,9 @@ exports.runIn = async ({ check, info, cfg, buildClientHtml }) => {
 
 exports.run = async ({ check, info, dragOut, closeDragFiles, cfg, buildClientHtml }) => {
   // The clipboard is put back afterwards; that is only possible for text (plain, HTML, RTF).
-  const formats = clipboard.availableFormats(), TEXTY = new Set(['text/plain', 'text/html', 'text/rtf']);
-  if (!formats.every((f) => TEXTY.has(f))) { info('drag-out check skipped: the clipboard holds more than text (' + formats.join(', ') + ')'); return; }
-  const keep = Object.fromEntries([['text', clipboard.readText()], ['html', formats.includes('text/html') ? clipboard.readHTML() : ''], ['rtf', formats.includes('text/rtf') ? clipboard.readRTF() : '']].filter(([, v]) => v));
+  const { keepTextClipboard, restoreClipboard } = require('./selftest');
+  const keep = await keepTextClipboard(['text/plain', 'text/html', 'text/rtf']);
+  if (!keep) { info('drag-out check skipped: the clipboard holds more than text'); return; }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-dragtest-'));
   const content = {};
   for (const n of ['drag-test-a.txt', 'drag-test-b.txt', 'drag-test-c.txt']) fs.writeFileSync(path.join(dir, n), (content[n] = crypto.randomBytes(48000).toString('hex')));
@@ -351,7 +351,7 @@ exports.run = async ({ check, info, dragOut, closeDragFiles, cfg, buildClientHtm
     if (cw && !cw.isDestroyed()) cw.destroy();
     if (hadHome && at(home.x, home.y)) send({ t: 'mm', ...at(home.x, home.y) });
     if (hwnd && IsWindow(hwnd)) { SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); PostMessageW(hwnd, 0x0010, 0, 0); } // not topmost, then WM_CLOSE
-    if (Object.keys(keep).length) clipboard.write(keep); else clipboard.clear();
+    await restoreClipboard(keep);
     if (closeDragFiles) closeDragFiles(null);
     try { fs.rmSync(path.join(os.tmpdir(), `myremote-dragtest-client-${process.pid}.html`), { force: true }); } catch {}
     for (let i = 0; i < 20; i++) { try { fs.rmSync(dir, { recursive: true, force: true }); break; } catch { await sleep(250); } }

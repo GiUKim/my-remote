@@ -150,7 +150,7 @@ async function placeFiles(files, d) {
   }
   const left = files.filter((f) => fs.existsSync(f)), w = win32();
   let ok = false;
-  try { ok = !!w && left.length > 0 && w.setClipboardFiles(left); } catch (e) { console.error('files onto the clipboard', e); }
+  try { ok = !!w && left.length > 0 && !!(await w.setClipboardFiles(left)); } catch (e) { console.error('files onto the clipboard', e); } // a promise on Linux
   if (ok) return { how: (await pasteAt(d)) ? 'pasted' : 'clipboard' };
   // Neither a folder nor the clipboard (no way to put files there on this system, as on macOS, or
   // another program holds the clipboard): into Downloads, else onto the desktop, where they are
@@ -206,28 +206,29 @@ function setupIpc() {
   // exception to "fullscreen is the host, a window is this PC"). The page asks about twice a second
   // while connected; text copied here goes over at once. Not what a password manager marked as not to
   // be kept or passed on, and not a file list (files go over when pasted on the host).
-  ipcMain.handle('shell:clipPoll', (e, lastSeq) => {
+  // (Electron's clipboard reads and writes return promises since Electron 44.)
+  ipcMain.handle('shell:clipPoll', async (e, lastSeq) => {
     const m = shellOf(e.sender) ? win32() : null;
     if (!m) return null;
     try {
       const seq = m.clipSeq();
       if (seq === lastSeq) return { seq };
       if (m.clipboardPrivate()) return { seq, private: true };
-      if (m.clipboardFiles().length) return { seq, files: true };
-      const text = clipboard.readText();
+      if ((await m.clipboardFiles()).length) return { seq, files: true };
+      const text = String((await clipboard.readText()) || '');
       return { seq, text: text.length <= 60000 ? text : '' };
     } catch { return null; }
   });
   // Text copied on the host, onto this PC's clipboard at once (also while none of our windows has the
   // focus, which the page's own clipboard writing needs).
-  ipcMain.handle('shell:clipWrite', (e, text) => {
+  ipcMain.handle('shell:clipWrite', async (e, text) => {
     if (!shellOf(e.sender) || typeof text !== 'string' || text.length > 60000) return false;
-    clipboard.writeText(text);
+    await clipboard.writeText(text);
     return true;
   });
   ipcMain.handle('shell:dropText', async (e, id, text) => {
     if (!shellOf(e.sender) || typeof text !== 'string' || text.length > 200000) return '';
-    clipboard.writeText(text);
+    await clipboard.writeText(text); // before Ctrl+V is pressed at the drop point
     const d = drops.get(id);
     if (d && FOLDERISH.has(d.cls)) return 'copied'; // a folder cannot take text
     return (await pasteAt(d)) ? 'pasted' : 'copied';

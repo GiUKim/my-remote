@@ -109,6 +109,9 @@ function currentCursor() {
 const slow = {};
 const note = (what, ms) => { const e = slow[what] || (slow[what] = { n: 0, ms: 0, max: 0 }); e.n++; e.ms += ms; e.max = Math.max(e.max, ms); };
 const timed = (what, fn) => { const t0 = performance.now(); try { return fn(); } finally { const ms = performance.now() - t0; if (ms > 50) note(what, ms); } };
+// The same for calls that may return a promise: Electron's clipboard reads and writes do since
+// Electron 44, and so do the Linux clipboard helpers in platform/linux.js.
+const timedAsync = async (what, fn) => { const t0 = performance.now(); try { return await fn(); } finally { const ms = performance.now() - t0; if (ms > 50) note(what, ms); } };
 // Something dragged out of the remote picture and let go over the client PC. The drag is ended
 // here without a drop (Escape), what was being dragged is still selected and gets copied
 // (Ctrl+C), and the result is handed over: text, or the names and sizes of files the client may
@@ -187,8 +190,8 @@ async function dragOut(button) {
     if (!changed) return { kind: 'none', why: 'nocopy' };
     await sleep(80); // the program may still be adding formats
     // Reading the clipboard waits for its owner to hand the data over.
-    paths = timed('drag clipboard', () => input.clipboardFiles());
-    if (!paths.length) text = timed('drag clipboard', () => clipboard.readText());
+    paths = await timedAsync('drag clipboard', () => input.clipboardFiles());
+    if (!paths.length) text = await timedAsync('drag clipboard', () => clipboard.readText());
   }
   if (paths.length) return offerPaths(paths);
   return text ? { kind: 'text', s: text.slice(0, CLIP_MAX), cut: text.length > CLIP_MAX } : { kind: 'none', why: 'empty' };
@@ -229,7 +232,7 @@ let clipFiles = null; // { seq, paths }
 // The sizes are looked at asynchronously: files on a network share can take seconds to answer, and the
 // client's input waits on this thread meanwhile. Reading the list itself waits for the clipboard's owner.
 async function clipFilesNow(seq) {
-  const paths = timed('clip-files', () => input.clipboardFiles());
+  const paths = await timedAsync('clip-files', () => input.clipboardFiles());
   clipFiles = paths.length ? { seq, paths } : null;
   if (!clipFiles) return null;
   let bytes = 0, dirs = 0;
@@ -336,7 +339,7 @@ async function putDone(gid, at, mode) {
     console.log(`drop not taken (${effect}): ${so.error()} ${so.debug()}`);
   }
   // A paste, or nothing under the pointer took them: onto the clipboard, and for a paste Ctrl+V.
-  if (!input.setClipboardFiles(items)) return { how: 'none', why: 'clipboard' };
+  if (!(await input.setClipboardFiles(items))) return { how: 'none', why: 'clipboard' };
   if (mode === 'paste') { input.tap(input.isDown('ControlLeft') || input.isDown('ControlRight') ? ['KeyV'] : ['ControlLeft', 'KeyV']); return { how: 'pasted', n }; }
   return { how: 'clipboard', n };
 }
@@ -554,13 +557,15 @@ function setTray(live) {
   if (tray) { tray.setImage(icon(live)); tray.setToolTip('My Remote Host — ' + (live ? '원격 접속 중' : '대기 중')); }
 }
 function showWindow() { if (win) { win.show(); win.focus(); } }
-// 키 복사 puts the key on the clipboard. A minute later it is taken off again if it is still there (it
-// is only compared, never logged), so that it does not go along with whatever is pasted next.
-let keyOnClip = null; // { key, timer }
+// 키 복사 puts the key on the clipboard. A minute later it is taken off again if it is still there, so
+// that it does not go along with whatever is pasted next. "Still there" is the clipboard's change count
+// being the one right after the key was put on it: nothing is read back (Electron's clipboard reads
+// are promises since 44, and this must also work in before-quit, which cannot wait).
+let keyOnClip = null; // { seq, timer }
 function clearKeyClip() {
   if (!keyOnClip) return;
   clearTimeout(keyOnClip.timer);
-  try { if (clipboard.readText() === keyOnClip.key) clipboard.clear(); } catch {}
+  try { if (input.clipSeq() === keyOnClip.seq) clipboard.clear(); } catch {}
   keyOnClip = null;
 }
 
@@ -727,19 +732,20 @@ else {
       const files = await clipFilesNow(seq);
       if (files) return { seq, files };
       if (input.clipboardPrivate()) return { seq }; // a password manager's: not passed on to the client
-      const text = timed('clip-read', () => clipboard.readText());
+      const text = String((await timedAsync('clip-read', () => clipboard.readText())) || '');
       return { seq, text: text.length <= CLIP_MAX ? text : '' }; // longer text is not sent to the client: not copied to the page either
     });
     ipcMain.handle('clip-get', async (_e, seq) => { try { return await clipGet(Number(seq)); } catch (e) { console.error('clip get', e.message); return { kind: 'none', why: 'error' }; } });
-    ipcMain.on('clip-write', (_e, text) => { if (cfg.clipboard && typeof text === 'string' && text.length <= CLIP_MAX) timed('clip-write', () => clipboard.writeText(text)); });
+    ipcMain.on('clip-write', (_e, text) => { if (cfg.clipboard && typeof text === 'string' && text.length <= CLIP_MAX) timedAsync('clip-write', () => clipboard.writeText(text)).catch((e) => console.error('clip write', e.message)); });
     ipcMain.on('session', (_e, live) => {
       setTray(!!live);
       if (live && !SELFTEST && !BENCH && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: '원격 접속이 시작되었습니다.' }).show();
     });
-    ipcMain.handle('copy-key', () => {
+    ipcMain.handle('copy-key', async () => {
       if (keyOnClip) clearTimeout(keyOnClip.timer);
-      clipboard.writeText(cfg.key);
-      keyOnClip = { key: cfg.key, timer: setTimeout(clearKeyClip, 60e3) };
+      keyOnClip = null;
+      await clipboard.writeText(cfg.key);
+      keyOnClip = { seq: input.clipSeq(), timer: setTimeout(clearKeyClip, 60e3) }; // see clearKeyClip
       return true;
     });
     ipcMain.handle('regen-key', async () => {

@@ -50,6 +50,25 @@ exports.startRelay = () => new Promise((resolve) => {
 });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// The clipboard's text as it is, to be put back after a check that uses the clipboard: { mime: text },
+// {} when it is empty, null when it holds anything but the allowed text types (the check is skipped
+// then: that would be lost). Electron's clipboard is promise-based since Electron 44.
+async function keepTextClipboard(allowed) {
+  const { clipboard } = require('electron');
+  try {
+    const items = await clipboard.read();
+    if (items.length > 1 || items.some((i) => i.types.some((t) => !allowed.includes(t)))) return null;
+    const rec = {};
+    for (const i of items) for (const t of i.types) rec[t] = await (await i.getType(t)).text();
+    return rec;
+  } catch { return null; }
+}
+async function restoreClipboard(rec) {
+  const { clipboard, ClipboardItem } = require('electron');
+  try { if (rec && Object.keys(rec).length) await clipboard.write([new ClipboardItem(rec)]); else clipboard.clear(); } catch (e) { console.error('putting the clipboard back', e.message); }
+}
+module.exports.keepTextClipboard = keepTextClipboard; // also for dragcheck.js
+module.exports.restoreClipboard = restoreClipboard;
 
 exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder }) => {
   const results = [];
@@ -576,19 +595,20 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       if (process.argv.includes('--clip-check')) {
         // Opt-in: puts two files on this PC's clipboard and reads them back. Only when the clipboard
         // holds nothing or plain text, which is put back afterwards.
-        const { clipboard } = require('electron');
-        if (clipboard.availableFormats().every((f) => f === 'text/plain')) {
-          const keep = clipboard.readText();
-          const set = input.setClipboardFiles([big, small]), back = input.clipboardFiles();
-          // Linux: what a file manager that writes text/uri-list (KDE's Dolphin) puts there is read as well.
+        const { clipboard, ClipboardItem } = require('electron');
+        const keep = await keepTextClipboard(['text/plain']);
+        if (keep) {
+          const set = await input.setClipboardFiles([big, small]), back = await input.clipboardFiles();
+          // Linux: what a file manager that writes text/uri-list alone (KDE's Dolphin) puts there is read as well.
           let uriList = [big, small];
           if (process.platform === 'linux') {
-            clipboard.writeBuffer('text/uri-list', Buffer.from([big, small].map((f) => require('url').pathToFileURL(f).href).join('\r\n') + '\r\n'));
-            uriList = input.clipboardFiles();
+            await clipboard.write([new ClipboardItem({ 'text/uri-list': [big, small].map((f) => require('url').pathToFileURL(f).href).join('\r\n') + '\r\n' })]);
+            uriList = await input.clipboardFiles();
           }
-          if (keep) clipboard.writeText(keep); else clipboard.clear();
-          check('files can be put on the clipboard', set && JSON.stringify(back) === JSON.stringify([big, small]) && JSON.stringify(uriList) === JSON.stringify([big, small]) && clipboard.readText() === keep,
-            `${back.length} read back${process.platform === 'linux' ? `, ${uriList.length} from text/uri-list` : ''}`);
+          await restoreClipboard(keep);
+          const after = await keepTextClipboard(['text/plain']);
+          check('files can be put on the clipboard', set && JSON.stringify(back) === JSON.stringify([big, small]) && JSON.stringify(uriList) === JSON.stringify([big, small]) && JSON.stringify(after) === JSON.stringify(keep),
+            `${back.length} read back${process.platform === 'linux' ? `, ${uriList.length} from text/uri-list` : ''}, the text put back`);
         } else info('clipboard check skipped: the clipboard holds more than plain text');
       }
       for (const d of [src, dst]) try { fs.rmSync(d, { recursive: true, force: true }); } catch {}
@@ -642,10 +662,8 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     // does) are announced to the client, and fetched when it leaves its windows. Only when the
     // clipboard holds nothing or text (plain, HTML), which is put back.
     if (process.argv.includes('--clip-check')) {
-      const { clipboard } = require('electron');
-      const formats = clipboard.availableFormats();
-      if (formats.every((f) => ['text/plain', 'text/html'].includes(f))) {
-        const keep = Object.fromEntries([['text', clipboard.readText()], ['html', formats.includes('text/html') ? clipboard.readHTML() : '']].filter(([, v]) => v));
+      const keep = await keepTextClipboard(['text/plain', 'text/html']);
+      if (keep) {
         const cdir = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-clipfiles-'));
         const a = path.join(cdir, 'copied-a.bin'), b = path.join(cdir, 'copied-b.txt');
         fs.writeFileSync(a, require('crypto').randomBytes(200000)); fs.writeFileSync(b, 'copied on the host\n');
@@ -653,7 +671,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         try {
           await js(`window.__rd.keepFiles = true; window.__rd.files = []; 1`);
           const notes0 = (await state()).xfer.clipNotes;
-          input.setClipboardFiles([a, b]);
+          await input.setClipboardFiles([a, b]);
           const [noted] = await until((x) => x.xfer.clipNotes > notes0, 8);
           await js(`READONLY = false; try { maybeFetchClipFiles(); } finally { READONLY = true; } 1`);
           const [got, s2] = await until((x) => x.files.length === 2, 20);
@@ -663,7 +681,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
             `announced ${!!noted}, received ${files.map((f) => f.name).join(', ') || 'nothing'}`);
         } finally {
           await js(`window.__rd.keepFiles = false; 1`);
-          if (Object.keys(keep).length) clipboard.write(keep); else clipboard.clear();
+          await restoreClipboard(keep);
           try { fs.rmSync(cdir, { recursive: true, force: true }); } catch {}
         }
       } else info('copied-files check skipped: the clipboard holds more than text');
@@ -679,7 +697,14 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     check('host statistics reach the client', ok, ok ? `${s.host.codec} via ${s.host.enc}, available ${s.host.availMbps} Mbps` : '');
 
     info(`audio track: ${s.audio ? 'received' : 'none (normal on a PC without an audio output device)'}`);
-    info(`clipboard host->client: ${s.clipRx ? 'received' : 'none (normal when the clipboard holds no text)'}`);
+    // The host sends the text on its clipboard when a session starts: when there is some, it must have
+    // arrived (with Electron 45 an unawaited clipboard read once sent nothing, and only an INFO line said so).
+    {
+      const { clipboard } = require('electron');
+      const text = String((await clipboard.readText().catch(() => '')) || '');
+      if (text && text.length <= 60000 && !input.clipboardPrivate()) check('text on the host\'s clipboard reaches the client', s.clipRx, s.clipRx ? 'received' : 'not received');
+      else info(`clipboard host->client: ${s.clipRx ? 'received' : 'not checked (the clipboard holds no text)'}`);
+    }
 
     // Host monitors changed (simulated): the session is renegotiated and the client comes back by itself.
     let before = s.connects;

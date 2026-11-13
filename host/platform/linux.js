@@ -334,24 +334,33 @@ function fileList(text) {
   }
   return out;
 }
-function clipboardFiles() {
+// Electron's clipboard has been promise-based since Electron 44 (read() of ClipboardItems; formats it
+// has no MIME name for go as `electron application/osclipboard;format="..."`), so both of these return
+// promises; callers await them (the Win32 versions return at once, which await takes as well).
+const GNOME_FILES = 'electron application/osclipboard;format="x-special/gnome-copied-files"';
+async function clipboardFiles() {
   const { clipboard } = require('electron');
-  for (const format of ['x-special/gnome-copied-files', 'text/uri-list']) {
-    let out = [];
-    try { out = fileList(clipboard.readBuffer(format).toString('utf8')); } catch {}
-    if (out.length) return out;
-  }
+  try {
+    for (const item of await clipboard.read()) {
+      for (const type of [GNOME_FILES, 'text/uri-list']) {
+        if (!item.types.includes(type)) continue;
+        const out = fileList(await (await item.getType(type)).text());
+        if (out.length) return out;
+      }
+    }
+  } catch {}
   return [];
 }
-// Files onto the clipboard, for pasting into a file manager. Electron puts one format per write on
-// the clipboard (a second write replaces the first), so it is the one the desktop's file manager
-// reads: KDE's Dolphin reads text/uri-list, the GNOME family and Xfce x-special/gnome-copied-files.
-function setClipboardFiles(paths) {
-  const { clipboard } = require('electron');
+// Files onto the clipboard, for pasting into a file manager: both the GNOME family's and Xfce's
+// x-special/gnome-copied-files and text/uri-list (KDE's Dolphin), in one write, which Electron commits
+// at once (before Electron 44 a second write replaced the first, so only one of them could go).
+async function setClipboardFiles(paths) {
+  const { clipboard, ClipboardItem } = require('electron');
   const uris = paths.map((p) => url.pathToFileURL(p).href);
-  if (/KDE/i.test(process.env.XDG_CURRENT_DESKTOP || '')) clipboard.writeBuffer('text/uri-list', Buffer.from(uris.join('\r\n') + '\r\n'));
-  else clipboard.writeBuffer('x-special/gnome-copied-files', Buffer.from(['copy', ...uris].join('\n')));
-  return true;
+  try {
+    await clipboard.write([new ClipboardItem({ 'text/uri-list': uris.join('\r\n') + '\r\n', [GNOME_FILES]: ['copy', ...uris].join('\n') })]);
+    return true;
+  } catch (e) { console.error('files onto the clipboard', e.message); return false; }
 }
 
 // ---- for the client app (client/shell.js): where something was let go ------------------

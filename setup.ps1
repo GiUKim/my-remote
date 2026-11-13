@@ -1,6 +1,6 @@
 # One-shot setup for the host PC. No admin rights needed, nothing is installed system-wide.
 #   powershell -ExecutionPolicy Bypass -File setup.ps1 [-SkipSelfTest]
-# 1. Uses Node.js >= 20 if present, otherwise downloads portable Node LTS into .\tools\node (SHA-256 verified).
+# 1. Uses Node.js >= 22.12 if present, otherwise downloads portable Node 22 LTS into .\tools\node (SHA-256 verified).
 # 2. Runs npm install in .\host (Electron + koffi).
 # 3. Runs the self-test. It is fully local: no internet traffic, throwaway key, no input injected.
 param([switch]$SkipSelfTest)
@@ -14,13 +14,19 @@ $hostDir = Join-Path $root 'host'
 # Terminals inside VS Code / Cursor set this; with it Electron runs as plain Node and the app cannot start.
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
 
+# Electron 45's npm package needs Node 22.12 or newer.
+function Test-NodeVersion($exe) {
+    $p = ((& $exe -v) -replace '^v', '').Split('.') | ForEach-Object { [int]$_ }
+    return ($p[0] -gt 22) -or ($p[0] -eq 22 -and $p[1] -ge 12)
+}
 function Find-Node {
-    if (Test-Path (Join-Path $nodeDir 'node.exe')) { return $nodeDir }
-    $cmd = Get-Command node -ErrorAction SilentlyContinue
-    if ($cmd) {
-        $major = [int]((& $cmd.Source -v) -replace '^v(\d+)\..*', '$1')
-        if ($major -ge 20) { return (Split-Path -Parent $cmd.Source) }
+    $own = Join-Path $nodeDir 'node.exe'
+    if (Test-Path $own) {
+        if (Test-NodeVersion $own) { return $nodeDir }
+        throw "tools\node holds Node $(& $own -v), older than 22.12. Delete the tools\node folder and run setup.ps1 again."
     }
+    $cmd = Get-Command node -ErrorAction SilentlyContinue
+    if ($cmd -and (Test-NodeVersion $cmd.Source)) { return (Split-Path -Parent $cmd.Source) }
     return $null
 }
 

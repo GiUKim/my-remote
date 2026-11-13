@@ -43,7 +43,7 @@ ipcMain.on('drag-file', (e) => e.sender.startDrag({ file: path.join(__dirname, '
 app.whenReady().then(async () => {
   const w = new BrowserWindow({ x: 700, y: 420, width: 560, height: 300, show: false, webPreferences: { backgroundThrottling: false, preload: path.join(__dirname, 'preload.js') } });
   w.removeMenu();
-  w.webContents.on('console-message', (_e, _level, msg) => process.stdout.write('EV ' + msg + '\\n'));
+  w.webContents.on('console-message', (e, _level, legacy) => process.stdout.write('EV ' + (e && e.message !== undefined ? e.message : legacy) + '\\n'));
   const log = '<script>for (const t of ["dragstart", "dragend", "keydown", "copy", "mousedown", "mouseup"]) addEventListener(t, (e) => console.log(t + " " + (e.code || "") + " " + Math.round(performance.now())), true);'
     + 'document.getElementById("f").addEventListener("dragstart", (e) => { e.preventDefault(); window.dragFile(); });</script>';
   await w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent('<body style="margin:0;background:#fff"><p id="t" style="font:28px sans-serif;margin:40px">' + __TEXT__ + '</p>'
@@ -216,7 +216,7 @@ exports.run = async ({ check, info, js, until, dragOut }) => {
       await sleep(200);
       const seq = input.clipSeq(), onWindow = await dropHere('dropped2.txt', group());
       await sleep(200);
-      const listed = input.clipboardFiles(), after = input.underPointer();
+      const listed = await input.clipboardFiles(), after = input.underPointer(); // a promise on Linux (Electron 44+)
       check('X11: client app: a file let go over the desktop is saved there; over a program it goes onto the clipboard, nothing is clicked',
         before.desktop && onDesk.how === 'saved' && fs.readFileSync(path.join(stand, 'dropped.txt'), 'utf8') === 'dropped' && onWindow.how === 'clipboard'
         && input.clipSeq() !== seq && listed.length === 1 && path.basename(listed[0]) === 'dropped2.txt' && before.buttons === 0 && after.buttons === 0,

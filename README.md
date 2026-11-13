@@ -34,7 +34,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 
 `setup.ps1`이 하는 일:
 
-1. Node.js 20 이상이 없으면 포터블 Node 22 LTS를 `tools\node`에 내려받습니다(SHA-256 검증, 시스템 설치 없음).
+1. Node.js 22.12 이상이 없으면 포터블 Node 22 LTS를 `tools\node`에 내려받습니다(SHA-256 검증, 시스템 설치 없음).
 2. `host` 폴더에서 `npm install`을 실행합니다(Electron 약 100MB).
 3. 자체 테스트를 돌립니다. 이 PC 안에서만 동작하며 인터넷으로 아무것도 보내지 않습니다.
 
@@ -208,7 +208,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 - **Wayland 세션은 지원하지 않습니다.** 로그인 화면의 톱니바퀴에서 "Ubuntu on Xorg" 같은 X11 세션을 고르세요.
 - **macOS는 아직 지원하지 않습니다.** 입력 처리가 없어 호스트가 보기 전용으로만 뜨며, 그마저 시험해 보지 않았습니다.
 
-Node.js 20 이상과 npm이 필요합니다. 없으면 `setup.sh`가 무엇을 설치해야 하는지 알려 주고 멈춥니다(스스로 내려받지 않습니다. Ubuntu 22.04 기본 패키지의 Node는 너무 오래됐으니 https://nodejs.org 의 LTS를 쓰세요).
+Node.js 22.12 이상과 npm이 필요합니다. 없으면 `setup.sh`가 무엇을 설치해야 하는지 알려 주고 멈춥니다(스스로 내려받지 않습니다. Ubuntu 22.04 기본 패키지의 Node는 너무 오래됐으니 https://nodejs.org 의 LTS를 쓰세요).
 
 ```bash
 ./setup.sh            # npm install과 자체 테스트. 클라이언트로만 쓸 PC에서는 ./setup.sh --skip-selftest

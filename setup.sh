@@ -2,7 +2,7 @@
 # One-shot setup on Linux (X11 session; Ubuntu 22.04 tested). No root needed, nothing is installed
 # system-wide and nothing is downloaded but what npm install fetches for host/ (Electron and koffi).
 #   ./setup.sh [--skip-selftest]
-# 1. Uses Node.js >= 20 with npm from PATH; says what to install when there is none.
+# 1. Uses Node.js >= 22.12 (what Electron 45's npm package needs) with npm from PATH; says what to install when there is none.
 # 2. Runs npm install in ./host.
 # 3. Runs the self-test. It is fully local: no internet traffic, throwaway key, no input injected.
 set -euo pipefail
@@ -15,10 +15,10 @@ if [ "$(uname -s)" != "Linux" ]; then
   exit 1
 fi
 
-major=0
-if command -v node >/dev/null 2>&1; then major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"; fi
-if [ "$major" -lt 20 ] || ! command -v npm >/dev/null 2>&1; then
-  echo "[setup] Node.js 20 or newer, with npm, is needed (found: $(node -v 2>/dev/null || echo none))." >&2
+recent=0
+if command -v node >/dev/null 2>&1; then recent="$(node -p 'const [a, b] = process.versions.node.split(".").map(Number); a > 22 || (a === 22 && b >= 12) ? 1 : 0' 2>/dev/null || echo 0)"; fi
+if [ "$recent" != 1 ] || ! command -v npm >/dev/null 2>&1; then
+  echo "[setup] Node.js 22.12 or newer, with npm, is needed (found: $(node -v 2>/dev/null || echo none))." >&2
   echo "        Install the LTS version from https://nodejs.org or your distribution's packages" >&2
   echo "        (Ubuntu 22.04's own nodejs package is too old), then run this again." >&2
   exit 1
