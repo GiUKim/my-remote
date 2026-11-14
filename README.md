@@ -699,6 +699,10 @@ node native/build.js 사용자@리눅스PC주소
 
 ### 릴리스 만들기 (배포하는 사람)
 
+[![CI](https://github.com/GiUKim/my-remote/actions/workflows/ci.yml/badge.svg)](https://github.com/GiUKim/my-remote/actions/workflows/ci.yml)
+
+모든 변경은 **CI(GitHub Actions)를 통과해야 릴리스할 수 있습니다.** CI는 정적 검사, 네이티브 실행 파일 재현 빌드, Windows·Linux 자체 테스트, 설치 묶음 테스트, 성능 기준을 확인하고, `release/build.js`는 CI를 통과하지 못한 커밋으로는 릴리스를 만들지 않습니다. 커밋 전 검사는 `git config core.hooksPath .githooks`로 켭니다.
+
 설치형 앱에 새 버전을 내보내는 절차입니다. 앱은 **업데이트 폴더**(https로 받을 수 있는 곳이면 어디든)에서 아래 세 파일만 읽습니다.
 
 | 파일 | 내용 |

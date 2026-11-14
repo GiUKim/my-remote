@@ -762,7 +762,7 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
   anything else, so an app installed over a source folder's use keeps the key.
 - **Packages** (`release/package.js`) are made on the platform they are for, from
   `host/node_modules/electron/dist` (nothing else is downloaded): a folder to unpack and run
-  (`MyRemote.exe`, `./my-remote.sh`), zipped as `MyRemote-Windows-x64.zip` / `MyRemote-Linux-x64.tar.gz` holding a folder `MyRemote`: no version in the names, so the README's download buttons (`.../releases/latest/download/<name>`) always fetch the newest and a self-updating folder is not named after an old version. No installer, no code signing: Windows SmartScreen warns
+  (`MyRemote.exe`, `./my-remote.sh`), zipped as `MyRemote-Windows-x64.zip` / `MyRemote-Linux-x64.tar.gz` holding a folder `MyRemote` (on Windows `MyRemote.exe`'s version resource is rewritten in place to say MyRemote instead of "Electron" by "GitHub, Inc.", which the firewall's prompt, Task Manager and a notification without a shortcut showed: `brandExe` in `release/package.js`, same-length UTF-16 values, no outside tool (installing one was refused by the permission check); the exe's icon is still Electron's, the shortcuts carry ours; `test-app.js --packaged` checks the names Windows reads): no version in the names, so the README's download buttons (`.../releases/latest/download/<name>`) always fetch the newest and a self-updating folder is not named after an old version. No installer, no code signing: Windows SmartScreen warns
   at the first start. macOS is not built (an unsigned app does not run there). Started without `--host`
   or `--client` the app asks which and offers the two shortcuts (`--shortcuts` makes them without asking).
 - **Plain names.** No file or folder the package holds or the app makes has a space or anything but
@@ -816,6 +816,15 @@ Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하�
 - Found while setting it up: GNU ld puts the output path into a DLL (`-o out/x.dll` vs `-o x.dll` give
   different bytes; line ends do not matter), so the reproducibility check builds into `out/` exactly as
   `native/build.js` does; and `host/bench-run.js` only knew `electron.exe` (now Linux too).
+- **Reading a failed run without admin rights:** a job's log can be downloaded only by the repository's
+  admins, so every test step runs through `release/ci-run.js`, which turns each `FAIL` line into a GitHub
+  annotation (`::error::`); `GET /repos/<owner>/<repo>/check-runs/<job id>/annotations` reads them
+  anonymously. Asking the runs API for a commit needs the full hash (`head_sha=` ignores a short one).
+- The first run (2026-11-15): `checks`, `native` (byte for byte on GitHub's Ubuntu too) and `Linux X11`
+  passed on GitHub's runners; on `windows-2022` the assist test and the self-test passed and the packaged
+  app test failed (reason then unknown: hence `ci-run.js`). Dependabot opened PRs for checkout v7,
+  setup-node v7, CodeQL v4 (taken into the workflows) and koffi 3 (a major version under input, capture
+  and the clipboard: merge only when CI passes on it, after reading its changes).
 
 ## Commands
 

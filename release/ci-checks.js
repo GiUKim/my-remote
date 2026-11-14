@@ -121,7 +121,8 @@ const pass = (what) => console.log(`PASS  ${what}`);
     lines.forEach((line, i) => {
       for (const [what, re] of RULES) if (re.test(line)) hits.push(`${f}:${i + 1}: ${what}`);
       for (const re of ownRes) if (re.test(line)) hits.push(`${f}:${i + 1}: a private pattern of yours`);
-      if (!allowKeysIn.has(f)) for (const m of line.matchAll(keyShaped)) {
+      // A lock file's integrity hashes are base64 (with + and /): a run of 43 between those is no key.
+      if (!allowKeysIn.has(f) && !/"integrity":\s*"sha\d+-/.test(line)) for (const m of line.matchAll(keyShaped)) {
         const t = m[0];
         if (/[A-Z]/.test(t) && /[a-z]/.test(t) && /[0-9]/.test(t) && !/^[a-f0-9]+$/i.test(t)) hits.push(`${f}:${i + 1}: a string shaped like an access key`);
       }

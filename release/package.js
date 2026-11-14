@@ -21,6 +21,55 @@ const core = require('../app/core');
 const ROOT = path.join(__dirname, '..');
 const arg = (name) => { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? path.resolve(a.slice(name.length + 3)) : undefined; };
 
+// The name Windows shows for the program (the firewall's prompt says "Electron" by "GitHub, Inc.", so do
+// Task Manager and a notification with no shortcut behind it; the person saw it on 2026-11-15): Electron's
+// version resource, rewritten in place. Every value keeps its length in UTF-16 (a shorter one ends early
+// with NULs, which every reader stops at), so nothing in the resource section moves and no outside tool
+// touches the release. Only the .rsrc section is searched. The copyright of Electron stays as it is.
+const BRAND = { FileDescription: 'MyRemote', ProductName: 'MyRemote', CompanyName: 'MyRemote', InternalName: 'MyRemote', OriginalFilename: 'MyRemote.exe' };
+function rsrcRange(b) {
+  const pe = b.readUInt32LE(0x3c);
+  if (b.toString('latin1', pe, pe + 4) !== 'PE\0\0') throw new Error('not a PE file');
+  const sections = b.readUInt16LE(pe + 6), optSize = b.readUInt16LE(pe + 20);
+  for (let i = 0, s = pe + 24 + optSize; i < sections; i++, s += 40) {
+    if (b.toString('latin1', s, s + 8).replace(/\0+$/, '') === '.rsrc') { const raw = b.readUInt32LE(s + 20), size = b.readUInt32LE(s + 16); return [raw, raw + size]; }
+  }
+  throw new Error('no .rsrc section');
+}
+// Each key's value in the version resource's StringFileInfo: { key: [[offset, length in chars], ...] }.
+function versionStrings(b) {
+  const [lo, hi] = rsrcRange(b), found = {};
+  for (const key of Object.keys(BRAND)) {
+    const k = Buffer.from(key + '\0', 'utf16le');
+    for (let at = b.indexOf(k, lo); at >= 0 && at < hi; at = b.indexOf(k, at + 2)) {
+      if ((at - lo) % 2) continue; // UTF-16 text starts at an even offset
+      let v = at + k.length;
+      while (v < hi && b.readUInt16LE(v) === 0) v += 2; // the padding to the next 32-bit boundary
+      let end = v;
+      while (end < hi && b.readUInt16LE(end) !== 0) end += 2;
+      (found[key] = found[key] || []).push([v, (end - v) / 2]);
+    }
+  }
+  return found;
+}
+function brandExe(file) {
+  const b = fs.readFileSync(file);
+  const found = versionStrings(b);
+  for (const [key, value] of Object.entries(BRAND)) {
+    if (!found[key]) throw new Error(`${path.basename(file)}: no ${key} in its version resource`);
+    for (const [at, len] of found[key]) {
+      if (value.length > len) throw new Error(`${key}: "${value}" is longer than the ${len} characters there`);
+      Buffer.from(value.padEnd(len, '\0'), 'utf16le').copy(b, at);
+    }
+  }
+  // Read back what Windows will show before writing anything.
+  for (const [key, value] of Object.entries(BRAND)) for (const [at] of found[key]) {
+    const shown = b.toString('utf16le', at, at + value.length * 2 + 2).replace(/\0[\s\S]*$/, '');
+    if (shown !== value) throw new Error(`${key} would read "${shown}"`);
+  }
+  fs.writeFileSync(file, b);
+}
+
 function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(ROOT, 'dist', 'pack'), archive = true, config, quiet = false } = {}) {
   const say = (s) => { if (!quiet) console.log(s); };
   const confFile = config || path.join(ROOT, 'app', 'update-config.json'), conf = JSON.parse(fs.readFileSync(confFile, 'utf8'));
@@ -43,6 +92,7 @@ function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(RO
   // Names without spaces and in ASCII only, here and for everything else the package holds or the app
   // makes (shortcuts, profile folders): a space or Korean in a path trips some tools and some systems.
   fs.renameSync(path.join(dir, exe), path.join(dir, win ? 'MyRemote.exe' : 'my-remote'));
+  if (win) brandExe(path.join(dir, 'MyRemote.exe'));
 
   const app = path.join(dir, 'resources', 'app');
   fs.mkdirSync(app, { recursive: true });
@@ -90,4 +140,4 @@ if (require.main === module) {
   } catch (e) { console.error('packaging failed: ' + e.message); process.exit(1); }
 }
 
-module.exports = { pack };
+module.exports = { pack, brandExe };

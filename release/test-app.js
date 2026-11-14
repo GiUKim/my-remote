@@ -211,6 +211,13 @@ function makeApp(name, builtin, port) {
     for (const n of [path.basename(p.dir), p.name, ...made]) if (!plain(n)) odd.push(n);
     check('names in the package and of the shortcuts: no spaces, ASCII only; the asking start has a profile of its own', odd.length === 0 && fs.existsSync(path.join(tmp, 'launcher')),
       odd.length ? 'not plain: ' + odd.slice(0, 5).join(', ') : `shortcuts ${made.join(', ')}; profile ${fs.existsSync(path.join(tmp, 'launcher')) ? 'next to the data folder' : 'not where expected'}`);
+    // Windows shows the program by its version resource (the firewall's prompt, Task Manager): as
+    // MyRemote, not as Electron by GitHub (release/package.js rewrites it; the self-test above ran it).
+    if (process.platform === 'win32') {
+      const vi = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$v = (Get-Item -LiteralPath '${exe.replace(/'/g, "''")}').VersionInfo; "$($v.FileDescription)|$($v.ProductName)|$($v.CompanyName)"`], { encoding: 'utf8', timeout: 30e3 });
+      const shown = String(vi.stdout || '').trim();
+      check('Windows names the program MyRemote (its version resource), not Electron by GitHub', shown === 'MyRemote|MyRemote|MyRemote', shown || String(vi.stderr || '').trim());
+    }
   }
 
   await sleep(1500); // what the guards and restarts left running ends by itself
