@@ -101,6 +101,40 @@ jobs:
       - name: Packaged app through the update shell
         run: node release/ci-run.js xvfb-run -a -s "-screen 0 1920x1080x24" node release/test-app.js --packaged
 
+  soak:
+    # Weekly and by hand only (ten minutes each): a long session that reconnects every minute fails when
+    # what each session leaves behind grows past 2 MB (see --soak in CLAUDE.md). Leaks show up over time.
+    name: soak (${{ matrix.os }}, weekly)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: [windows, linux]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: host/package-lock.json
+      - name: Desktop libraries and a virtual display
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb libgtk-3-0 libnss3 libgbm1 libasound2 libxss1 libxtst6 libxdamage1 libxfixes3
+      - name: Install (npm ci, then Electron itself)
+        working-directory: host
+        run: |
+          npm ci
+          node node_modules/electron/install.js
+      - name: Ten minutes of reconnecting sessions
+        working-directory: host
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then node ../release/ci-run.js xvfb-run -a -s "-screen 0 1920x1080x24" node_modules/electron/dist/electron . --selftest --soak=10
+          else node ../release/ci-run.js node_modules/electron/dist/electron.exe . --selftest --soak=10; fi
+
   bench:
     name: performance gate (${{ matrix.os }})
     needs: [windows, linux]

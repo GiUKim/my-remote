@@ -826,7 +826,11 @@ Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하�
   are shown" (also run inside the packaged test). Its expectation was wrong, not the host: the host
   scales by steps (1, 1.25, 1.5, ...) and never below the shown size, so a monitor shown at 828 of 1024
   (factor 1.24, the runner's 1024x768 screen) is rightly sent whole; the check wanted "fewer" whenever the
-  window was smaller, which this PC's 1920-wide monitors always made true. It now expects the step. Dependabot opened PRs for checkout v7,
+  window was smaller, which this PC's 1920-wide monitors always made true. It now expects the step.
+  The third run passed everything but the Linux performance gate: the bench had never run on Linux
+  (`screen.dipToScreenRect` is Windows only, and the peer took the passed-on `--no-sandbox` for its config
+  file). Fixed; on the Linux PC (Xvfb) the bench then gave 59.8 fps, scroll p50 32.5 ms, typing p50
+  32.7 ms. The Windows gate passed on GitHub's runner from its first run. Dependabot opened PRs for checkout v7,
   setup-node v7, CodeQL v4 (taken into the workflows) and koffi 3 (a major version under input, capture
   and the clipboard: merge only when CI passes on it, after reading its changes).
 
