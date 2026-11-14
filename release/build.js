@@ -100,10 +100,41 @@ function build({ out = path.join(ROOT, 'dist', 'release'), key = defaultKey(), c
   return { out, version, manifest, bundleFile, files: files.size, bytes: bundle.length, sig };
 }
 
-if (require.main === module) {
+// A release is made only from a commit that passed CI (.github/workflows/ci.yml) on GitHub: pushed, and
+// every check run of it finished successfully, each of the CI jobs among them. -> { ok, why }
+const CI_JOBS = ['checks', 'native', 'Windows', 'Linux', 'performance gate']; // the jobs' names begin so
+async function ciPassed(sha) {
+  const url = git(['remote', 'get-url', 'origin']).toString().trim();
+  const m = /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/.exec(url);
+  if (!m) return { ok: false, why: `origin (${url}) is not on GitHub` };
+  let res;
+  try { res = await fetch(`https://api.github.com/repos/${m[1]}/${m[2]}/commits/${sha}/check-runs?per_page=100`, { headers: { 'User-Agent': 'my-remote-release', Accept: 'application/vnd.github+json' } }); }
+  catch (e) { return { ok: false, why: `GitHub could not be asked (${e.message})` }; }
+  if (res.status === 404 || res.status === 422) return { ok: false, why: `GitHub does not know ${sha.slice(0, 7)}: push it and let CI run` };
+  if (!res.ok) return { ok: false, why: `GitHub answered ${res.status}` };
+  const runs = (await res.json()).check_runs || [];
+  const pending = runs.filter((r) => r.status !== 'completed').map((r) => r.name);
+  const bad = runs.filter((r) => r.status === 'completed' && !['success', 'skipped', 'neutral'].includes(r.conclusion)).map((r) => `${r.name}: ${r.conclusion}`);
+  const missing = CI_JOBS.filter((j) => !runs.some((r) => r.name.startsWith(j)));
+  if (bad.length) return { ok: false, why: 'CI failed: ' + bad.join('; ') };
+  if (pending.length) return { ok: false, why: 'CI is still running: ' + pending.join('; ') };
+  if (missing.length) return { ok: false, why: 'CI has not run these jobs for this commit: ' + missing.join(', ') };
+  return { ok: true, why: `${runs.length} check runs passed` };
+}
+
+if (require.main === module) (async () => {
   const arg = (name) => { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? a.slice(name.length + 3) : undefined; };
+  const dirty = process.argv.includes('--allow-dirty');
+  // A try-out build (--allow-dirty) is no release and skips the CI gate; --skip-ci is for when GitHub
+  // cannot be reached and you know the commit is good: it is said in the output.
+  if (!dirty && !process.argv.includes('--skip-ci')) {
+    const sha = git(['rev-parse', 'HEAD']).toString().trim();
+    const ci = await ciPassed(sha);
+    if (!ci.ok) { console.error(`release build refused: ${ci.why}\n(the CI gate: see .github/workflows/ci.yml; --skip-ci overrides it)`); process.exit(1); }
+    console.log(`CI passed for ${sha.slice(0, 7)} (${ci.why})`);
+  } else if (!dirty) console.log('WARNING: built without checking CI (--skip-ci)');
   try {
-    const r = build({ out: arg('out') ? path.resolve(arg('out')) : undefined, key: arg('key'), critical: process.argv.includes('--critical'), dirty: process.argv.includes('--allow-dirty') });
+    const r = build({ out: arg('out') ? path.resolve(arg('out')) : undefined, key: arg('key'), critical: process.argv.includes('--critical'), dirty });
     // Checked the way an app will check it, with the keys the app trusts.
     const conf = JSON.parse(fs.readFileSync(path.join(ROOT, 'app', 'update-config.json'), 'utf8'));
     const v = core.verifyFolder(path.join(r.out, 'bundle'), conf.keys);
@@ -112,6 +143,6 @@ if (require.main === module) {
     if (!v.ok) { console.error(`BUT an installed app would not take it: ${v.why}\n(is the key in app/update-config.json the one that signed? node release/keygen.js)`); process.exit(1); }
     console.log('verifies with the keys in app/update-config.json');
   } catch (e) { console.error('release build failed: ' + e.message); process.exit(1); }
-}
+})();
 
-module.exports = { build, collect, defaultKey };
+module.exports = { build, collect, defaultKey, ciPassed };

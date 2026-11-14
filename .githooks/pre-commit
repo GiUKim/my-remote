@@ -1,0 +1,13 @@
+#!/bin/sh
+# Before each commit: the static checks of release/ci-checks.js, the leak scan on what is staged
+# (with your own patterns from .git/info/private-patterns, never committed). Turn it on once per clone:
+#   git config core.hooksPath .githooks
+# Skip once with git commit --no-verify (CI runs the same checks anyway).
+root=$(git rev-parse --show-toplevel) || exit 1
+common=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
+node=$(command -v node 2>/dev/null)
+for n in "$root/tools/node/node.exe" "$common/tools/node/node.exe" "$root/tools/node/bin/node" "$common/tools/node/bin/node"; do
+  [ -z "$node" ] && [ -x "$n" ] && node=$n
+done
+if [ -z "$node" ]; then echo "pre-commit: no Node found (PATH or tools/node): checks skipped"; exit 0; fi
+"$node" "$root/release/ci-checks.js" --staged || { echo "pre-commit: fix the above (or commit with --no-verify)"; exit 1; }

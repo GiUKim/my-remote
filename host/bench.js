@@ -202,7 +202,7 @@ exports.run = async ({ cfg, bench, buildClientHtml, app }) => {
     delete env.ELECTRON_RUN_AS_NODE;
     // A syntax error in the peer script would otherwise show up as an error dialog on the screen.
     new (require('vm').Script)(fs.readFileSync(path.join(__dirname, 'bench-peer.js'), 'utf8'), { filename: 'bench-peer.js' });
-    peer = spawn(process.execPath, [path.join(__dirname, 'bench-peer.js'), peerFile], { env, stdio: ['ignore', 'inherit', 'inherit'] });
+    peer = spawn(process.execPath, [path.join(__dirname, 'bench-peer.js'), peerFile, ...process.argv.filter((a) => a === '--no-sandbox')], { env, stdio: ['ignore', 'inherit', 'inherit'] });
     peer.once('exit', (c) => setTimeout(() => finish({ ok: false, error: 'the client process ended (code ' + c + ') without a result' }), 1000));
     setTimeout(() => finish({ ok: false, error: 'timed out' }), (B.warmup + B.secs + 100) * 1000);
   } catch (e) {

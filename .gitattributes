@@ -1,4 +1,6 @@
 # Built files are kept byte for byte (host/bin/capture.dll is checked against its recorded hash).
 *.dll binary
+*.exe binary
 # Shell scripts run on Linux: LF line endings in every checkout, also on Windows.
 *.sh text eol=lf
+.githooks/* text eol=lf

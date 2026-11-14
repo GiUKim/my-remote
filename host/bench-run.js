@@ -53,7 +53,8 @@ fs.mkdirSync(outDir, { recursive: true });
 const triesFile = arg('tries-file', '');
 if (triesFile) Object.assign(TRIES, JSON.parse(fs.readFileSync(triesFile, 'utf8')));
 
-const electron = path.join(__dirname, 'node_modules', 'electron', 'dist', 'electron.exe');
+const electron = path.join(__dirname, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
+const extraArgs = process.argv.includes('--no-sandbox') ? ['--no-sandbox'] : []; // where Chromium's sandbox cannot run (Ubuntu 23.10+)
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 
@@ -74,7 +75,7 @@ for (const n of nets) for (const t of tries) for (let i = 0; i < repeat; i++) {
   if (process.argv.includes('--capture-probe')) config.captureProbe = true; // also time when captured frames reach the encoder
   if (process.argv.includes('--snapshot')) config.snapshot = file; // <file>.scroll.png and <file>.still.png: what the client showed
   fs.writeFileSync(file + '.config.json', JSON.stringify(config));
-  const r = spawnSync(electron, [__dirname, '--bench', '--bench-config=' + file + '.config.json'], { env, encoding: 'utf8', timeout: (config.secs + 160) * 1000 });
+  const r = spawnSync(electron, [__dirname, '--bench', '--bench-config=' + file + '.config.json', ...extraArgs], { env, encoding: 'utf8', timeout: (config.secs + 160) * 1000 });
   fs.writeFileSync(file + '.log', (r.stdout || '') + '\n' + (r.stderr || ''));
   let res = null;
   try { res = JSON.parse(fs.readFileSync(file + '.json', 'utf8')); } catch {}

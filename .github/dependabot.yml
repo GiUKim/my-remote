@@ -1,0 +1,14 @@
+# Electron (security fixes), koffi and the workflow actions, proposed as pull requests that CI then
+# tests like any change. Electron's major versions change behaviour (see CLAUDE.md on 33 -> 45): read
+# the breaking changes before merging one.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /host
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

@@ -1,0 +1,9 @@
+{
+  "_about": "Limits the bench must stay within (release/bench-gate.js). Delays in ms from drawn on the host to shown on the client, p50 of a run; fps = frames shown per second while scrolling. 'ci': shared CI machines without a graphics card (software rendering, the CPU's AV1), set wide so that only real regressions fail (the engine's defaults once gave 2000 ms). 'dev': a development PC like the one the figures in CLAUDE.md were measured on (i9-9900K, RTX 3060): scroll p50 92-133 ms, typing 66-80 ms, 47-59 fps.",
+  "ci": {
+    "direct/base": { "scroll.shownFps": { "min": 12 }, "scroll.lat.p50": { "max": 600 }, "sparse.lat.p50": { "max": 450 }, "scroll.lat.n": { "min": 50 } }
+  },
+  "dev": {
+    "direct/base": { "scroll.shownFps": { "min": 35 }, "scroll.lat.p50": { "max": 220 }, "sparse.lat.p50": { "max": 160 }, "scroll.lat.n": { "min": 300 } }
+  }
+}

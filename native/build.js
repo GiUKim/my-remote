@@ -50,6 +50,8 @@ const flagsFor = (f) => (EXES.has(f)
   ? '-O2 -Wall -municode -static -s -fno-exceptions -fno-rtti -Wl,--no-insert-timestamp'
   : '-O2 -Wall -shared -static -s -fno-exceptions -fno-rtti -Wl,--no-insert-timestamp');
 const command = (f) => `${CXX} ${flagsFor(f)} -o ${out(f)} ${f} ${LIBS[f] || ''}`.trim();
+// Output into out/ (the command below gets `-o out/<file>`): GNU ld puts the output path into a DLL, so
+// that path is part of a reproducible build. release/ci-native.js rebuilds the same way in CI.
 run('ssh', [...ssh, target, `mkdir -p ${dir}/native/out`]);
 run('scp', [...ssh, ...sources.map((f) => path.join(here, f)), `${target}:${dir}/native/`]);
 run('ssh', [...ssh, target, `cd ${dir}/native && ` + sources.map((f) => command(f).replace(` -o ${out(f)} `, ` -o out/${out(f)} `)).join(' && ') + ' && ls -l out']);

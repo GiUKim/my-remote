@@ -1,0 +1,132 @@
+# What every change must pass before it is released (release/build.js refuses a commit whose CI has
+# not passed). Jobs: static checks and plain-Node tests; native binaries rebuilt byte for byte; the
+# Windows and Linux self-tests and the packaged app; the performance gate on both.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1' # weekly: a new runner image or Electron patch that breaks something shows up without a commit
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: checks (static, update logic, PC list)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Static checks (syntax, JSON, the loader, names, native records, leaks)
+        env:
+          PRIVATE_PATTERNS: ${{ secrets.PRIVATE_PATTERNS }} # optional: one regular expression per line, kept out of the repository
+        run: node release/ci-checks.js
+      - name: Update logic
+        run: node release/test-update.js
+      - name: The client app's list of PCs
+        run: node release/test-hosts.js
+
+  native:
+    name: native binaries rebuilt byte for byte
+    runs-on: ubuntu-22.04 # the build server's distribution: the same mingw-w64 (GCC 10-win32 20220113)
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install mingw-w64
+        run: sudo apt-get update -q && sudo apt-get install -y -q mingw-w64
+      - name: Rebuild host/bin from native/ and compare
+        run: node release/ci-native.js
+
+  windows:
+    name: Windows (assist protocol, self-test, packaged app)
+    runs-on: windows-2022
+    timeout-minutes: 30
+    needs: checks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: host/package-lock.json
+      - name: Install (npm ci, then Electron itself)
+        working-directory: host
+        run: |
+          npm ci
+          node node_modules/electron/install.js
+      - name: Assist service protocol (fake service, no input)
+        run: node release/test-assist.js
+      - name: Self-test
+        working-directory: host
+        run: node_modules\electron\dist\electron.exe . --selftest
+      - name: Packaged app through the update shell
+        run: node release/test-app.js --packaged
+
+  linux:
+    name: Linux X11 (self-test with input, clipboard, client app; packaged app)
+    runs-on: ubuntu-22.04 # 24.04 restricts the user namespaces Chromium's sandbox needs
+    timeout-minutes: 30
+    needs: checks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: host/package-lock.json
+      - name: Desktop libraries and a virtual display
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb libgtk-3-0 libnss3 libgbm1 libasound2 libxss1 libxtst6 libxdamage1 libxfixes3
+      - name: Install (npm ci, then Electron itself)
+        working-directory: host
+        run: |
+          npm ci
+          node node_modules/electron/install.js
+      - name: Self-test with real input on the virtual display
+        working-directory: host
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" node_modules/electron/dist/electron . --selftest --input-check --clip-check --client-app-check
+      - name: Packaged app through the update shell
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" node release/test-app.js --packaged
+
+  bench:
+    name: performance gate (${{ matrix.os }})
+    needs: [windows, linux]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: host/package-lock.json
+      - name: Desktop libraries and a virtual display
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb libgtk-3-0 libnss3 libgbm1 libasound2 libxss1 libxtst6 libxdamage1 libxfixes3
+      - name: Install (npm ci, then Electron itself)
+        working-directory: host
+        run: |
+          npm ci
+          node node_modules/electron/install.js
+      - name: Bench within the CI limits (release/bench-thresholds.json)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a -s "-screen 0 1920x1080x24" node release/bench-gate.js --profile=ci
+          else node release/bench-gate.js --profile=ci; fi

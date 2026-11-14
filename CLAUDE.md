@@ -99,6 +99,9 @@ the client app instead).
   package by hand. Change it only with `release/test-update.js` and `release/test-app.js --packaged`
   passing, and raise `base` in `app/package.json` when the code needs something new of the shell.
 - Do not commit `node_modules/`, `tools/`, `dist/`, or any `config.json` (see `.gitignore`).
+- **A change goes in only with its checks passing** (see "CI, gates and checks"): `release/ci-checks.js`
+  (the pre-commit hook), the self-test, new checks for new behaviour, and the bench within its limits.
+  Never weaken a check or raise a limit to make a change pass without saying why in the commit.
 
 ## Gotchas
 
@@ -785,6 +788,35 @@ update from a real feed (there is none yet), an update while a real session is c
 that asks host or client and the shortcuts in the real Start menu, the client app's update dialogs,
 `my-remote.sh` from an app menu entry, Ubuntu 24.04 as a package, anything on macOS.
 
+## CI, gates and checks (what a change must pass)
+
+Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하는 벤치마크, 버그를 잡는 CI/CD"):
+
+- **`.github/workflows/ci.yml`** on every push to `main`, every pull request, by hand and weekly:
+  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`), `native` (`release/ci-native.js`:
+  every committed binary rebuilt from `native/` with Ubuntu 22.04's mingw-w64 and compared byte for byte),
+  `Windows` (`test-assist.js`, the self-test, `test-app.js --packaged`), `Linux X11` (the self-test with
+  `--input-check --clip-check --client-app-check` under Xvfb, `test-app.js --packaged`) and the `performance
+  gate` on both (`release/bench-gate.js --profile=ci`). `codeql.yml` scans the JavaScript; `dependabot.yml`
+  proposes Electron/koffi/action updates as pull requests that CI then tests.
+- **The release gate:** `release/build.js` refuses to build from a commit whose CI has not passed on GitHub
+  (every check run finished successfully, each CI job among them; asked anonymously, the repository is
+  public). `--skip-ci` overrides it and says so; `--allow-dirty` try-out builds skip it.
+- **Locally:** `git config core.hooksPath .githooks` once per clone turns on the pre-commit hook (the
+  static checks, the leak scan on what is staged). Patterns of your own that must never be committed go
+  into `.git/info/private-patterns` (one regular expression per line, untracked); in CI the same list can
+  be given as the secret `PRIVATE_PATTERNS`. The leak scan prints where, never what.
+- **When adding a feature:** add its checks (a self-test check, or a `release/test-*.js` for logic that
+  runs without Electron), run `release/ci-checks.js`, the self-test, and on a development PC
+  `release/bench-gate.js --profile=dev` (limits in `release/bench-thresholds.json`: raise them only with
+  a measured reason). A change to `native/` needs `native/build.js` (from PowerShell) and the new binary
+  and record in the same commit; `ci-native.js` fails otherwise.
+- Not automated: anything needing a second real PC, a real lock screen (the Windows test VM, see the
+  `my-remote-test-vm` memory, does that by hand), several monitors, real phones, macOS.
+- Found while setting it up: GNU ld puts the output path into a DLL (`-o out/x.dll` vs `-o x.dll` give
+  different bytes; line ends do not matter), so the reproducibility check builds into `out/` exactly as
+  `native/build.js` does; and `host/bench-run.js` only knew `electron.exe` (now Linux too).
+
 ## Commands
 
 Run from `host/` with Electron's env var cleared.
@@ -809,6 +841,9 @@ Run from `host/` with Electron's env var cleared.
 | `npm run bench -- --net=direct,home,narrow,wifi --try=old,base` | Measures delay and smoothness on this PC for the given link conditions and settings, prints a table (see "Performance"). `--picture-test=quality` measures picture quality instead (a window opening, a window being dragged, scrolling); `--snapshot` saves what the client showed next to what was drawn. About 45 s per run. Shows a test picture on one display and a small window on another for that time; they never take focus and no input is injected, but tell the user before a long series |
 | `npm run bench -- --remote=user@host --net=direct --try=base` | The same bench with the client page on another machine, reached over ssh: a real second machine and a real network instead of one PC. That machine needs `~/my-remote-dev/electron/` (an unpacked Electron release for its platform) and `xvfb-run`; signaling goes through an ssh tunnel, only the WebRTC traffic crosses the network directly. Add `--capture-probe` to split the delay into its parts. This sends the picture of one of this PC's displays to that machine, so the user must have agreed |
 | `node release/install-local.js [--dry]` | Puts the release in `dist/release` into this PC's installed app as its updater would (the signature checked, then `core.installVersion` and `activate`): the app runs it from its next start, on trial. For a PC whose app cannot reach a feed, and for trying a release before it is published. It changes the person's installed app, so only when they asked for that version there |
+| `node release/ci-checks.js [--staged]` | The static checks CI and the pre-commit hook run: syntax of every JS file and of the built pages' scripts, JSON, `my-remote-client.html` up to date, ASCII names, native records, the leak scan. Seconds, no Electron |
+| `node release/ci-native.js` | Rebuilds the committed binaries from `native/` (needs `x86_64-w64-mingw32-g++`: CI's Ubuntu 22.04, or the build server) and compares them byte for byte with `host/bin` |
+| `node release/bench-gate.js --profile=dev\|ci` | Runs the bench and fails when a figure leaves `release/bench-thresholds.json` (dev: a development PC; ci: CI machines). About a minute; shows the bench's test picture meanwhile |
 | `node release/test-assist.js` | The host's side of the Windows assist service (`host/assist.js`) against a fake service and helper on test pipes: protocol and version, the pipe-server session checks, input routing per state and its encoding, pictures in pieces, Ctrl+Alt+Del, reconnecting. Windows only (skips elsewhere); no input reaches the PC (the sink is recorded, never installed). A few seconds |
 | `host\bin\winassist.exe install`, `uninstall`, `status`, `grab <file.bmp>` | The assist service itself: install/uninstall need an elevated prompt (the host window's card does this through UAC). `grab` writes the current input desktop to a BMP (a secure one only when run as LocalSystem) |
 | `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept. A second |
