@@ -505,10 +505,18 @@ async function run() {
   const cur = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id, prim = screen.getPrimaryDisplay().id;
   // A display in HDR mode is captured with wrong tones, which would spoil the picture-quality comparison.
   const color = require('./input').displayColor();
-  const isHdr = (x) => { const r = screen.dipToScreenRect(null, x.bounds); return color.some((e) => e.hdr && e.x === r.x && e.y === r.y); };
+  // A display's rectangle in physical pixels: screen.dipToScreenRect exists on Windows only (the first
+  // bench on Linux, in CI, stopped here), elsewhere the bounds scaled by the display's factor, as
+  // physicalRect() in main.js does.
+  const physical = (x) => {
+    if (process.platform === 'win32') return screen.dipToScreenRect(null, x.bounds);
+    const s = x.scaleFactor || 1, b = x.bounds;
+    return { x: Math.round(b.x * s), y: Math.round(b.y * s), width: Math.round(b.width * s), height: Math.round(b.height * s) };
+  };
+  const isHdr = (x) => { const r = physical(x); return color.some((e) => e.hdr && e.x === r.x && e.y === r.y); };
   const score = (i) => (isHdr(displays[i]) ? 0 : 4) + (displays[i].id !== cur ? 2 : 0) + (displays[i].id !== prim ? 1 : 0);
   let di = Number.isInteger(B.display) && displays[B.display] ? B.display : displays.map((_, i) => i).sort((a, b) => score(b) - score(a) || b - a)[0];
-  const d = displays[di], phys = screen.dipToScreenRect(null, d.bounds);
+  const d = displays[di], phys = physical(d);
   const pw = Math.min(P.w, d.bounds.width), ph = Math.min(P.h, d.bounds.height);
   const mk = (o) => {
     const w = new BrowserWindow({ frame: false, alwaysOnTop: true, focusable: false, skipTaskbar: true, resizable: false, show: false, ...o, webPreferences: { backgroundThrottling: false } });

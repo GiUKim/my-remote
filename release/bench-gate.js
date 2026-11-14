@@ -19,8 +19,9 @@ const out = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-benchgate-'));
 const runs = Object.keys(limits);
 const nets = [...new Set(runs.map((r) => r.split('/')[0]))], tries = [...new Set(runs.map((r) => r.split('/')[1]))];
 
+// bench-run.js is a Node script run by this same program (Node, or Electron as Node where there is no
+// Node: ELECTRON_RUN_AS_NODE stays); it clears that variable itself for the Electron it starts.
 const env = { ...process.env };
-delete env.ELECTRON_RUN_AS_NODE;
 const r = spawnSync(process.execPath, [path.join(ROOT, 'host', 'bench-run.js'), `--net=${nets.join(',')}`, `--try=${tries.join(',')}`, `--secs=${arg('secs', '24')}`, `--out=${out}`, ...process.argv.filter((a) => a === '--no-sandbox')],
   { cwd: path.join(ROOT, 'host'), env, encoding: 'utf8', timeout: 15 * 60 * 1000 });
 process.stdout.write(r.stdout || '');
