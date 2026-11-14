@@ -8,13 +8,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/GiUKim/my-remote-releases/releases/latest/download/MyRemote-Windows-x64.zip"><img src="docs/img/download-windows.svg" alt="Windows용 내려받기" width="280"></a>
+  <a href="https://github.com/GiUKim/my-remote/releases/latest/download/MyRemote-Windows-x64.zip"><img src="docs/img/download-windows.svg" alt="Windows용 내려받기" width="280"></a>
   &nbsp;&nbsp;
-  <a href="https://github.com/GiUKim/my-remote-releases/releases/latest/download/MyRemote-Linux-x64.tar.gz"><img src="docs/img/download-linux.svg" alt="Linux용 내려받기" width="280"></a>
+  <a href="https://github.com/GiUKim/my-remote/releases/latest/download/MyRemote-Linux-x64.tar.gz"><img src="docs/img/download-linux.svg" alt="Linux용 내려받기" width="280"></a>
 </p>
 
 <p align="center">
-  <sub>⊞ Windows 10 · 11 (64비트) &nbsp;|&nbsp; 🐧 Linux X11 세션 (Ubuntu 22.04 · 24.04) &nbsp;|&nbsp; 🍎 macOS용은 아직 없습니다 &nbsp;|&nbsp; <a href="https://github.com/GiUKim/my-remote-releases/releases">모든 버전</a></sub>
+  <sub>⊞ Windows 10 · 11 (64비트) &nbsp;|&nbsp; 🐧 Linux X11 세션 (Ubuntu 22.04 · 24.04) &nbsp;|&nbsp; 🍎 macOS용은 아직 없습니다 &nbsp;|&nbsp; <a href="https://github.com/GiUKim/my-remote/releases">모든 버전</a></sub>
 </p>
 
 ## 🚀 3단계로 시작
@@ -700,11 +700,11 @@ node native/build.js 사용자@리눅스PC주소
 3. `node release/build.js`를 실행합니다. 커밋된 내용으로 `dist/release`에 위 세 파일을 만듭니다.
    - 반드시 설치돼야 하는 수정이면 `--critical`을 붙입니다. 그 버전보다 낮은 앱은 묻지 않고 업데이트합니다. 이때 바뀌는 `release/policy.json`도 커밋하세요(이후 릴리스가 계속 그 버전 미만을 강제합니다).
 4. 실행 틀이 바뀌었거나 처음 배포할 때는 설치 묶음도 만듭니다. 운영체제마다 그 운영체제에서 `node release/package.js`를 실행합니다(`dist/pack`에 `MyRemote-Windows-x64.zip` 또는 `MyRemote-Linux-x64.tar.gz`). 파일 이름에 버전이 없어서, 릴리스에 올리면 이 문서 맨 위의 내려받기 단추가 항상 최신 묶음을 가리킵니다.
-5. `dist/release`의 세 파일(과 설치 묶음)을 업데이트 폴더에 올립니다.
+5. 이 저장소의 GitHub 릴리스를 태그 `v<버전>`으로 만들고, `dist/release`의 세 파일과 설치 묶음 두 개를 첨부해 게시합니다. Pre-release로 두면 '최신'으로 치지 않아 내려받기 단추와 업데이트가 그 릴리스를 보지 않습니다.
 
 올리기 전에 실제 앱에서 먼저 써 보거나, 업데이트 폴더에 닿지 못하는 PC의 앱을 올리려면 그 PC에서 `node release/install-local.js`를 실행합니다. `dist/release`의 릴리스를 앱의 업데이트 기능과 똑같은 절차(서명 확인, 다음 시작 때 시험 실행, 실패하면 되돌리기)로 그 PC의 설치된 앱에 넣습니다.
 
-**업데이트 폴더는 누구나 받을 수 있는 곳이어야 합니다.** 이 저장소가 비공개라면 저장소의 릴리스는 로그인 없이 받을 수 없으므로, 릴리스 파일만 올리는 공개 저장소나 자체 서버가 따로 필요합니다. 주소는 `app/update-config.json`의 `feed`(설치 묶음 내려받기 페이지는 `downloads`)이고, 앱에 들어가는 값이라 바꾸면 설치 묶음을 새로 배포해야 합니다. GitHub 공개 저장소의 릴리스를 쓰면 `https://github.com/<계정>/<저장소>/releases/latest/download/`가 항상 최신 릴리스의 파일을 가리킵니다.
+**업데이트 폴더는 이 저장소의 릴리스입니다**: `https://github.com/GiUKim/my-remote/releases/latest/download/`는 늘 가장 최근 릴리스의 파일을 가리킵니다. 누구나 로그인 없이 받을 수 있어야 하므로 저장소는 공개여야 합니다(비공개 저장소의 릴리스는 로그인 없이는 받을 수 없습니다). 주소는 `app/update-config.json`의 `feed`(설치 묶음 내려받기 페이지는 `downloads`)이고, 앱에 들어가는 값이라 바꾸면 설치 묶음을 새로 배포해야 합니다. 0.3.0~0.4.1 설치 묶음은 따로 두려던 공개 저장소(`GiUKim/my-remote-releases`, 만들지 않음)를 보므로, 그 묶음으로 설치한 앱은 0.4.2 이상의 설치 묶음으로 한 번 직접 다시 설치해야 이후 업데이트를 받습니다.
 
 **서명 키**(`node release/keygen.js`가 만든 `~/.my-remote-release/update-signing-key.pem`)는 저장소에 없고, 넣어서도 안 됩니다. 이 키를 가진 사람은 설치된 모든 앱에 코드를 보낼 수 있습니다. 릴리스를 만드는 PC에만 두고, 오프라인 사본을 안전한 곳에 보관하세요. 잃어버리면 이미 설치된 앱은 더 이상 업데이트할 수 없습니다(새 키로 다시 설치해야 합니다).
 

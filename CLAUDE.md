@@ -676,8 +676,13 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
   manifest's, a file the manifest does not list, a file name that could leave the folder: never
   installed. Installed files are checked against their signed manifest at every start. So the feed
   (`feed` in `update-config.json`: any https folder with `latest.json`, `latest.json.sig` and the bundle
-  file) need not be trusted, and may be a public place while the repository is private. Never an older
-  version than the one running.
+  file) need not be trusted. Never an older version than the one running. The feed is this repository's
+  own GitHub releases (`https://github.com/GiUKim/my-remote/releases/latest/download/`; the README's
+  download buttons point there too), which is why the repository is public: a private repository's
+  releases cannot be fetched without logging in. Decided 2026-11-14, after checking the history (only the
+  noreply address as author; no address, account name, path or key-shaped string in any commit). Packages
+  0.3.0-0.4.1 point at a separate `GiUKim/my-remote-releases` that was never created: an app installed
+  from one of them never sees an update and must be installed once more from a 0.4.2 or later package.
 - **The updater lives in the shell**, not in the bundle: a bad release cannot take away the means to
   replace it. It looks at the feed 20 s after the start and every 6 h. An ordinary update is only
   announced (the host window's card, `showUpdate` in `host.js`; the client app asks in a dialog) and
