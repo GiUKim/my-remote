@@ -510,8 +510,37 @@ the client app instead).
 - **Windows Firewall prompt** appears the first time a given `electron.exe` path opens UDP ports.
   Allowing it adds an inbound rule for that executable on the chosen network profile. Removing the rule
   later needs admin rights.
-- **Lock screen / UAC** are on a separate secure desktop: they cannot be captured or controlled by a
+- **Lock screen / UAC** (Windows) are on a separate secure desktop: they cannot be captured or controlled by a
   normal-user process. This is the main functional limitation, not a bug to "fix" with a quick patch.
+  What was found out when the user asked how a locked host could be unlocked from the client
+  (2026-11-14; sources: Microsoft Learn, systemd and GNOME Shell sources, Chromium's remoting docs):
+  - Windows: the lock screen, the UAC prompt and the logon screen are on the Winlogon desktop, which
+    only LocalSystem can open. Desktop Duplication gives E_ACCESSDENIED there unless the caller runs as
+    LocalSystem; Ctrl+Alt+Del needs `SendSAS` from a service (policy `SoftwareSASGeneration`). There is
+    no supported way for a user-level process to unlock a session (the companion-device framework is
+    gone since Windows 10 2004). Every tool that does it (Chrome Remote Desktop, RustDesk, UltraVNC)
+    installs a LocalSystem service that starts a LocalSystem helper inside the session, which follows
+    the input desktop. For this program that means: native code (a service and a helper in `native/`),
+    an install step with administrator rights, frames and input passed between the helper and the
+    user-level host. One trap to design around: the key and the WebRTC session live in the user-level
+    host, so a helper that takes its orders from that host lets any program of the same user type on
+    the secure desktop. On the lock screen that gains nothing (the password is still needed); on a UAC
+    consent prompt it would be a way to elevate without the person. So: lock screen first, UAC view-only.
+    Not started; testing it means locking the person's PC, so only with them.
+  - Keeping Windows from locking is no substitute: `SetThreadExecutionState` does not stop the screen
+    saver or the inactivity-limit policy; only input resets that timer. After a reboot nobody is signed
+    in and a per-user host does not run at all (automatic sign-in stores the password as an LSA secret).
+  - Linux, X11: the lock screen of GNOME Shell is drawn on the session's own display, so the host shows
+    it and the client's keys reach it. Checked on Xvfb with GNOME Shell 46 through the real host and
+    client page: the locked screen in the client's picture, a letter sent from the client as a dot in
+    the password field. Nothing had to be built. The session's owner may also unlock without a password
+    (`loginctl unlock-session <id>`: logind lets the owner, GNOME Shell obeys; exit 0, unlocked): not
+    offered to the client, since the access key alone would then open a locked session.
+    Not the same everywhere: light-locker switches to a greeter on another display, the display
+    manager's greeter before login is another user's (GDM's is Wayland), xscreensaver ignores logind's
+    unlock, and a Wayland GNOME session ends remote sessions when it locks. Electron's
+    `getSystemIdleState` says 'idle', never 'locked', there: the client shows no lock notice on Linux,
+    which is right, since the picture shows the lock screen itself.
   The client is told (`lock`): main reports Windows' lock and unlock (`powerMonitor`, and
   `getSystemIdleState` when a session starts), and native capture loops that cannot read their screen
   for over 1.5 s count as a secure prompt (`screenGone` in `host.js`); every client window then says so
