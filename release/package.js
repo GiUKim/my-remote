@@ -40,7 +40,9 @@ function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(RO
   say(`copying Electron ${fs.readFileSync(path.join(dist, 'version'), 'utf8').trim()} ...`);
   // Every language's menu texts but Korean and English go (Chromium falls back to English): 35 MB less.
   fs.cpSync(dist, dir, { recursive: true, verbatimSymlinks: true, filter: (src) => !/[\\/]locales[\\/](?!ko\.pak$|en-US\.pak$)[^\\/]+$/.test(src) && !/[\\/]resources[\\/]default_app\.asar$/.test(src) });
-  fs.renameSync(path.join(dir, exe), path.join(dir, win ? 'My Remote.exe' : 'my-remote'));
+  // Names without spaces and in ASCII only, here and for everything else the package holds or the app
+  // makes (shortcuts, profile folders): a space or Korean in a path trips some tools and some systems.
+  fs.renameSync(path.join(dir, exe), path.join(dir, win ? 'MyRemote.exe' : 'my-remote'));
 
   const app = path.join(dir, 'resources', 'app');
   fs.mkdirSync(app, { recursive: true });
@@ -58,10 +60,12 @@ function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(RO
     fs.copyFileSync(path.join(ROOT, 'app', 'my-remote.sh'), path.join(dir, 'my-remote.sh'));
     fs.chmodSync(path.join(dir, 'my-remote.sh'), 0o755);
   }
-  fs.writeFileSync(path.join(dir, win ? '읽어 보세요.txt' : 'README.txt'), [
+  // On Windows the text starts with a byte order mark, so that every Notepad reads its Korean as UTF-8.
+  fs.writeFileSync(path.join(dir, 'README.txt'), (win ? '\uFEFF' : '') + [
     `My Remote ${version}`, '',
-    win ? '"My Remote.exe"를 실행하세요. 처음에 호스트/클라이언트를 고르고, 시작 메뉴에 바로가기를 만들 수 있습니다.'
+    win ? 'MyRemote.exe를 실행하세요. 처음에 호스트/클라이언트를 고르고, 시작 메뉴에 바로가기를 만들 수 있습니다.'
       : './my-remote.sh 를 실행하세요 (X11 세션). 처음에 호스트/클라이언트를 고르고, 앱 메뉴에 바로가기를 만들 수 있습니다.',
+    '한글이나 띄어쓰기가 없는 경로에 풀어 두기를 권합니다 (예: ' + (win ? 'C:\\MyRemote' : '~/MyRemote') + ').',
     '이 폴더는 옮기지 말고 그대로 두세요(바로가기가 이 위치를 가리킵니다). 지우려면 이 폴더와 바로가기를 지우면 됩니다.',
     '새 버전은 앱이 알아서 확인하고 알려 줍니다.', '',
   ].join(win ? '\r\n' : '\n'));

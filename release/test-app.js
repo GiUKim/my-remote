@@ -189,7 +189,7 @@ function makeApp(name, builtin, port) {
     build({ out: rel, key: keyFile, dirty: true });
     fs.writeFileSync(conf, JSON.stringify({ feed: '', keys: [PUB], dataRoot: path.join(tmp, 'real-data') }));
     const p = require('./package').pack({ release: rel, out: path.join(tmp, 'pack'), archive: false, config: conf, quiet: true });
-    const exe = path.join(p.dir, process.platform === 'win32' ? 'My Remote.exe' : 'my-remote');
+    const exe = path.join(p.dir, process.platform === 'win32' ? 'MyRemote.exe' : 'my-remote');
     const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
     const r = spawnSync(exe, [...EXTRA, '--selftest'], { env, encoding: 'utf8', timeout: 6 * 60e3, maxBuffer: 64 * 1024 * 1024 });
     const outText = String(r.stdout || '') + String(r.stderr || ''), fails = outText.split('\n').filter((l) => /\[selftest\] FAIL/.test(l));
@@ -202,6 +202,15 @@ function makeApp(name, builtin, port) {
     const sc = spawnSync(exe, [...EXTRA, '--shortcuts=' + lnk], { env, encoding: 'utf8', timeout: 60e3 });
     const made = fs.existsSync(lnk) ? fs.readdirSync(lnk) : [];
     check('--shortcuts makes the host and the client shortcut', sc.status === 0 && made.length === 2 && made.every((n) => fs.statSync(path.join(lnk, n)).size > 100), `exit ${sc.status}: ${made.join(', ')}`);
+    // No file or folder the package holds or the app makes has a space or anything but ASCII in its name
+    // (a path with either trips some tools and some systems), and a start that only asks or makes the
+    // shortcuts keeps its profile next to the installed versions, not in a folder named after the product.
+    const plain = (n) => /^[\x21-\x7e]+$/.test(n), odd = [];
+    const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { if (!plain(e.name)) odd.push(e.name); if (e.isDirectory()) walk(path.join(d, e.name)); } };
+    walk(p.dir);
+    for (const n of [path.basename(p.dir), p.name, ...made]) if (!plain(n)) odd.push(n);
+    check('names in the package and of the shortcuts: no spaces, ASCII only; the asking start has a profile of its own', odd.length === 0 && fs.existsSync(path.join(tmp, 'launcher')),
+      odd.length ? 'not plain: ' + odd.slice(0, 5).join(', ') : `shortcuts ${made.join(', ')}; profile ${fs.existsSync(path.join(tmp, 'launcher')) ? 'next to the data folder' : 'not where expected'}`);
   }
 
   await sleep(1500); // what the guards and restarts left running ends by itself

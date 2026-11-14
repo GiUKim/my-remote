@@ -1,0 +1,8 @@
+{
+  "ko": [
+    "설치 묶음과 앱이 만드는 파일·폴더·바로가기 이름에서 한글과 띄어쓰기를 없앴습니다 (MyRemote.exe, README.txt, 시작 메뉴 MyRemote-Host / MyRemote-Client). 새 설치 묶음을 받아 풀 때 적용됩니다"
+  ],
+  "en": [
+    "No Korean and no spaces in the names of the files, folders and shortcuts the package holds and the app makes (MyRemote.exe, README.txt, Start menu MyRemote-Host / MyRemote-Client). Takes effect with a newly unpacked package"
+  ]
+}

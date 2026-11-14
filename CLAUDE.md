@@ -683,9 +683,20 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
   anything else, so an app installed over a source folder's use keeps the key.
 - **Packages** (`release/package.js`) are made on the platform they are for, from
   `host/node_modules/electron/dist` (nothing else is downloaded): a folder to unpack and run
-  (`My Remote.exe`, `./my-remote.sh`), zipped as `MyRemote-Windows-x64.zip` / `MyRemote-Linux-x64.tar.gz` holding a folder `MyRemote`: no version in the names, so the README's download buttons (`.../releases/latest/download/<name>`) always fetch the newest and a self-updating folder is not named after an old version. No installer, no code signing: Windows SmartScreen warns
+  (`MyRemote.exe`, `./my-remote.sh`), zipped as `MyRemote-Windows-x64.zip` / `MyRemote-Linux-x64.tar.gz` holding a folder `MyRemote`: no version in the names, so the README's download buttons (`.../releases/latest/download/<name>`) always fetch the newest and a self-updating folder is not named after an old version. No installer, no code signing: Windows SmartScreen warns
   at the first start. macOS is not built (an unsigned app does not run there). Started without `--host`
   or `--client` the app asks which and offers the two shortcuts (`--shortcuts` makes them without asking).
+- **Plain names.** No file or folder the package holds or the app makes has a space or anything but
+  ASCII in its name (the user's rule, 2026-11-14: a path with Korean or a space fails on some systems
+  and with some tools): `MyRemote.exe`, `README.txt` (Korean inside, with a byte order mark on
+  Windows), Start menu `MyRemote\MyRemote-Host.lnk` and `MyRemote-Client.lnk`, the profile of a start
+  that only asks or makes shortcuts at `<data folder>/../launcher` (Electron's default would be a
+  folder named after the product). 0.3.0-0.4.0 had `My Remote.exe`, a Korean read-me name, Korean
+  shortcut names and `%APPDATA%\My Remote`; making the new shortcuts removes the old ones.
+  `release/test-app.js --packaged` walks the package and fails on any other name. Display texts
+  (window titles, the shortcuts' descriptions, Linux menu entries' `Name=`) are not names of files and
+  stay as they are. Where the person unpacks the package, and their account's name, are theirs: the
+  app must keep working there (the self-test passed from a folder with Korean in its path).
 - **Making a release**: README "릴리스 만들기". `release/build.js` takes the files from the commit that is
   checked out (`git show HEAD:...`: the same bundle on every machine, nothing uncommitted), signs with
   the key outside the repository and checks the result the way an app will.

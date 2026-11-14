@@ -46,6 +46,12 @@ if (mode !== 'ask') {
   app.setName(NAME[mode]);
   app.setPath('userData', path.join(app.getPath('appData'), NAME[mode]));
   if (process.platform === 'win32') app.setAppUserModelId('kr.myremote.' + mode); // the taskbar and notifications go by the shortcut's id
+} else {
+  // Asking which face, or only making the shortcuts: a profile of its own next to the installed versions.
+  // Left to itself Electron names one after the product ("My Remote" in 0.3.0-0.4.0: a folder with a
+  // space in its name). Every file and folder this app makes has a plain name: no spaces, ASCII only.
+  app.setName('my-remote');
+  app.setPath('userData', path.join(path.dirname(root), 'launcher'));
 }
 
 function relaunch(extra) {
@@ -139,12 +145,22 @@ function makeShortcuts(into) {
   const made = [];
   try {
     if (process.platform === 'win32') {
-      const dir = into || path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'My Remote');
+      // File and folder names without spaces and in ASCII only (some tools and some systems' settings
+      // trip over either); what the shortcut is for is in its description.
+      const programs = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+      const dir = into || path.join(programs, 'MyRemote');
       fs.mkdirSync(dir, { recursive: true });
       const icon = path.join(__dirname, 'icon.ico');
-      for (const [name, arg, about] of [['My Remote 호스트', '--host', '이 PC를 다른 PC에서 원격으로 조종합니다'], ['My Remote 클라이언트', '--client', '다른 PC에 원격으로 접속합니다']]) {
+      for (const [name, arg, about] of [['MyRemote-Host', '--host', '이 PC를 다른 PC에서 원격으로 조종합니다'], ['MyRemote-Client', '--client', '다른 PC에 원격으로 접속합니다']]) {
         const file = path.join(dir, name + '.lnk');
         if (shell.writeShortcutLink(file, fs.existsSync(file) ? 'update' : 'create', { target: process.execPath, args: arg, description: about, icon, iconIndex: 0, appUserModelId: 'kr.myremote.' + arg.slice(2) })) made.push(file);
+      }
+      // The shortcuts 0.3.0-0.4.0 made (a folder "My Remote", Korean in the names) go once the new ones
+      // are there; their folder too, when nothing else is in it.
+      if (!into && made.length === 2) {
+        const old = path.join(programs, 'My Remote');
+        for (const n of ['My Remote 호스트.lnk', 'My Remote 클라이언트.lnk']) { try { fs.rmSync(path.join(old, n), { force: true }); } catch {} }
+        try { fs.rmdirSync(old); } catch {}
       }
     } else if (process.platform === 'linux') {
       const dir = into || path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'applications');
