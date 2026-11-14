@@ -702,7 +702,9 @@ async function startSession(hello) {
     if (last) {
       const mbps = ((bytes - last.bytes) * 8) / ((now - last.t) / 1000) / 1e6;
       const why = limit === 'cpu' ? ' · 제한: 이 PC 성능' : limit === 'bandwidth' ? ' · 제한: 네트워크' : '';
-      const text = `${codec} (${impl}) · ${fps.sort((a, b) => a[0] - b[0]).map((x) => x[1]).join('/')} fps · ${mbps.toFixed(1)} Mbps · RTT ${rtt != null ? Math.round(rtt * 1000) + ' ms' : '?'} · ${kind === 'relay' ? 'TURN 중계' : 'P2P 직접'}${why}`;
+      // The encoder's name is hidden by Chromium unless the page captures something through the browser (on
+      // a PC without a sound device nothing is): then only the codec.
+      const text = `${codec}${impl ? ` (${impl})` : ''} · ${fps.sort((a, b) => a[0] - b[0]).map((x) => x[1]).join('/')} fps · ${mbps.toFixed(1)} Mbps · RTT ${rtt != null ? Math.round(rtt * 1000) + ' ms' : '?'} · ${kind === 'relay' ? 'TURN 중계' : 'P2P 직접'}${why}`;
       $('stats').textContent = text;
       if (!s.loggedStats) { s.loggedStats = true; log('전송 상태: ' + text); }
     }

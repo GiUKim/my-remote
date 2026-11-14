@@ -1,0 +1,12 @@
+{
+  "ko": [
+    "Windows 호스트가 잠겨 있어도 원격으로 풀 수 있습니다: 호스트 창의 \"잠금 화면에서도 원격 조종\"을 한 번 설치하면(관리자 권한 확인), 클라이언트에 잠금 화면이 보이고 비밀번호를 입력해 풉니다. 비밀번호는 그대로 필요하고, 관리자 권한 확인 창(UAC)은 보기만 됩니다",
+    "회사 PC처럼 Ctrl+Alt+Del을 요구하는 잠금 화면을 위해 화면 위에 Ctrl+Alt+Del 버튼이 생깁니다",
+    "Windows의 방화벽 창과 작업 관리자에 프로그램 이름이 Electron 대신 MyRemote로 나옵니다(새 설치 묶음부터)"
+  ],
+  "en": [
+    "A locked Windows host can be unlocked from the client: install \"잠금 화면에서도 원격 조종\" once from the host window (an administrator prompt), and the client shows the lock screen and takes the password. The password is still needed, and UAC prompts are view only",
+    "A Ctrl+Alt+Del button over the picture, for lock screens that ask for it (many company PCs)",
+    "Windows' firewall prompt and Task Manager name the program MyRemote instead of Electron (from this package on)"
+  ]
+}

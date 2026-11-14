@@ -822,7 +822,11 @@ Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하�
   anonymously. Asking the runs API for a commit needs the full hash (`head_sha=` ignores a short one).
 - The first run (2026-11-15): `checks`, `native` (byte for byte on GitHub's Ubuntu too) and `Linux X11`
   passed on GitHub's runners; on `windows-2022` the assist test and the self-test passed and the packaged
-  app test failed (reason then unknown: hence `ci-run.js`). Dependabot opened PRs for checkout v7,
+  app test failed; the second run's annotations named it: the self-test's "sends only as many pixels as
+  are shown" (also run inside the packaged test). Its expectation was wrong, not the host: the host
+  scales by steps (1, 1.25, 1.5, ...) and never below the shown size, so a monitor shown at 828 of 1024
+  (factor 1.24, the runner's 1024x768 screen) is rightly sent whole; the check wanted "fewer" whenever the
+  window was smaller, which this PC's 1920-wide monitors always made true. It now expects the step. Dependabot opened PRs for checkout v7,
   setup-node v7, CodeQL v4 (taken into the workflows) and koffi 3 (a major version under input, capture
   and the clipboard: merge only when CI passes on it, after reading its changes).
 
@@ -1274,6 +1278,17 @@ start-up key dialog, native capture recovering from a real lock screen, UAC prom
 `pointerOwn` with a real window lying over a client window, the `copy` cursor outside the windows,
 touch and pen, AltGr layouts, the browser's fullscreen click after spreading, the app spreading again
 after a self-update, and a browser download of a large file through Blobs.
+
+Test round of 2026-11-15 (after the assist service, at the user's request to test every OS case; all
+passed): Windows 10 PC (this one): the self-test (44 checks, the binaries' records included),
+`test-assist.js` (18), `test-app.js --packaged` (14, the branded exe), the bench gate (dev: 49.7 fps,
+scroll p50 80 ms, typing p50 53 ms). Ubuntu 24.04 (the Linux PC, Xvfb): the self-test with
+`--input-check --clip-check --client-app-check` (native X11 capture, AV1). The Windows 10 test VM: the
+self-test with `--clip-check --client-app-check` (37 checks; native capture works on its display) and
+`--dragout-check` A/B/C (real Explorer drags; injecting there touches nobody's desktop). Across machines
+with the lock screen: the Windows client page against the host in the VM, and the Linux client (Ubuntu
+24.04, Xvfb) against it: lock, the lock screen live with the bar, click, password typed, unlocked. GitHub's
+runners: `checks`, `native` (byte for byte), `Linux X11` passed on the first run.
 
 Verified by the self-test: the arrangement rules, applying an arrangement (two monitors together, an
 empty screen), the panel showing every monitor live, and a drag and a click done with synthetic pointer

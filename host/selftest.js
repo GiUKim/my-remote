@@ -434,17 +434,27 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     check('the host says whether another remote session is connected', ok,
       ok ? `Chrome Remote Desktop ${s.others.crd ? 'connected' : 'not connected'}, windows dragged ${s.others.outline ? 'as an outline' : 'with their contents'}` : 'no message');
 
-    // The client window is smaller than the monitor, so the host must send fewer pixels - but never fewer than shown.
+    // The client window is smaller than the monitor, so the host must send fewer pixels - but never fewer than
+    // shown. It scales by steps (SCALE_STEPS in host.js): the largest step that still covers the shown size.
+    // Shown at 828 of 1024 (a factor 1.24, as on GitHub's 1024x768 Windows runners) no step fits and the
+    // full size is right; the check expected "fewer" whenever the window was smaller, which a 1920-wide
+    // monitor always made true, and failed there.
     const main = s.sel;
+    const STEPS = [1, 1.25, 1.5, 2, 2.5, 3, 4, 6, 8];
+    const expectW = (x, need) => {
+      const m = x.mons[main], f = need.w > 0 && need.h > 0 ? Math.max(m.w / need.w, m.h / need.h) : 1;
+      return m.w / (STEPS.filter((st) => st <= f + 0.01).pop() || 1);
+    };
     [ok, s] = await until((x) => {
       const need = JSON.parse(x.view).find((e) => e.i === main), got = width(x.res[main]);
-      return need && got > 0 && got >= need.w - 2 && (need.w >= x.mons[main].w || got < x.mons[main].w);
+      return need && got > 0 && got >= need.w - 2 && Math.abs(got - expectW(x, need)) <= 2;
     }, 15);
     const encOf = (x) => (x.host && x.host.mons ? Object.entries(x.host.mons).map(([i, m]) => `monitor ${Number(i) + 1} ${m.res} ${m.impl}`).join('; ') : '?');
     const nativeName = process.platform === 'linux' ? 'native (X11: XDamage and MIT-SHM, platform/x11capture.js)' : 'native (native/capture.cpp)';
     info('screen capture: ' + (await hostWin.webContents.executeJavaScript(`session && session.native ? ${JSON.stringify(nativeName)} : "the browser engine's"`)));
     await sleep(4500); s = await state(); info('video encoder: ' + encOf(s) + ' (libaom = AV1 on the CPU, MediaFoundation = H.264 on the graphics card, OpenH264 = H.264 on the CPU)');
-    check('sends only as many pixels as are shown', ok, `monitor ${main + 1} is ${s.mons[main].w}x${s.mons[main].h}, shown at ${JSON.parse(s.view).map((e) => e.w + 'x' + e.h)[0]}, received ${s.res[main]}`);
+    { const need = JSON.parse(s.view).find((e) => e.i === main);
+      check('sends only as many pixels as are shown', ok, `monitor ${main + 1} is ${s.mons[main].w}x${s.mons[main].h}, shown at ${need ? need.w + 'x' + need.h : '?'}, received ${s.res[main]}, expected width ${need ? Math.round(expectW(s, need)) : '?'}`); }
 
     await js(`setFit(mainView, '1:1')`);
     [ok, s] = await until((x) => width(x.res[main]) === x.mons[main].w, 15);
