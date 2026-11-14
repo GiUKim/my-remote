@@ -29,21 +29,30 @@ const run = (cmd, args) => {
 };
 const sha = (data) => crypto.createHash('sha256').update(data).digest('hex');
 
-// One DLL per .cpp file. Everything is linked in, so a DLL needs nothing but Windows itself.
+// One output per .cpp file: a DLL the host loads through koffi, or - for winassist.cpp - a standalone
+// .exe (the LocalSystem service for the secure desktop; see native/winassist.cpp). Everything is linked
+// in, so each needs nothing but Windows itself.
 const CXX = 'x86_64-w64-mingw32-g++';
-const COMMITTED = new Set(['capture.cpp', 'shellops.cpp']);
+const COMMITTED = new Set(['capture.cpp', 'shellops.cpp', 'winassist.cpp']);
+const EXES = new Set(['winassist.cpp']); // built as .exe (wmain), not a DLL
 const LIBS = {
   'capture.cpp': '-ld3d11 -ldxgi -ldxguid -luuid',
   'capprobe.cpp': '-ld3d11 -ldxgi -ldxguid -luuid',
   'shellops.cpp': '-lole32 -lshell32 -luuid',
+  'winassist.cpp': '-lwtsapi32 -luserenv -ladvapi32 -lgdi32 -luser32',
 };
 const sources = fs.readdirSync(here).filter((f) => f.endsWith('.cpp'));
-const dll = (f) => f.replace(/\.cpp$/, '.dll');
-const flags = '-O2 -Wall -shared -static -s -fno-exceptions -fno-rtti -Wl,--no-insert-timestamp';
-const command = (f) => `${CXX} ${flags} -o ${dll(f)} ${f} ${LIBS[f] || ''}`.trim();
+const out = (f) => f.replace(/\.cpp$/, EXES.has(f) ? '.exe' : '.dll');
+const dll = out; // kept name for the record logic below
+// The DLLs' flags exactly as before winassist.exe was added: their order changes the file (with -shared
+// later, capture.dll came out 1.5 KB smaller), and a committed DLL must stay what its record says.
+const flagsFor = (f) => (EXES.has(f)
+  ? '-O2 -Wall -municode -static -s -fno-exceptions -fno-rtti -Wl,--no-insert-timestamp'
+  : '-O2 -Wall -shared -static -s -fno-exceptions -fno-rtti -Wl,--no-insert-timestamp');
+const command = (f) => `${CXX} ${flagsFor(f)} -o ${out(f)} ${f} ${LIBS[f] || ''}`.trim();
 run('ssh', [...ssh, target, `mkdir -p ${dir}/native/out`]);
 run('scp', [...ssh, ...sources.map((f) => path.join(here, f)), `${target}:${dir}/native/`]);
-run('ssh', [...ssh, target, `cd ${dir}/native && ` + sources.map((f) => command(f).replace(` -o ${dll(f)} `, ` -o out/${dll(f)} `)).join(' && ') + ' && ls -l out']);
+run('ssh', [...ssh, target, `cd ${dir}/native && ` + sources.map((f) => command(f).replace(` -o ${out(f)} `, ` -o out/${out(f)} `)).join(' && ') + ' && ls -l out']);
 const compiler = run('ssh', [...ssh, target, `${CXX} --version`]).split('\n')[0].trim();
 for (const f of sources) {
   const to = COMMITTED.has(f) ? bin : tools;

@@ -42,6 +42,15 @@ contextBridge.exposeInMainWorld('hostApi', {
     page: () => ipcRenderer.invoke('update-page'),
     onChange: (fn) => ipcRenderer.on('update-changed', (_e, s) => fn(s)),
   },
+  // The Windows assist service (host/assist.js): the lock screen and UAC prompts during a session, and
+  // installing it (elevated: Windows asks the person at this PC).
+  assist: {
+    status: () => ipcRenderer.invoke('assist-status'),
+    install: () => ipcRenderer.invoke('assist-install'),
+    uninstall: () => ipcRenderer.invoke('assist-uninstall'),
+    sas: () => ipcRenderer.send('assist-sas'),
+    onMessage: (fn) => ipcRenderer.on('assist', (_e, m) => fn(m)),
+  },
   nativeCapture: () => !!capturer(),
   nativeOpen: () => { const c = capturer(); return c && c.openCount ? c.openCount() : -1; }, // X11: capturers not let go yet (the self-test)
   others: () => ipcRenderer.invoke('others'),

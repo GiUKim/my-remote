@@ -66,8 +66,20 @@ const NUMPAD_NAV = new Set(['Home', 'End', 'PageUp', 'PageDown', 'ArrowUp', 'Arr
 // The modifiers go as the plain VK_CONTROL/VK_SHIFT/VK_MENU, which every way of asking for them sees.
 const SHORTCUT_VK = { Escape: 0x1b, ControlLeft: 0x11, ShiftLeft: 0x10, AltLeft: 0x12, Enter: 0x0d, Tab: 0x09 };
 
+// Where input goes instead of SendInput while a secure desktop has the screen (host/assist.js): the
+// lock screen is out of this process's reach, so the assist service's helper injects it there; a UAC
+// prompt gets nothing (the sink drops it). null: SendInput as always. sink(list), list of
+// { mouse: { flags, dx, dy, data } } or { key: { vk, scan, flags } }, in order.
+let sink = null;
+function setSink(fn) { sink = typeof fn === 'function' ? fn : null; }
 function send(flags, dx = 0, dy = 0, data = 0) {
+  if (sink) { sink([{ mouse: { flags, dx, dy, data } }]); return; }
   SendMouse(1, [{ type: 0, mi: { dx, dy, mouseData: data, dwFlags: flags, time: 0, dwExtraInfo: 0 } }], SIZE);
+}
+// Keyboard INPUTs in order: SendInput, or the sink above.
+function sendKeys(list) {
+  if (sink) { sink(list.map((k) => ({ key: { vk: k.ki.wVk, scan: k.ki.wScan, flags: k.ki.dwFlags } }))); return; }
+  for (let i = 0; i < list.length; i += 200) { const part = list.slice(i, i + 200); SendKey(part.length, part, SIZE); }
 }
 const virtualDesktop = () => ({ x: GetSystemMetrics(76), y: GetSystemMetrics(77), width: GetSystemMetrics(78), height: GetSystemMetrics(79) });
 // t: input.js's target(): nx, ny = the point in SendInput's 0..65535 range over the virtual desktop.
@@ -95,13 +107,13 @@ function keyOf(code, keyName, shortcut) {
   return null;
 }
 function sendKey(k, up) {
-  SendKey(1, [{ type: 1, ki: { wVk: k.vk, wScan: k.scan, dwFlags: k.flags | (up ? KF.UP : 0), time: 0, dwExtraInfo: 0 }, pad: [0, 0, 0, 0, 0, 0, 0, 0] }], SIZE);
+  sendKeys([{ type: 1, ki: { wVk: k.vk, wScan: k.scan, dwFlags: k.flags | (up ? KF.UP : 0), time: 0, dwExtraInfo: 0 }, pad: [0, 0, 0, 0, 0, 0, 0, 0] }]);
 }
 // An unassigned key (0xE8, as AutoHotkey uses it): pressed between Alt or the Windows key going down
 // and up, it keeps that release from opening the program's menu bar or the Start menu.
 function maskKey() {
   const k = (up) => ({ type: 1, ki: { wVk: 0xe8, wScan: 0, dwFlags: up, time: 0, dwExtraInfo: 0 }, pad: [0, 0, 0, 0, 0, 0, 0, 0] });
-  SendKey(2, [k(0), k(KF.UP)], SIZE);
+  sendKeys([k(0), k(KF.UP)]);
 }
 // Text as characters, not keys (KEYEVENTF_UNICODE, one UTF-16 unit per press): what a phone's
 // keyboard typed, Hangul included, arrives as those characters whatever the host's keyboard layout
@@ -112,7 +124,7 @@ function typeText(s) {
     const u = s.charCodeAt(i);
     for (const up of [0, KF.UP]) list.push({ type: 1, ki: { wVk: 0, wScan: u, dwFlags: 0x4 | up, time: 0, dwExtraInfo: 0 }, pad: [0, 0, 0, 0, 0, 0, 0, 0] });
   }
-  for (let i = 0; i < list.length; i += 200) { const part = list.slice(i, i + 200); SendKey(part.length, part, SIZE); }
+  sendKeys(list);
 }
 
 // ---- cursor shape -----------------------------------------------------------
@@ -467,7 +479,7 @@ function processRunning(exe) {
 module.exports = {
   viewOnlyReason: () => '',
   hidesCursors: true,
-  virtualDesktop, move, button, wheel, keyOf, sendKey, typeText, maskKey, clipboardPrivate,
+  virtualDesktop, move, button, wheel, keyOf, sendKey, typeText, maskKey, setSink, clipboardPrivate,
   cursorState, cursorBitmap, hideCursors, restoreCursors, dragFullWindows, displayColor,
   captureClass, dragging, cancelDrag, clipboardFiles, underPointer, buttonsHeld, clickAt, dropFilesBuffer, setClipboardFiles, processRunning,
   clipSeq: () => GetClipboardSequenceNumber(),

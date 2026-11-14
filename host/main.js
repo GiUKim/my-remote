@@ -4,6 +4,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const input = require('./input');
+const assist = require('./assist'); // Windows: the lock screen through the assist service (see assist.js)
 
 // The native capturer waits for each monitor's next image on a worker thread of the host page's
 // process; the default of four threads would be used up by three monitors. (Inherited by that process.)
@@ -401,6 +402,7 @@ function releaseInput(id) {
 function pageGone() {
   clipWriting = 0; // input of the page that went away is not injected after the reset below
   inputWaiting = [];
+  try { assist.stop(); } catch (e) { console.error('assist stop', e); } // before the reset: it lets go of input's sink
   try { input.reset(); } catch (e) { console.error('input reset', e); }
   try { setCursorsHidden(false); } catch (e) { console.error('cursor restore', e); }
   closeDragFiles(null);
@@ -770,7 +772,7 @@ else if (!ISOLATED && !app.requestSingleInstanceLock()) app.quit();
 else {
   // Started again: after an update restart; while the page waits to be loaded again after a crash, at once.
   app.on('second-instance', () => { if (codeStamp() !== startedStamp) restart(); else { reloadCrashedPage(); showWindow(); } });
-  app.on('before-quit', () => { quitting = true; input.reset(); setCursorsHidden(false); clearKeyClip(); });
+  app.on('before-quit', () => { quitting = true; assist.stop(); input.reset(); setCursorsHidden(false); clearKeyClip(); });
   process.on('exit', () => { if (cursorsHidden) input.restoreCursors(); });
   app.whenReady().then(async () => {
     // The code is newer than the Electron it runs on: it was updated (git pull) without setup.ps1/setup.sh.
@@ -915,7 +917,17 @@ else {
       sessionLive = !!live;
       setTray(!!live);
       if (live && !SELFTEST && !BENCH && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: '원격 접속이 시작되었습니다.' }).show();
+      // The assist service, when installed: the lock screen for the session's client. Not in the
+      // automated runs (the self-test and the bench must not depend on what this PC has installed).
+      if (assist.supported && !SELFTEST && !BENCH) {
+        if (live) assist.start((m) => { if (win && !win.isDestroyed()) win.webContents.send('assist', m); });
+        else assist.stop();
+      }
     });
+    ipcMain.handle('assist-status', () => assist.status());
+    ipcMain.handle('assist-install', () => assist.install());
+    ipcMain.handle('assist-uninstall', () => assist.uninstall());
+    ipcMain.on('assist-sas', () => assist.sas());
     // Updates of the installed app (see updateInfo above). A required update restarts the host by
     // itself: not in the middle of a remote session (the shell waits for it to end, half an hour at most).
     ipcMain.handle('update-status', updateInfo);
@@ -1001,7 +1013,9 @@ else {
         require('child_process').spawn(process.execPath, [APP ? '--client' : path.join(__dirname, '..', 'client'), '--loader=' + file, ...process.argv.filter((a) => a === '--no-sandbox')],
           { env, detached: true, stdio: 'ignore' }).unref();
       };
-      setTimeout(open, 2500); // after the host has subscribed
+      // --no-client: a client elsewhere (a test harness on another machine) uses this trial instead; one
+      // opened here would take the session over (a new hello replaces the current session) and back.
+      if (!process.argv.includes('--no-client')) setTimeout(open, 2500); // after the host has subscribed
     }
   });
 }

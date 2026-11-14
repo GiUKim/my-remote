@@ -1,0 +1,7 @@
+{
+  "source": "native/winassist.cpp",
+  "sourceSha256": "7ef300042532204b7ba53bc391c4e2b2a087d609a1d46f281552ca825875c179",
+  "dllSha256": "7c9d626ca95d0ca8c59b86f1dc245a433ba51b287e1badc815bd1085ee620149",
+  "compiler": "x86_64-w64-mingw32-g++ (GCC) 10-win32 20220113",
+  "command": "x86_64-w64-mingw32-g++ -O2 -Wall -municode -static -s -fno-exceptions -fno-rtti -Wl,--no-insert-timestamp -o winassist.exe winassist.cpp -lwtsapi32 -luserenv -ladvapi32 -lgdi32 -luser32"
+}

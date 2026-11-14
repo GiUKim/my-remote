@@ -73,10 +73,12 @@ the client app instead).
   it, or from any other copyleft project, into this repository.
 - **Native code is built from the sources in `native/`** with the distribution's own cross-compiler on a
   Linux machine the user provides (`node native/build.js user@host`). Do not download compilers,
-  toolchains or prebuilt binaries from elsewhere onto either machine. The one DLL that is committed is
-  `host/bin/capture.dll`, together with `host/bin/capture.dll.json` (what it was built from); commit
-  it only as `native/build.js` wrote it, in the same commit as the `capture.cpp` it was built from.
-  The self-test fails when the two do not match. Never commit a DLL from anywhere else.
+  toolchains or prebuilt binaries from elsewhere onto either machine. The committed binaries are
+  `host/bin/capture.dll`, `shellops.dll` and `winassist.exe` (the assist service: it runs as LocalSystem),
+  each with its `.json` record (what it was built from); commit one only as `native/build.js` wrote it, in
+  the same commit as the source it was built from. The self-test fails when the two do not match. Never
+  commit a binary from anywhere else. Run `native/build.js` from PowerShell: Git Bash's `scp` silently
+  copies nothing for `C:\...` paths, and the server then builds an old copy of the sources.
 - **Do not inject input on the user's machine as a test** beyond what `--selftest` does (it injects
   none). Stray clicks and keystrokes land in whatever the user has open. `--dragout-check` and
   `--dropin-check` do inject (into Explorer windows they open themselves), so run them only after the
@@ -511,7 +513,47 @@ the client app instead).
   Allowing it adds an inbound rule for that executable on the chosen network profile. Removing the rule
   later needs admin rights.
 - **Lock screen / UAC** (Windows) are on a separate secure desktop: they cannot be captured or controlled by a
-  normal-user process. This is the main functional limitation, not a bug to "fix" with a quick patch.
+  normal-user process. The host reaches them through the **assist service** (2026-11-15; the user's goal:
+  a host installed from the README's download unlocks from the client like Chrome Remote Desktop):
+  - `native/winassist.cpp` -> `host/bin/winassist.exe` (built and recorded by `native/build.js`, checked by
+    the self-test like the DLLs). Installed from the host window's card "잠금 화면에서도 원격 조종"
+    (`host/assist.js` runs `winassist.exe install` elevated: a UAC prompt at the host PC; `install` copies
+    it to `%ProgramFiles%\MyRemote`, admin-only, registers the LocalSystem service `MyRemoteAssist` and
+    starts it; run again it updates in place; `uninstall` removes it all). The card says "업데이트 필요"
+    when the installed program is not the one this app brings.
+  - The service (session 0) only keeps one helper alive as LocalSystem in the console session
+    (`CreateProcessAsUser` with its own token moved to that session). The helper follows the input
+    desktop, sends `S` (secure desktop? session locked? input accepted?) and, while a secure desktop has
+    the screen, `F` frames (GDI `BitBlt` of the primary monitor, BGRX, change-gated, ~10/s), and injects
+    `M`/`K`/`A` (SendInput / SendSAS) only while the session is locked (WTSINFOEX `SessionFlags ==
+    WTS_SESSIONSTATE_LOCK`, failing closed): a UAC prompt is never typed into or clicked.
+  - Pipes: control `\\.\pipe\my-remote-assist` (service, reply "ok"+`ASSIST_PROTOCOL`), data
+    `\\.\pipe\my-remote-assist-data` (helper; first instance only; DACL: SYSTEM and the session's user
+    from `WTSQueryUserToken`). Both byte mode; the data pipe overlapped. **Bit once:** with a synchronous
+    handle the helper's main thread could not write while its reader thread waited in ReadFile (Windows
+    runs a file object's I/O one at a time): no state ever reached the host until it typed something.
+    `host/assist.js` opens the pipes through koffi with overlapped I/O for the same reason (Node's
+    pipe sockets would do the I/O but cannot give the handle), and checks each pipe's server session
+    (`GetNamedPipeServerSessionId`: 0 for the service, this session for the helper) before anything
+    is sent, so another account's pipe of the same name never receives a typed password.
+  - In the host: `main.js` starts `assist` when a session goes live (not in `--selftest`/`--bench`; it does
+    run in `--localtest`), stops it with the session or the page. While the helper says "locked",
+    `input.setSink` sends every injected input to the helper; on another secure desktop the sink drops it.
+    Frames go to the page (`assist` IPC) and into the primary monitor's `MediaStreamTrackGenerator`
+    (only with native capture), repeated 30 times after a change. The `lock` message gains `live`,
+    `input` and `d`; the client then shows the lock screen with a small bar and a Ctrl+Alt+Del button
+    (`sas`) instead of the cover, and other windows say which monitor has it.
+  - Verified 2026-11-15 in a throwaway Windows 10 22H2 VM (dockurr/windows under KVM on the GPU server,
+    `~/my-remote-dev/winvm` there; see the `my-remote-test-vm` memory): GDI captures the real lock screen
+    as LocalSystem (pictures checked), a click lifts the curtain, the typed password unlocks (probe in
+    the VM), the service updates in place; and end to end, the real client page on the Windows PC against
+    the real host in the VM (`--localtest --no-client`, relay tunnelled): lock -> the client shows the lock
+    screen live with the bar -> click, password typed with trusted key events, Enter -> unlocked.
+    `release/test-assist.js` (18 checks, fake service and helper) covers the protocol, the session checks,
+    input routing and encoding, pictures in pieces, reconnecting. Not verified: a real PC's lock screen
+    with several monitors (only the primary is sent), Ctrl+Alt+Del with `SoftwareSASGeneration` (not set
+    by the installer), a UAC prompt through the service, the logon screen after a reboot (out of scope:
+    the host is a per-user program), Windows 11.
   What was found out when the user asked how a locked host could be unlocked from the client
   (2026-11-14; sources: Microsoft Learn, systemd and GNOME Shell sources, Chromium's remoting docs):
   - Windows: the lock screen, the UAC prompt and the logon screen are on the Winlogon desktop, which
@@ -526,7 +568,7 @@ the client app instead).
     host, so a helper that takes its orders from that host lets any program of the same user type on
     the secure desktop. On the lock screen that gains nothing (the password is still needed); on a UAC
     consent prompt it would be a way to elevate without the person. So: lock screen first, UAC view-only.
-    Not started; testing it means locking the person's PC, so only with them.
+    Built as described above.
   - Keeping Windows from locking is no substitute: `SetThreadExecutionState` does not stop the screen
     saver or the inactivity-limit policy; only input resets that timer. After a reboot nobody is signed
     in and a per-user host does not run at all (automatic sign-in stores the password as an LSA secret).
@@ -767,6 +809,8 @@ Run from `host/` with Electron's env var cleared.
 | `npm run bench -- --net=direct,home,narrow,wifi --try=old,base` | Measures delay and smoothness on this PC for the given link conditions and settings, prints a table (see "Performance"). `--picture-test=quality` measures picture quality instead (a window opening, a window being dragged, scrolling); `--snapshot` saves what the client showed next to what was drawn. About 45 s per run. Shows a test picture on one display and a small window on another for that time; they never take focus and no input is injected, but tell the user before a long series |
 | `npm run bench -- --remote=user@host --net=direct --try=base` | The same bench with the client page on another machine, reached over ssh: a real second machine and a real network instead of one PC. That machine needs `~/my-remote-dev/electron/` (an unpacked Electron release for its platform) and `xvfb-run`; signaling goes through an ssh tunnel, only the WebRTC traffic crosses the network directly. Add `--capture-probe` to split the delay into its parts. This sends the picture of one of this PC's displays to that machine, so the user must have agreed |
 | `node release/install-local.js [--dry]` | Puts the release in `dist/release` into this PC's installed app as its updater would (the signature checked, then `core.installVersion` and `activate`): the app runs it from its next start, on trial. For a PC whose app cannot reach a feed, and for trying a release before it is published. It changes the person's installed app, so only when they asked for that version there |
+| `node release/test-assist.js` | The host's side of the Windows assist service (`host/assist.js`) against a fake service and helper on test pipes: protocol and version, the pipe-server session checks, input routing per state and its encoding, pictures in pieces, Ctrl+Alt+Del, reconnecting. Windows only (skips elsewhere); no input reaches the PC (the sink is recorded, never installed). A few seconds |
+| `host\bin\winassist.exe install`, `uninstall`, `status`, `grab <file.bmp>` | The assist service itself: install/uninstall need an elevated prompt (the host window's card does this through UAC). `grab` writes the current input desktop to a BMP (a secure one only when run as LocalSystem) |
 | `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept. A second |
 | `electron client --loader=<file> --list [--home-shot=<file.png> --home-size=940x480 --home-js=<code>]` | The client app's list on a profile of its own next to `<file>` (any loader file), never the person's. PCs come from `home-import.json` next to it (`[{ name, key, open, loader, seen, lastAt }]`, made-up keys; removed when read). With `--home-shot` no window is shown: a picture of the list is written and the app ends (how `docs/img/home.png` was made) |
 | `node release/test-update.js` | The update logic (`app/core.js`, `app/updater.js`) in plain Node with made-up releases and feeds: signatures, file names, downgrades, the trial and going back, ordinary and required updates. A few seconds |
@@ -811,6 +855,8 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/host.html`, `host/host.js` | Host UI and the WebRTC side: capture, encoding control, data-channel routing |
 | `native/capture.cpp` | The native screen capturer (DXGI Desktop Duplication) |
 | `host/bin/capture.dll`, `capture.dll.json` | That capturer built by `native/build.js` (stripped, no time stamp: the same source and compiler give the same file), and the record of the source hash, DLL hash, compiler and command. Committed. The host loads it when it is there; without it the engine's capturer is used |
+| `native/winassist.cpp`, `host/bin/winassist.exe` (+ `.json`) | The Windows assist service and its in-session LocalSystem helper: the lock screen's pictures and the typed password (see "Lock screen / UAC"). Committed like the DLLs; installed into `%ProgramFiles%\MyRemote` by the host window's card |
+| `host/assist.js` | The host's side of that service (main process): installed/current/running, install and remove (elevated), and during a session the overlapped pipe client with its server-session checks, the input sink while locked, frames to the page |
 | `native/shellops.cpp`, `host/bin/shellops.dll` (+ `.json`) | `so_drop`: drops files onto whatever is under the pointer as a real drag-and-drop (see Gotchas). Committed like `capture.dll` |
 | `host/files.js` | Safe names and paths for files from the other side (`stagedPath` never leaves its folder), sweeping old transfers. Used by the host and the client app |
 | `host/profile-cleanup.js` | Removes an isolated run's throwaway profile once the run has ended, and old ones (see Gotchas) |
@@ -889,7 +935,8 @@ Data channel `input` (JSON text):
 | client -> host | `dragq` | The pointer just left every client window with a button held: the host checks for a drag-and-drop every 15 ms for 1.2 s and sends `drag` the moment one starts |
 | both | `clip` | Clipboard text, at most 60000 chars (see "The clipboard is shared both ways") |
 | client -> host | `text` | `s`: characters typed on a phone's keyboard, at most 400 at a time; the host types them as characters (Windows `KEYEVENTF_UNICODE`; X11 keycodes lent to their keysyms, typed over time with later input held back), whatever its layout and input method |
-| host -> client | `lock` | `on`, `why`: `lock` (the host's session is locked) or `secure` (a UAC prompt or another secure desktop has the screen). Sent when a session starts and when it changes; the client says so over the picture |
+| host -> client | `lock` | `on`, `why`: `lock` (the host's session is locked) or `secure` (a UAC prompt or another secure desktop has the screen). Sent when a session starts and when it changes; the client says so over the picture. With the assist service (Windows) also `live` (the secure desktop's picture is in monitor `d`'s video) and `input` (typing reaches it: the lock screen only); the window showing `d` then shows a bar instead of the cover |
+| client -> host | `sas` | Ctrl+Alt+Del for the host's lock screen (the bar's button; the client PC keeps that key combination itself). The helper honours it only while the session is locked, and only where `SoftwareSASGeneration` allows services to generate it |
 | host -> client | `cur` | Current host cursor: `c` = CSS cursor name, or `img` (PNG data URL) with hotspot `hx`,`hy` for an app-specific cursor. The host page asks main about 30 times a second and passes the cursor it has, so the picture is copied over IPC only when it changes |
 | host -> client | `hs` | Host-side statistics every 2 s (codec and `from`, whose choice it was: `client` (the 진단 dialog, kept in the client's localStorage `mr_codec`), `config` or `auto`; encoder, bitrate, per-monitor capture/encode fps and limiting factor) for the client's diagnostics report; the host's diagnostics log gets the same |
 | host -> client | `drag` | `on`: whether a drag-and-drop is under way on the host. An X11 host sends it once more with `what`: `{kind:'files', n, name}` (the number of files and the first one's name, no path) or `{kind:'text'}`, for the client app's picture at the pointer while it is carried out |

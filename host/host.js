@@ -21,15 +21,22 @@ const screenGone = { lock: false, lockFrom: '', paused: new Set(), timers: new M
 // Right after an unlock the capture loops need a moment to read the screen again: that is not taken
 // for a secure prompt (UNLOCK_GRACE_MS; sendLock looks again once it is over).
 const UNLOCK_GRACE_MS = 2500;
-const lockReason = () => (screenGone.lock ? 'lock' : screenGone.paused.size && performance.now() - screenGone.unlockedAt > UNLOCK_GRACE_MS ? 'secure' : '');
+// The assist service (see below) knows exactly: the lock screen ('lock') or another secure desktop ('secure').
+const lockReason = () => (screenGone.lock || (assist.secure && assist.locked) ? 'lock'
+  : assist.secure || (screenGone.paused.size && performance.now() - screenGone.unlockedAt > UNLOCK_GRACE_MS) ? 'secure' : '');
 function unlocked() { screenGone.unlockedAt = performance.now(); setTimeout(() => sendLock(), UNLOCK_GRACE_MS + 100); }
 function sendLock(force) {
   const s = session, dc = s && s.dc;
   if (!dc || dc.readyState !== 'open') return;
   const why = lockReason();
-  if (!force && screenGone.sentFor === s && screenGone.sent === why) return;
-  screenGone.sentFor = s; screenGone.sent = why;
-  try { dc.send(JSON.stringify(why ? { t: 'lock', on: true, why } : { t: 'lock', on: false })); } catch {}
+  // live: the secure desktop's picture is in the video of monitor `d` (the primary); input: the person may
+  // type into it (the lock screen; never a UAC prompt).
+  const live = !!(why && assist.secure && assist.frames && assistTarget());
+  const key = why + (live ? (assist.input ? '+live+input' : '+live') : '');
+  if (!force && screenGone.sentFor === s && screenGone.sent === key) return;
+  screenGone.sentFor = s; screenGone.sent = key;
+  const msg = why ? { t: 'lock', on: true, why, live, input: live && assist.input, d: live ? primaryIndex(s) : undefined } : { t: 'lock', on: false };
+  try { dc.send(JSON.stringify(msg)); } catch {}
 }
 function screenPaused(i, on) {
   clearTimeout(screenGone.timers.get(i));
@@ -45,6 +52,54 @@ setInterval(() => {
   if (!screenGone.lock || screenGone.lockFrom !== 'query' || !session) return;
   api.hostLocked().then((v) => { if (!v && screenGone.lock && screenGone.lockFrom === 'query') { screenGone.lock = false; unlocked(); log('이 PC의 잠금이 풀렸습니다'); sendLock(); } }, () => {});
 }, 2000);
+
+// ---- the lock screen through the assist service (Windows; host/assist.js, native/winassist.cpp) --------
+// With the service installed, main.js connects to it during a session. While a secure desktop has the
+// screen, its pictures arrive here and go into the primary monitor's video track in place of the
+// capturer's, which cannot read that desktop; on the lock screen main.js sends the client's input to the
+// service's helper, so the person types their password as at the keyboard. UAC prompts are shown only.
+const assist = { secure: false, locked: false, input: false, frames: 0, last: null, left: 0, timer: 0 };
+const ASSIST_REPEATS = 30, ASSIST_REPEAT_MS = 33; // a still picture brought to full quality (cf. REPEATS in preload.js)
+const primaryIndex = (s) => (s && s.sources ? s.sources.findIndex((src) => src.primary) : -1);
+function assistTarget() {
+  const s = session, i = primaryIndex(s);
+  return s && s.native && i >= 0 && s.native[i] ? s.native[i] : null; // only a native track takes our pictures
+}
+function assistForget() {
+  assist.frames = 0; assist.left = 0;
+  clearInterval(assist.timer); assist.timer = 0;
+  if (assist.last) { assist.last.close(); assist.last = null; }
+}
+function assistState(m) {
+  const was = assist.secure;
+  assist.secure = !!m.secure; assist.locked = !!m.locked; assist.input = !!m.input;
+  if (!assist.secure) assistForget();
+  if (was !== assist.secure) {
+    log(!assist.secure ? '보안 화면이 닫혔습니다' : assist.locked ? '잠금 화면: 클라이언트에 보이고, 원격에서 비밀번호를 입력할 수 있습니다' : '보안 화면(UAC 등): 클라이언트에 보이기만 합니다');
+  }
+  sendLock();
+}
+function assistFrame(m) {
+  const n = assistTarget();
+  if (!n || !assist.secure || !m || !m.data) return;
+  let frame;
+  // GDI leaves the fourth byte 0: BGRX, as the native capturer's pictures (BGRA would make it transparent).
+  try { frame = new VideoFrame(m.data, { format: 'BGRX', codedWidth: m.w, codedHeight: m.h, timestamp: Math.round(performance.now() * 1000) }); }
+  catch (e) { log('잠금 화면 그림을 쓸 수 없습니다: ' + e.message); return; }
+  if (assist.last) assist.last.close();
+  assist.last = frame;
+  n.writer.write(new VideoFrame(frame, { timestamp: frame.timestamp })).catch(() => {});
+  assist.left = ASSIST_REPEATS;
+  if (!assist.timer) assist.timer = setInterval(assistRepeat, ASSIST_REPEAT_MS);
+  if (++assist.frames === 1) sendLock(); // the picture is live now: the client shows it instead of a notice
+}
+function assistRepeat() {
+  const n = assistTarget();
+  if (!n || !assist.last || assist.left <= 0) { clearInterval(assist.timer); assist.timer = 0; return; }
+  assist.left--;
+  n.writer.write(new VideoFrame(assist.last, { timestamp: Math.round(performance.now() * 1000) })).catch(() => {});
+}
+if (api.assist) api.assist.onMessage((m) => { if (m.t === 'state') assistState(m); else if (m.t === 'frame') assistFrame(m); });
 
 // ---- native capture (optional) -----------------------------------------------------
 // The preload script runs the native capturer and sends each monitor's frames over a message
@@ -127,6 +182,7 @@ function teardown(reason, silent) {
   const s = session;
   session = null;
   forgetPaused(); // the next session's capture loops report for themselves
+  assistForget(); // main.js lets go of the service when told the session ended (below)
   if (s.native && nativePort) nativePort.postMessage({ t: 'close' });
   for (const t of s.timers) clearInterval(t);
   clearTimeout(s.dropTimer);
@@ -305,6 +361,8 @@ function onClientMessage(s, dc, data) {
     dragOut(s, m.b | 0);
   } else if (m.t === 'dragq') {
     pollDrag(s, 1200);
+  } else if (m.t === 'sas') {
+    if (api.assist) api.assist.sas(); // Ctrl+Alt+Del for a lock screen that asks for it (the helper refuses it elsewhere)
   } else if (m.t === 'clipget') {
     clipGet(s, Number(m.seq));
   } else if (m.t === 'cs') {
@@ -777,6 +835,41 @@ function watchUpdates() {
   api.update.onChange(showUpdate);
 }
 
+// The lock screen support (Windows; host/assist.js): installed once with administrator rights, from this
+// window. Windows asks the person at this PC (UAC), which no one can answer from the client.
+const ASSIST_WHY = { declined: 'Windows 확인 창에서 취소했습니다', failed: '설치 프로그램이 실패했습니다', missing: '이 버전에 설치 프로그램이 없습니다' };
+async function showAssist(st) {
+  if (!api.assist) return;
+  st = st || await api.assist.status().catch(() => null);
+  const card = $('assist');
+  if (!st || !st.supported || !st.bundled) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  let state, text, go = '';
+  const installed = st.state !== 'none';
+  if (st.busy) { state = '진행 중…'; text = '이 PC에 뜬 Windows 확인 창(UAC)에서 "예"를 누르세요.'; }
+  else if (!installed) {
+    state = '설치 안 됨';
+    text = '설치하면 이 PC가 잠겨 있을 때도 클라이언트에 잠금 화면이 보이고, 원격에서 비밀번호를 입력해 잠금을 풀 수 있습니다. 비밀번호는 그대로 필요합니다. 관리자 권한으로 한 번 설치합니다(Windows 확인 창이 뜹니다).';
+    go = '설치';
+  } else if (!st.current) { state = '업데이트 필요'; text = '이 버전의 호스트에 맞게 잠금 화면 지원을 바꿔야 합니다(Windows 확인 창이 뜹니다).'; go = '업데이트'; }
+  else if (st.state !== 'running') { state = '멈춤'; text = '잠금 화면 지원 서비스가 멈춰 있습니다. 다시 설치하면 켜집니다.'; go = '다시 설치'; }
+  else { state = '켜짐'; text = '이 PC가 잠겨 있어도 원격에서 잠금 화면을 보고 비밀번호를 입력할 수 있습니다. 관리자 권한 확인 창(UAC)은 원격에서 보기만 됩니다.'; }
+  $('assistState').textContent = '— ' + state;
+  $('assistText').textContent = text;
+  $('assistGo').style.display = go && !st.busy ? '' : 'none';
+  $('assistGo').textContent = go;
+  $('assistOff').style.display = installed && !st.busy ? '' : 'none';
+  const act = async (what) => {
+    showAssist({ ...st, busy: true });
+    const r = await (what === 'install' ? api.assist.install() : api.assist.uninstall()).catch(() => ({ ok: false, why: 'failed' }));
+    if (r.ok) log(what === 'install' ? '잠금 화면 지원을 설치했습니다' : '잠금 화면 지원을 제거했습니다');
+    else log(`잠금 화면 지원 ${what === 'install' ? '설치' : '제거'}: ${ASSIST_WHY[r.why] || r.why}`);
+    showAssist(r.status);
+  };
+  $('assistGo').onclick = () => act('install');
+  $('assistOff').onclick = () => act('uninstall');
+}
+
 (async () => {
   cfg = await api.getConfig();
   keys = await RD.derive(cfg.key);
@@ -790,6 +883,7 @@ function watchUpdates() {
   if (cfg.viewOnly) log('주의: 이 PC에서는 원격 입력을 넣을 수 없어 보기 전용으로 동작합니다 (' + cfg.viewOnly + ')');
   if (cfg.updateNote) log('주의: ' + cfg.updateNote);
   watchUpdates();
+  showAssist();
 
   let shown = false;
   $('show').onclick = () => { shown = !shown; $('key').textContent = shown ? cfg.key : '••••••••••••••••••••••••'; $('show').textContent = shown ? '숨기기' : '표시'; };
@@ -802,7 +896,7 @@ function watchUpdates() {
     if (screenGone.lock === on) return;
     screenGone.lock = on;
     if (!on) unlocked();
-    log(on ? '이 PC가 잠겼습니다 — 잠금 화면은 원격으로 보이지 않습니다' : '이 PC의 잠금이 풀렸습니다');
+    log(on ? '이 PC가 잠겼습니다' : '이 PC의 잠금이 풀렸습니다');
     sendLock();
   });
   api.onDisplaysChanged(async () => {

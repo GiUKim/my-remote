@@ -91,20 +91,22 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     return app.exit(pass ? 0 : 1);
   }
 
-  // The DLLs in host/bin are built files that are committed: each must be the one built from its
-  // source in native/ as it is now (native/build.js records both). Not there in a packaged copy.
-  // Only Windows loads them, but the check is about the repository and runs everywhere.
-  for (const name of ['capture', 'shellops']) {
-    const dll = path.join(__dirname, 'bin', name + '.dll'), src = path.join(__dirname, '..', 'native', name + '.cpp');
+  // The DLLs (and winassist.exe, which runs as LocalSystem) in host/bin are built files that are
+  // committed: each must be the one built from its source in native/ as it is now (native/build.js
+  // records both). Not there in a packaged copy. Only Windows loads them, but the check is about the
+  // repository and runs everywhere.
+  for (const file of ['capture.dll', 'shellops.dll', 'winassist.exe']) {
+    const name = file.replace(/\.\w+$/, '');
+    const dll = path.join(__dirname, 'bin', file), src = path.join(__dirname, '..', 'native', name + '.cpp');
     if (!fs.existsSync(dll) || !fs.existsSync(src)) continue;
     const sha = (data) => require('crypto').createHash('sha256').update(data).digest('hex');
     let rec = {};
     try { rec = JSON.parse(fs.readFileSync(dll + '.json', 'utf8')); } catch {}
     const sameSrc = rec.sourceSha256 === sha(fs.readFileSync(src, 'utf8').replace(/\r\n/g, '\n'));
     const sameDll = rec.dllSha256 === sha(fs.readFileSync(dll));
-    check(`host/bin/${name}.dll is the one built from native/${name}.cpp`, sameSrc && sameDll,
-      !sameSrc ? `native/${name}.cpp differs from what host/bin/${name}.dll was built from: run native/build.js`
-        : !sameDll ? `host/bin/${name}.dll is not the file native/build.js recorded` : '');
+    check(`host/bin/${file} is the one built from native/${name}.cpp`, sameSrc && sameDll,
+      !sameSrc ? `native/${name}.cpp differs from what host/bin/${file} was built from: run native/build.js`
+        : !sameDll ? `host/bin/${file} is not the file native/build.js recorded` : '');
   }
 
   // Pure coordinate mapping (no input is injected): two monitors side by side, 1080p then 1440p.

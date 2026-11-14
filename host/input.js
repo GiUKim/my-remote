@@ -36,6 +36,7 @@ const NEUTRAL = {
   setClipboardFiles: () => false,
   processRunning: async () => null, // whether a program with this file name runs (a promise); null: cannot tell here
   clipSeq: (() => { let n = 0; return () => ++n; })(), // unknown: always "changed", so the clipboard is simply read
+  setSink() {}, // Windows: injected input goes to the assist service while a secure desktop has the screen (host/assist.js)
 };
 const platformModule = { win32: './platform/win32', linux: './platform/linux' }[process.platform];
 const backend = { ...NEUTRAL, ...(platformModule ? require(platformModule) : {}) };
@@ -249,4 +250,5 @@ module.exports = {
   processRunning: backend.processRunning,
   clipboardPrivate: backend.clipboardPrivate,
   clipSeq: backend.clipSeq,
+  setSink: backend.setSink,
 };
