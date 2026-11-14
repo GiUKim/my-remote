@@ -171,7 +171,8 @@ the client app instead).
   panel; a finger's events are not routed (a touch keeps its first target by itself; not tried).
   The self-test dispatches the events at the root element and at the bar (`notGranted*`); it fails on
   the page from before. Posted window messages on Windows did not reproduce the loss (Windows takes the
-  pointer off a window the real cursor is not over), so on Windows only the symptom is known.
+  pointer off a window the real cursor is not over), so on Windows the loss itself
+  was not seen; the person confirmed there that dragging out works again with the fixed page.
 - **Another remote-control program connected at the same time.** In that session the host's main
   thread stalled three times (57, 71, 19 s), each stall ending when a Chrome Remote Desktop session
   to the same PC (re)connected (Windows Application log, source `chromoting`). Clicks did nothing
@@ -1033,8 +1034,9 @@ the host with GNOME Shell and Nautilus 46 on one, the client app as a program of
 its pointer moved and pressed through XTest; a harness outside the repository): a file pressed in the
 picture, dragged out of the window and let go there arrives in the client's desktop folder, with the
 drag ghost shown - slowly, with 2 moves before leaving, and let go 150 ms after leaving. Before the
-fix (see "A press on the picture does not get the pointer") the same run carried nothing out. Not
-verified: the same with a real mouse on a Windows client.
+fix (see "A press on the picture does not get the pointer") the same run carried nothing out. With
+a real mouse on a Windows client (the 0.3.0 app) and that Linux host on 0.3.1, the person reported the
+same day that files go both ways. Whether the drag ghost showed there was not said.
 
 Verified by the self-test for dragging out: the file channel end to end (3 MB, hashes compared, a
 file inside a folder), listing a dragged folder (links skipped), the "pointer left every window"
