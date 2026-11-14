@@ -433,13 +433,16 @@ const cfgPath = () => path.join(app.getPath('userData'), 'config.json');
 
 function newKey() { return crypto.randomBytes(32).toString('base64url'); }
 
-// What this PC runs, for the client's arrangement panel (a logo and a name next to "호스트 PC").
+// What this PC runs and what it is called, for the client: a logo and a name next to "호스트 PC" in the
+// arrangement panel, and the entry of this PC in the client app's list (`pc`, the computer's name).
 function hostOs() {
-  if (process.platform === 'win32') return { os: 'windows', name: Number(os.release().split('.')[2]) >= 22000 ? 'Windows 11' : 'Windows 10' };
-  if (process.platform === 'darwin') return { os: 'mac', name: 'macOS' };
+  let pc = '';
+  try { pc = String(os.hostname() || '').slice(0, 60); } catch {}
+  if (process.platform === 'win32') return { os: 'windows', name: Number(os.release().split('.')[2]) >= 22000 ? 'Windows 11' : 'Windows 10', pc };
+  if (process.platform === 'darwin') return { os: 'mac', name: 'macOS', pc };
   let name = 'Linux';
   try { const m = /^PRETTY_NAME="?([^"\n]*)"?\s*$/m.exec(fs.readFileSync('/etc/os-release', 'utf8')); if (m && m[1]) name = m[1].slice(0, 60); } catch {}
-  return { os: 'linux', name };
+  return { os: 'linux', name, pc };
 }
 
 // The key is encrypted with Electron's asynchronous safeStorage calls (the synchronous ones are

@@ -1,0 +1,12 @@
+{
+  "ko": [
+    "PC 목록: 클라이언트로 시작하면 등록한 PC들이 운영체제, 컴퓨터 이름, 마지막 접속 시각과 함께 보입니다. 이름은 바꿀 수 있고, 접속 키는 이 PC에 암호화해 보관합니다",
+    "여러 PC 동시 접속: PC마다 창이 따로 열려, 운영체제에 관계없이 여러 호스트를 나란히 보고 조작할 수 있습니다",
+    "원격 화면의 툴바에 PC 목록 단추, 모니터 배치 창에 호스트의 컴퓨터 이름 표시"
+  ],
+  "en": [
+    "A list of PCs: the client starts with the PCs you added, each with its operating system, computer name and last connection. They can be renamed; their access keys are kept encrypted on this PC",
+    "Several PCs at once: each opens in a window of its own, so hosts of any operating system can be watched and used side by side",
+    "A button for the list of PCs in the remote picture's toolbar; the host's computer name in the arrangement panel"
+  ]
+}

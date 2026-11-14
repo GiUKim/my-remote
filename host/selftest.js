@@ -193,16 +193,21 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
   await sleep(2500); // let the host subscribe first
   const hostWin = BrowserWindow.getAllWindows()[0];
   // The native capturer sends a picture only when the screen changes (and then repeats it for about a
-  // second). A virtual display (Xvfb) with this test's windows hidden never changes, unlike a real
-  // desktop, where the test's own windows keep changing what is captured: a small counter in a corner
-  // keeps the picture moving there, as a person's screen would.
-  if (process.platform === 'linux') {
-    const b = screen.getPrimaryDisplay().bounds;
+  // second). A display where nothing moves - a virtual one (Xvfb) with this test's windows hidden, or a
+  // real monitor nobody is working on while the test runs - gives no frames at all, and the checks that
+  // count frames failed now and then (seen on a PC with two monitors, one of them idle). So a small
+  // counter in a corner of every display keeps each picture moving, as a person's screen would. It
+  // takes no focus and no clicks.
+  const ticks = [];
+  for (const d of screen.getAllDisplays()) {
+    const b = d.bounds;
     const tick = new BrowserWindow({ x: b.x + b.width - 70, y: b.y + b.height - 34, width: 64, height: 28, frame: false, focusable: false, skipTaskbar: true,
       resizable: false, alwaysOnTop: true, show: false, backgroundColor: '#202830', webPreferences: { backgroundThrottling: false } });
+    tick.setIgnoreMouseEvents(true);
     await tick.loadURL('data:text/html,' + encodeURIComponent('<body style="margin:0;font:16px monospace;color:#9cf;background:#202830;overflow:hidden">'
       + '<span id="n"></span><script>let i = 0; setInterval(() => { n.textContent = String(i++ % 10000).padStart(4, "0"); }, 50);</script></body>'));
     tick.showInactive();
+    ticks.push(tick);
   }
   const w = new BrowserWindow({ show: false, width: 1280, height: 720, webPreferences: { backgroundThrottling: false } });
   await w.loadFile(file, { hash: `k=${cfg.key}&auto&ro` });
@@ -502,10 +507,13 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       [ok, s] = await until((x) => x.sel === 0 && JSON.parse(x.view).length === x.monitors, 12);
       const tiles = await js(`({ host: arr.host.length, client: arr.client.length, shown: document.getElementById('arr').style.display, live: arr.host.every((t) => t.videos.size === 1),
         os: [document.getElementById('arrHostOs').textContent, document.getElementById('arrClientOs').textContent, document.querySelectorAll('.osTag svg').length] })`);
-      // Each PC's operating system next to its name: the host's from its offer, this one's from the browser.
+      // Each PC's operating system next to its name: the host's from its offer (the computer's name
+      // before it), this one's from the browser. The computer's name is compared here, not printed.
       const osName = process.platform === 'win32' ? /^Windows 1[01]$/ : process.platform === 'linux' ? /\S/ : /^macOS/;
+      const hostTag = [cfg.hostOs.pc, cfg.hostOs.name].filter(Boolean).join(' · '), tagOk = tiles.os[0] === hostTag && osName.test(cfg.hostOs.name);
+      tiles.os[0] = tagOk ? `(the computer's name and ${cfg.hostOs.name})` : '(not what the host sent)';
       check('arrangement panel: shows every host monitor live, and each PC\'s operating system', ok && tiles.host === N && tiles.client === 1 && tiles.shown === 'flex' && tiles.live
-        && osName.test(tiles.os[0]) && osName.test(tiles.os[1]) && tiles.os[2] === 2, JSON.stringify(tiles) + ' requested ' + s.view);
+        && tagOk && osName.test(tiles.os[1]) && tiles.os[2] === 2, JSON.stringify(tiles) + ' requested ' + s.view);
       await js(`(() => {
         const at = (t) => { const r = t.lcd.getBoundingClientRect(); return { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }; };
         const fire = (type, target, pos, extra) => target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 7, ...pos, ...extra }));
@@ -1101,6 +1109,37 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         seen ? `fps ${JSON.stringify(seen.fps)}, decoder ${seen.dec}, windows ${JSON.stringify(seen.views)}` : 'no measurements from the app arrived');
       try { child.kill(); } catch {}
       await sleep(1500); // let it go before its profile (inside `dir`) is removed
+
+      // The same through the app's list of PCs (--list): a profile of its own, and this test's key handed
+      // to it as a PC to add and open (home-import.json). The loader in that PC's window has no key in it
+      // and does not connect by itself: the app gives it the key. Passes when the app's measurements
+      // arrive again, and its list then says what this host is, with the key in its file only encrypted.
+      {
+        const ldir = path.join(dir, 'list'), lloader = path.join(ldir, 'loader.html'), imp = path.join(ldir, 'home-import.json');
+        fs.mkdirSync(ldir);
+        fs.writeFileSync(lloader, buildLoaderHtml('ro'));
+        fs.writeFileSync(imp, JSON.stringify([{ name: 'self-test', key: cfg.key, open: true }]));
+        const from2 = fs.existsSync(diag) ? fs.statSync(diag).size : 0;
+        const child2 = require('child_process').spawn(process.execPath, [args[0], '--loader=' + lloader, '--list', ...args.slice(2)], { env, stdio: 'ignore' });
+        let seen2 = null, entry = null, text = '';
+        for (let i = 0; i < 60 && !(seen2 && entry && entry.lastAt); i++) {
+          await sleep(1000);
+          let log = '';
+          try { log = fs.readFileSync(diag, 'utf8').slice(from2); } catch {}
+          for (const line of log.split('\n')) {
+            let e = null;
+            try { e = JSON.parse(line); } catch {}
+            if (e && e.client && e.client.shell === true && Object.values(e.client.fps || {}).some((f) => f > 0)) seen2 = e.client;
+          }
+          try { text = fs.readFileSync(path.join(ldir, 'client-app-profile', 'hosts.json'), 'utf8'); entry = JSON.parse(text).hosts[0] || null; } catch {}
+        }
+        const os0 = cfg.hostOs || {};
+        check('client app: a PC of its list opens in a window of its own with the key from the app; the list notes when and what the host is',
+          !!seen2 && !!entry && entry.lastAt > 0 && entry.os === os0.os && entry.osName === os0.name && entry.pc === os0.pc && !!entry.keyEnc && !text.includes(cfg.key) && !fs.existsSync(imp),
+          seen2 ? `fps ${JSON.stringify(seen2.fps)}; entry ${entry ? JSON.stringify({ name: entry.name, os: entry.os, osName: entry.osName, pc: !!entry.pc, lastAt: entry.lastAt > 0, monitors: entry.monitors }) : 'none'}; key as text in the file: ${text.includes(cfg.key)}` : 'no measurements from the app arrived');
+        try { child2.kill(); } catch {}
+        await sleep(1500);
+      }
     }
   } catch (e) {
     console.log('[selftest] aborted:', e.message);

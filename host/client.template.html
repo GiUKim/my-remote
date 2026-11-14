@@ -102,6 +102,7 @@
   <button id="keys" class="deskOnly">단축키</button>
   <button id="diagBtn" title="느리거나 끊길 때 원인을 찾기 위한 측정값">진단</button>
   <button id="bye">연결 끊기</button>
+  <button id="homeBtn" style="display:none" title="등록한 PC 목록을 엽니다. 다른 PC도 동시에 열 수 있습니다">PC 목록</button>
   <b id="ro" style="display:none;color:#e0b341">보기 전용 (조작 불가)</b>
   <span id="stats" class="deskOnly"></span>
 </div>
@@ -1854,8 +1855,9 @@ function paintOs() {
     svg.setAttribute('viewBox', '0 0 24 24');
     svg.innerHTML = OS_ICON[info.os] || OS_ICON.other; // our own drawings only; the name goes in as text
     el.appendChild(svg);
-    if (info.name) el.appendChild(document.createElement('span')).textContent = info.name;
-    el.title = info.name || '';
+    const label = [info.pc, info.name].filter(Boolean).join(' · '); // the host also says what the computer is called
+    if (label) el.appendChild(document.createElement('span')).textContent = label;
+    el.title = label;
   }
 }
 function arrBuild() {
@@ -2106,7 +2108,15 @@ function showLock() {
     if (text) { el.firstChild.firstChild.textContent = text[0]; el.firstChild.lastChild.textContent = text[1]; }
   }
 }
+// The client app's list of PCs (window.mrShell.hostInfo, there only in a window opened from that list)
+// learns here when this session is up, and what the host said it is: its entry shows that.
+function tellList(connected) {
+  if (!(shell && shell.hostInfo)) return;
+  const o = offerInfo && offerInfo.os;
+  Promise.resolve(shell.hostInfo({ connected, os: o ? o.os : '', name: o ? o.name : '', pc: o ? o.pc : '', monitors: monitors.length })).catch(() => {});
+}
 function forgetSession() {
+  tellList(false);
   hostDrag = false; hostDragWhat = null; held = 0; lastAt = null; outPending = 0;
   if (ghostAt) ghost(false);
   if (hostLock) { hostLock = ''; window.__rd.lock = ''; showLock(); } // the next session says how the screen is
@@ -2267,7 +2277,7 @@ async function onOffer(m) {
   if (arr.open) { arr.A = currentAssign(arr.cs); arr.prev = arr.A.slice(); arrBuild(); arrPaint(arr.A); }
   for (const mon of monitors) if (mon.hdr && !hdrTold.has(mon.idx)) { hdrTold.add(mon.idx); toast(mainView, `호스트의 모니터 ${mon.idx + 1}은 HDR이 켜져 있어 색이 실제보다 밝게 보입니다 (호스트 PC의 디스플레이 설정에서 끄면 해결)`, 9000); }
   $('snd').style.display = m.audio ? '' : 'none';
-  offerInfo = { codec: m.codec, cursorHidden: !!m.cursorHidden, os: m.os && typeof m.os === 'object' ? { os: String(m.os.os || ''), name: String(m.os.name || '').slice(0, 60) } : null };
+  offerInfo = { codec: m.codec, cursorHidden: !!m.cursorHidden, os: m.os && typeof m.os === 'object' ? { os: String(m.os.os || ''), name: String(m.os.name || '').slice(0, 60), pc: String(m.os.pc || '').slice(0, 60) } : null };
   if (arr.open) paintOs();
 
   my.ontrack = (e) => {
@@ -2299,6 +2309,7 @@ async function onOffer(m) {
       overlay('');
       window.__rd.state = 'connected';
       window.__rd.monitors = monitors.length;
+      tellList(true);
       window.__rd.connects++;
       if (chan) { chan.close(); chan = null; } // signaling no longer needed
       if (mainView.panes[0]) mainView.panes[0].video.focus();
@@ -2353,6 +2364,8 @@ mainView = makeView(window, $('stage'), true);
 $('go').onclick = connect;
 $('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
 $('bye').onclick = () => disconnect('연결을 끊었습니다.');
+// In a window opened from the client app's list of PCs: back to that list (other PCs can be opened next to this one).
+if (shell && shell.home) { $('homeBtn').style.display = ''; $('homeBtn').onclick = () => { Promise.resolve(shell.home()).catch(() => {}); }; }
 $('fs').onclick = () => { goFullscreen(window); if (mainView.panes[0]) mainView.panes[0].video.focus(); };
 $('spread').onclick = spread;
 $('fit').onchange = () => { setFit(mainView, $('fit').value); if (mainView.panes[0]) mainView.panes[0].video.focus(); };

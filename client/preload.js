@@ -11,8 +11,35 @@ ipcRenderer.on('shell:shown', (_e, shown) => {
   document.dispatchEvent(new Event('mrshown'));
 });
 
+// A window the app opened for one of the PCs in its list (client/main.js): the loader in it is not to
+// ask the person for the key. It gets that PC's key from the app, put into the loader's own field with
+// "keep it in this browser" off, and its button is pressed - once, for the document this window loads
+// (the loader; the page the loader then writes in its place is not touched). So the key is never part
+// of an address and is not kept in this window's storage.
+let inList = false;
+try { inList = ipcRenderer.sendSync('shell:inList') === true; } catch {}
+if (inList) {
+  window.addEventListener('DOMContentLoaded', async () => {
+    const field = document.getElementById('key'), go = document.getElementById('go'), keep = document.getElementById('remember');
+    if (!field || !go || !keep) return; // not the loader
+    let key = null;
+    try { key = await ipcRenderer.invoke('shell:bootKey'); } catch {}
+    if (!key || document.getElementById('key') !== field) return; // no key to be had, or the loader has gone on meanwhile
+    field.value = key;
+    keep.checked = false;
+    go.click();
+  }, { once: true });
+}
+
 // Seen by the client page as window.mrShell; its presence tells the page it runs in the app.
 contextBridge.exposeInMainWorld('mrShell', {
+  // Only in a window opened from the app's list of PCs (from 2026-11-14 on; the page must not rely on
+  // them): hostInfo tells the list about this session - { connected, os, name, pc, monitors } - and home
+  // brings the list's window forward.
+  ...(inList ? {
+    hostInfo: (info) => ipcRenderer.invoke('shell:hostInfo', info),
+    home: () => ipcRenderer.invoke('shell:home'),
+  } : {}),
   screens: () => ipcRenderer.invoke('shell:screens'),
   fullscreenAll: () => ipcRenderer.invoke('shell:fullscreenAll'),
   // Things dragged out of the remote picture (see shell.js).

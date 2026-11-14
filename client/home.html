@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<title>My Remote</title>
+<style>
+  :root { --bg: #14171c; --panel: #1d2229; --panel2: #232a33; --line: #2c333d; --line2: #3a4350; --text: #e6e8eb; --muted: #8b94a1; --blue: #2b6cff; --blue2: #4a8dff; --green: #3ddc84; --amber: #e0b341; --red: #ff6b6b; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; user-select: none; }
+  body { display: flex; flex-direction: column; }
+  button { font: inherit; color: inherit; background: none; border: 0; border-radius: 7px; padding: 7px 14px; cursor: pointer; }
+  button:focus-visible, input:focus-visible, .card:focus-visible { outline: 2px solid var(--blue2); outline-offset: 2px; }
+  button.primary { background: var(--blue); color: #fff; font-weight: 600; }
+  button.primary:hover { background: #3f7bff; }
+  button.plain { background: #2a313b; }
+  button.plain:hover { background: #343c48; }
+  button.danger { background: #5a2530; color: #ffd9d9; }
+  button.danger:hover { background: #77303e; }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type=text], input[type=password], input[type=search] { font: inherit; color: var(--text); background: #0e1014; border: 1px solid var(--line2); border-radius: 7px; padding: 8px 10px; width: 100%; user-select: text; }
+  input::placeholder { color: #5f6875; }
+
+  header { display: flex; align-items: center; gap: 14px; padding: 16px 22px 14px; border-bottom: 1px solid var(--line); }
+  .logo { flex: none; width: 38px; height: 38px; border-radius: 10px; background: var(--blue); display: grid; place-items: center; }
+  .logo svg { width: 24px; height: 24px; }
+  .title { flex: 1 1 auto; min-width: 0; }
+  .title b { display: block; font-size: 18px; line-height: 1.2; }
+  .title small { color: var(--muted); }
+  #search { flex: 0 1 230px; min-width: 120px; }
+  #add { flex: none; }
+
+  main { flex: 1 1 auto; overflow: auto; padding: 20px 22px 8px; }
+  main::-webkit-scrollbar { width: 12px; }
+  main::-webkit-scrollbar-thumb { background: #343c48; border-radius: 6px; border: 3px solid var(--bg); }
+  main::-webkit-scrollbar-thumb:hover { background: #46505f; }
+  #note { display: none; margin: 0 0 14px; padding: 10px 14px; border-radius: 8px; background: #3a2f16; border: 1px solid #6b5520; color: #ffe2a3; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 14px 12px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; min-height: 132px; position: relative; transition: border-color .12s, background .12s, transform .12s; }
+  .card:hover { border-color: var(--line2); background: var(--panel2); }
+  .card.on { border-color: #2f8f5c; }
+  .card.flash { animation: flash 1.2s ease-out; }
+  @keyframes flash { from { box-shadow: 0 0 0 3px rgba(74, 141, 255, .8); } to { box-shadow: 0 0 0 3px rgba(74, 141, 255, 0); } }
+  .top { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; column-gap: 12px; align-items: start; }
+  .os { grid-row: 1 / span 3; width: 46px; height: 46px; border-radius: 11px; background: #12151a; border: 1px solid var(--line); display: grid; place-items: center; }
+  .os svg { width: 28px; height: 28px; }
+  .name { grid-column: 2; min-width: 0; font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .name input { font-size: 15px; font-weight: 600; padding: 3px 7px; margin: -4px 0 -4px -8px; width: calc(100% + 8px); }
+  .sub { grid-column: 2 / span 2; min-width: 0; color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .more { grid-column: 3; grid-row: 1; padding: 2px 8px; font-size: 18px; line-height: 1.2; color: var(--muted); border-radius: 6px; }
+  .more:hover { background: #343c48; color: var(--text); }
+  .bottom { display: flex; align-items: center; gap: 10px; }
+  .state { flex: 1 1 auto; min-width: 0; color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: #5b6573; vertical-align: 1px; }
+  .state.live { color: var(--green); } .state.live .dot { background: var(--green); box-shadow: 0 0 0 3px rgba(61, 220, 132, .18); }
+  .state.busy { color: var(--amber); } .state.busy .dot { background: var(--amber); animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .go { flex: none; }
+  .addCard { border-style: dashed; align-items: center; justify-content: center; color: var(--muted); cursor: pointer; gap: 4px; }
+  .addCard:hover { color: var(--text); border-color: var(--blue2); }
+  .addCard b { font-size: 26px; line-height: 1; font-weight: 400; }
+
+  #empty { display: none; height: 100%; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 6px; padding-bottom: 40px; }
+  #empty svg { width: 150px; height: 96px; margin-bottom: 10px; }
+  #empty h2 { margin: 0; font-size: 19px; }
+  #empty p { margin: 0 0 14px; color: var(--muted); max-width: 420px; }
+  #nomatch { display: none; color: var(--muted); padding: 30px 0; text-align: center; }
+
+  footer { display: flex; gap: 12px; align-items: center; padding: 9px 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+  footer #store { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  footer #store.warn { color: var(--amber); }
+
+  #menu { position: fixed; z-index: 20; display: none; min-width: 168px; padding: 5px; background: #232a33; border: 1px solid var(--line2); border-radius: 9px; box-shadow: 0 12px 30px rgba(0, 0, 0, .5); }
+  #menu button { display: block; width: 100%; text-align: left; padding: 7px 10px; border-radius: 6px; }
+  #menu button:hover, #menu button:focus-visible { background: #343c48; outline: none; }
+  #menu button.del { color: #ff9c9c; }
+  #menu hr { border: 0; border-top: 1px solid var(--line2); margin: 5px 2px; }
+
+  dialog { width: min(440px, 92vw); color: var(--text); background: var(--panel); border: 1px solid var(--line2); border-radius: 12px; padding: 20px 22px 18px; box-shadow: 0 20px 60px rgba(0, 0, 0, .6); }
+  dialog::backdrop { background: rgba(8, 10, 13, .62); }
+  dialog h3 { margin: 0 0 4px; font-size: 17px; }
+  dialog p { margin: 0 0 12px; color: var(--muted); }
+  dialog label { display: block; margin: 12px 0 5px; font-size: 12.5px; color: #b6bdc7; }
+  .keyRow { display: flex; gap: 6px; }
+  .keyRow button { flex: none; padding: 7px 10px; }
+  .hint { min-height: 1.5em; margin-top: 5px; font-size: 12.5px; color: var(--muted); }
+  .hint.ok { color: var(--green); } .hint.bad { color: #ff9c9c; }
+  .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+  #toast { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); z-index: 30; display: none; max-width: 80vw; padding: 9px 16px; border-radius: 8px; background: rgba(35, 42, 51, .97); border: 1px solid var(--line2); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="2" fill="#fff"/><path d="M8.5 20h7M12 16.5V20" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></div>
+  <div class="title"><b>My Remote</b><small id="count">&nbsp;</small></div>
+  <input id="search" type="search" placeholder="이름, 컴퓨터 이름으로 찾기" spellcheck="false" autocomplete="off">
+  <button id="add" class="primary" title="Ctrl+N">＋ PC 추가</button>
+</header>
+<main>
+  <div id="note"></div>
+  <div id="grid"></div>
+  <div id="nomatch">찾는 PC가 없습니다.</div>
+  <div id="empty">
+    <svg viewBox="0 0 150 96"><rect x="8" y="14" width="58" height="40" rx="5" fill="#1d2229" stroke="#3a4350" stroke-width="2"/><path d="M27 66h20M37 54v12" stroke="#3a4350" stroke-width="3" stroke-linecap="round"/><rect x="84" y="14" width="58" height="40" rx="5" fill="#1d2229" stroke="#4a8dff" stroke-width="2"/><path d="M103 66h20M113 54v12" stroke="#4a8dff" stroke-width="3" stroke-linecap="round"/><path d="M68 34h14" stroke="#4a8dff" stroke-width="2.5" stroke-dasharray="3 3"/><circle cx="113" cy="34" r="7" fill="none" stroke="#4a8dff" stroke-width="2"/><path d="M113 30.5v7M109.5 34h7" stroke="#4a8dff" stroke-width="2" stroke-linecap="round"/></svg>
+    <h2>아직 등록한 PC가 없습니다</h2>
+    <p>조종할 PC(호스트)의 My Remote 창에서 <b>키 복사</b>를 누른 뒤, 그 키로 여기에 PC를 추가하세요. 추가한 PC는 여러 대를 동시에 열 수 있습니다.</p>
+    <button id="add2" class="primary">＋ PC 추가</button>
+  </div>
+</main>
+<footer><span id="store"></span><span id="ver"></span></footer>
+
+<div id="menu" role="menu">
+  <button data-do="open" role="menuitem">접속</button>
+  <button data-do="close" role="menuitem">접속 끊기</button>
+  <hr>
+  <button data-do="rename" role="menuitem">이름 바꾸기 <small style="float:right;color:#8b94a1">F2</small></button>
+  <button data-do="key" role="menuitem">키 바꾸기</button>
+  <hr>
+  <button data-do="remove" class="del" role="menuitem">목록에서 지우기 <small style="float:right;color:#b98">Del</small></button>
+</div>
+
+<dialog id="addDlg">
+  <form method="dialog">
+    <h3>PC 추가</h3>
+    <p>호스트 PC의 My Remote 창에서 <b>키 복사</b>로 복사한 접속 키를 붙여 넣으세요.</p>
+    <label for="addKey">접속 키</label>
+    <div class="keyRow"><input id="addKey" type="password" placeholder="접속 키 (43글자)" spellcheck="false" autocomplete="off"><button type="button" class="plain" id="addShow">보기</button></div>
+    <div class="hint" id="addHint"></div>
+    <label for="addName">이름 <small style="color:#8b94a1">(나중에 바꿀 수 있습니다. 비워 두면 컴퓨터 이름을 씁니다)</small></label>
+    <input id="addName" type="text" maxlength="40" placeholder="예: 회사 PC, 집 서버" spellcheck="false" autocomplete="off">
+    <div class="btns">
+      <button type="button" class="plain" id="addCancel">취소</button>
+      <button type="button" class="plain" id="addOnly">추가만</button>
+      <button type="submit" class="primary" id="addGo">추가하고 접속</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="keyDlg">
+  <form method="dialog">
+    <h3>키 바꾸기</h3>
+    <p><b id="keyWho"></b>의 접속 키를 새로 넣습니다. 호스트에서 <b>새 키 발급</b>을 눌렀을 때 쓰세요. 이름과 접속 기록은 그대로 남습니다.</p>
+    <label for="newKey">새 접속 키</label>
+    <div class="keyRow"><input id="newKey" type="password" placeholder="접속 키 (43글자)" spellcheck="false" autocomplete="off"><button type="button" class="plain" id="newShow">보기</button></div>
+    <div class="hint" id="keyHint"></div>
+    <div class="btns">
+      <button type="button" class="plain" id="keyCancel">취소</button>
+      <button type="submit" class="primary" id="keyGo">바꾸기</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="delDlg">
+  <form method="dialog">
+    <h3>목록에서 지우기</h3>
+    <p><b id="delWho"></b>을(를) 목록에서 지웁니다. 이 PC에 보관한 그 PC의 접속 키도 함께 지워지고, 열려 있는 창은 닫힙니다. 호스트 PC에는 아무 영향이 없습니다.</p>
+    <div class="btns">
+      <button type="button" class="plain" id="delCancel">취소</button>
+      <button type="submit" class="danger" id="delGo">지우기</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const api = window.mrHome;
+// Our own drawings (the same as in the client page's arrangement panel); names always go in as text.
+const OS_ICON = {
+  windows: '<path fill="#00a4ef" d="M2 2h9.5v9.5H2zM12.5 2H22v9.5h-9.5zM2 12.5h9.5V22H2zM12.5 12.5H22V22h-9.5z"/>',
+  linux: '<ellipse cx="12" cy="13.6" rx="6.6" ry="8.6" fill="#15171a" stroke="#cfd5dc" stroke-width=".9"/><ellipse cx="12" cy="15.6" rx="4.4" ry="5.9" fill="#f4f4f4"/>'
+    + '<ellipse cx="10.2" cy="8.4" rx="1.35" ry="1.7" fill="#fff"/><ellipse cx="13.8" cy="8.4" rx="1.35" ry="1.7" fill="#fff"/><circle cx="10.5" cy="8.8" r=".65" fill="#15171a"/><circle cx="13.5" cy="8.8" r=".65" fill="#15171a"/>'
+    + '<path d="M9.9 10.6h4.2L12 12.6z" fill="#f6b40e"/><ellipse cx="8.4" cy="21.7" rx="2.8" ry="1.25" fill="#f6b40e"/><ellipse cx="15.6" cy="21.7" rx="2.8" ry="1.25" fill="#f6b40e"/>',
+  mac: '<path fill="#e6e8eb" d="M13.2 6.3c.2-1.6 1.4-3 3-3.4-.1 1.7-1.3 3.1-3 3.4zM12 7.6C10.6 7.6 9.6 6.9 8.2 6.9 5.6 6.9 3.6 9 3.6 12.3c0 4.3 2.8 8.7 5 8.7 1.1 0 1.7-.7 3.4-.7s2.2.7 3.4.7c1.8 0 3.5-2.5 4.5-4.6-1.7-.8-2.9-2.4-2.9-4.3 0-1.7.9-3.1 2.2-3.8-1-1-2.3-1.4-3.5-1.4-1.5 0-2.5.7-3.7.7z"/>',
+  other: '<rect x="3" y="4" width="18" height="12" rx="1.5" fill="none" stroke="#9aa3ad" stroke-width="1.6"/><path d="M9 20h6M12 16v4" stroke="#9aa3ad" stroke-width="1.6" stroke-linecap="round"/>',
+};
+const KEY_RE = /^[A-Za-z0-9_-]{43}$/;
+const WHY = {
+  badkey: '접속 키 형식이 아닙니다. 호스트 창의 "키 복사"로 복사한 43글자를 붙여 넣으세요.',
+  exists: '이미 목록에 있는 PC의 키입니다.',
+  nostore: '이 PC에서는 키를 안전하게 보관할 수 없어 저장하지 못했습니다.',
+  nokey: '보관해 둔 키를 읽을 수 없습니다. "키 바꾸기"로 키를 다시 넣어 주세요.',
+  gone: '목록에 없는 PC입니다.',
+};
+let hosts = [], editing = '', menuFor = '', storeOk = true;
+
+const shown = (h) => h.name || h.pc || '이름 없는 PC';
+function ago(t) {
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 50) return '방금 전';
+  if (s < 3300) return Math.max(1, Math.round(s / 60)) + '분 전';
+  if (s < 86400 * 0.92) return Math.max(1, Math.round(s / 3600)) + '시간 전';
+  const days = Math.round(s / 86400);
+  if (days <= 1) return '어제';
+  if (days < 30) return days + '일 전';
+  const d = new Date(t);
+  return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`;
+}
+const fullDate = (t) => new Date(t).toLocaleString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' });
+function toast(text, ms) {
+  const el = $('toast');
+  el.textContent = text;
+  el.style.display = 'block';
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => { el.style.display = 'none'; }, ms || 3200);
+}
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+function stateOf(h) {
+  if (h.connected) return { cls: 'live', text: '연결됨', title: '지금 연결되어 있습니다' };
+  if (h.open) return { cls: 'busy', text: '연결하는 중…', title: '창이 열려 있고 호스트를 기다리고 있습니다' };
+  if (h.lastAt) return { cls: '', text: '마지막 접속 ' + ago(h.lastAt), title: fullDate(h.lastAt) };
+  return { cls: '', text: '아직 접속한 적 없음', title: '' };
+}
+// Under the name: the computer's own name (when the person gave another), then what it runs.
+function subOf(h) {
+  const lines = [];
+  if (h.name && h.pc && h.pc !== h.name) lines.push(h.pc);
+  const os = [h.osName, h.monitors > 0 ? `모니터 ${h.monitors}개` : ''].filter(Boolean).join(' · ');
+  if (os) lines.push(os);
+  return lines.length ? lines : ['접속하면 정보가 채워집니다'];
+}
+function card(h) {
+  const c = el('article', 'card' + (h.connected ? ' on' : ''));
+  c.tabIndex = 0; c.dataset.id = h.id;
+  const top = el('div', 'top');
+  const os = el('div', 'os');
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.innerHTML = OS_ICON[h.os] || OS_ICON.other;
+  os.title = h.osName || '';
+  os.appendChild(svg);
+  const name = el('div', 'name', shown(h)); name.title = shown(h) + ' (더블클릭: 이름 바꾸기)';
+  const more = el('button', 'more', '⋯'); more.title = '이름 바꾸기, 키 바꾸기, 지우기'; more.setAttribute('aria-label', '더 보기');
+  top.append(os, name, more);
+  for (const line of subOf(h)) { const sub = el('div', 'sub', line); sub.title = line; top.append(sub); }
+  const bottom = el('div', 'bottom');
+  const st = stateOf(h), state = el('div', 'state ' + st.cls);
+  state.append(el('i', 'dot'), document.createTextNode(st.text)); state.title = st.title;
+  const go = el('button', 'go ' + (h.open ? 'plain' : 'primary'), h.open ? '창 보기' : '접속');
+  bottom.append(state, go);
+  c.append(top, bottom);
+  go.onclick = (ev) => { ev.stopPropagation(); connect(h.id); };
+  more.onclick = (ev) => { ev.stopPropagation(); showMenu(h.id, more); };
+  name.ondblclick = (ev) => { ev.stopPropagation(); rename(h.id); };
+  c.ondblclick = () => connect(h.id);
+  c.oncontextmenu = (ev) => { ev.preventDefault(); showMenu(h.id, null, ev.clientX, ev.clientY); };
+  c.onkeydown = (ev) => {
+    if (ev.target !== c) return;
+    if (ev.key === 'Enter') connect(h.id);
+    else if (ev.key === 'F2') rename(h.id);
+    else if (ev.key === 'Delete') askRemove(h.id);
+    else if (ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey)) { ev.preventDefault(); showMenu(h.id, more); }
+  };
+  return c;
+}
+function render() {
+  if (editing) return; // a name is being typed: the list is drawn again when that is done
+  const q = $('search').value.trim().toLowerCase();
+  const list = hosts.filter((h) => !q || [h.name, h.pc, h.osName].some((s) => String(s || '').toLowerCase().includes(q)));
+  // The ones used last come first; those never used after them, newest first.
+  list.sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0) || (b.addedAt || 0) - (a.addedAt || 0));
+  const focused = document.activeElement && document.activeElement.closest ? (document.activeElement.closest('.card') || {}).dataset : null;
+  const grid = $('grid');
+  grid.textContent = '';
+  for (const h of list) grid.appendChild(card(h));
+  if (hosts.length && !q && storeOk) {
+    const a = el('article', 'card addCard'); a.tabIndex = 0; a.title = 'PC 추가 (Ctrl+N)';
+    a.append(el('b', '', '＋'), el('span', '', 'PC 추가'));
+    a.onclick = () => openAdd();
+    a.onkeydown = (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openAdd(); } };
+    grid.appendChild(a);
+  }
+  $('empty').style.display = hosts.length ? 'none' : 'flex';
+  grid.style.display = hosts.length ? '' : 'none';
+  $('nomatch').style.display = hosts.length && !list.length ? 'block' : 'none';
+  $('search').style.visibility = hosts.length > 1 ? '' : 'hidden';
+  const live = hosts.filter((h) => h.connected).length;
+  $('count').textContent = hosts.length ? `PC ${hosts.length}대` + (live ? ` · ${live}대 연결됨` : '') : '원격으로 쓸 PC를 추가하세요';
+  if (focused && focused.id) { const c = grid.querySelector(`.card[data-id="${focused.id}"]`); if (c) c.focus(); }
+}
+async function load() {
+  const r = await api.list();
+  if (!r) return;
+  hosts = r.hosts || [];
+  const note = $('note');
+  note.style.display = r.note ? 'block' : 'none';
+  note.textContent = r.note === 'broken' ? 'PC 목록 파일(hosts.json)을 읽을 수 없어 빈 목록으로 시작했습니다. 이전 파일은 같은 폴더에 hosts.json.bad-… 이름으로 남겨 두었습니다.'
+    : r.note ? 'PC 목록 파일을 열 수 없습니다.' : '';
+  render();
+}
+function flash(id) {
+  const c = $('grid').querySelector(`.card[data-id="${id}"]`);
+  if (!c) return;
+  c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash');
+  c.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  c.focus();
+}
+async function connect(id) {
+  const r = await api.open(id);
+  if (r && !r.ok) toast(WHY[r.why] || '열지 못했습니다.', 5000);
+}
+
+// ---- the menu of one PC ----
+function showMenu(id, anchor, x, y) {
+  const h = hosts.find((v) => v.id === id);
+  if (!h) return;
+  menuFor = id;
+  const m = $('menu');
+  m.querySelector('[data-do="open"]').textContent = h.open ? '창 보기' : '접속';
+  m.querySelector('[data-do="close"]').style.display = h.open ? '' : 'none';
+  m.style.display = 'block';
+  const r = anchor ? anchor.getBoundingClientRect() : { left: x, right: x, bottom: y };
+  const w = m.offsetWidth, hh = m.offsetHeight;
+  m.style.left = Math.max(6, Math.min(innerWidth - w - 6, anchor ? r.right - w : r.left)) + 'px';
+  m.style.top = Math.max(6, Math.min(innerHeight - hh - 6, r.bottom + 4)) + 'px';
+  m.querySelector('button:not([style*="none"])').focus();
+}
+function hideMenu() { $('menu').style.display = 'none'; menuFor = ''; }
+$('menu').onclick = (ev) => {
+  const b = ev.target.closest('button'), id = menuFor;
+  if (!b || !id) return;
+  hideMenu();
+  const what = b.dataset.do;
+  if (what === 'open') connect(id);
+  else if (what === 'close') api.close(id);
+  else if (what === 'rename') rename(id);
+  else if (what === 'key') openKey(id);
+  else if (what === 'remove') askRemove(id);
+};
+document.addEventListener('pointerdown', (ev) => { if (menuFor && !ev.target.closest('#menu')) hideMenu(); }, true);
+addEventListener('blur', hideMenu);
+addEventListener('resize', hideMenu);
+
+// ---- naming a PC, in place ----
+function rename(id) {
+  const h = hosts.find((v) => v.id === id), c = $('grid').querySelector(`.card[data-id="${id}"]`);
+  if (!h || !c || editing) return;
+  editing = id;
+  const name = c.querySelector('.name'), input = el('input');
+  input.type = 'text'; input.maxLength = 40; input.value = h.name || ''; input.placeholder = h.pc || '이름'; input.spellcheck = false;
+  name.textContent = ''; name.appendChild(input);
+  input.focus(); input.select();
+  let done = false;
+  const end = async (save) => {
+    if (done) return;
+    done = true; editing = '';
+    if (save && input.value.trim() !== (h.name || '')) await api.rename(id, input.value);
+    await load();
+    const again = $('grid').querySelector(`.card[data-id="${id}"]`);
+    if (again) again.focus();
+  };
+  input.onkeydown = (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') end(true); else if (ev.key === 'Escape') end(false); };
+  input.onblur = () => end(true);
+  input.ondblclick = (ev) => ev.stopPropagation();
+}
+
+// ---- adding a PC, replacing a key ----
+function keyField(input, hint, show) {
+  const check = () => {
+    const v = input.value.trim();
+    hint.className = 'hint' + (!v ? '' : KEY_RE.test(v) ? ' ok' : ' bad');
+    hint.textContent = !v ? '' : KEY_RE.test(v) ? '✓ 접속 키 형식이 맞습니다' : `접속 키는 43글자입니다 (지금 ${v.length}글자${/[^A-Za-z0-9_-]/.test(v) ? ', 쓸 수 없는 글자 포함' : ''})`;
+    return KEY_RE.test(v);
+  };
+  input.oninput = check;
+  show.onclick = () => { const on = input.type === 'password'; input.type = on ? 'text' : 'password'; show.textContent = on ? '숨기기' : '보기'; input.focus(); };
+  return { check, reset() { input.value = ''; input.type = 'password'; show.textContent = '보기'; hint.className = 'hint'; hint.textContent = ''; } };
+}
+const addKey = keyField($('addKey'), $('addHint'), $('addShow'));
+const newKey = keyField($('newKey'), $('keyHint'), $('newShow'));
+function openAdd() {
+  if (!storeOk) { toast(WHY.nostore, 5000); return; }
+  addKey.reset(); $('addName').value = '';
+  $('addDlg').showModal();
+  $('addKey').focus();
+}
+async function doAdd(thenOpen) {
+  if (!addKey.check()) { $('addHint').className = 'hint bad'; if (!$('addKey').value.trim()) $('addHint').textContent = '접속 키를 붙여 넣으세요.'; $('addKey').focus(); return; }
+  const r = await api.add({ key: $('addKey').value.trim(), name: $('addName').value });
+  if (!r || (!r.ok && r.why !== 'exists')) { $('addHint').className = 'hint bad'; $('addHint').textContent = WHY[r && r.why] || '추가하지 못했습니다.'; return; }
+  addKey.reset();
+  $('addDlg').close();
+  await load();
+  if (r.why === 'exists') toast(WHY.exists);
+  flash(r.id);
+  if (thenOpen) connect(r.id);
+}
+$('add').onclick = $('add2').onclick = openAdd;
+$('addCancel').onclick = () => { addKey.reset(); $('addDlg').close(); };
+$('addOnly').onclick = () => doAdd(false);
+$('addDlg').querySelector('form').onsubmit = (ev) => { ev.preventDefault(); doAdd(true); };
+$('addDlg').addEventListener('close', () => addKey.reset()); // a key typed and not used does not stay in the field
+
+let keyFor = '';
+function openKey(id) {
+  const h = hosts.find((v) => v.id === id);
+  if (!h) return;
+  keyFor = id; newKey.reset(); $('keyWho').textContent = shown(h);
+  $('keyDlg').showModal();
+  $('newKey').focus();
+}
+$('keyCancel').onclick = () => { newKey.reset(); $('keyDlg').close(); };
+$('keyDlg').addEventListener('close', () => newKey.reset());
+$('keyDlg').querySelector('form').onsubmit = async (ev) => {
+  ev.preventDefault();
+  if (!newKey.check()) { $('keyHint').className = 'hint bad'; if (!$('newKey').value.trim()) $('keyHint').textContent = '접속 키를 붙여 넣으세요.'; $('newKey').focus(); return; }
+  const r = await api.setKey(keyFor, $('newKey').value.trim());
+  if (!r || !r.ok) { $('keyHint').className = 'hint bad'; $('keyHint').textContent = WHY[r && r.why] || '바꾸지 못했습니다.'; return; }
+  newKey.reset();
+  $('keyDlg').close();
+  await load();
+  flash(keyFor);
+  toast('키를 바꿨습니다.');
+};
+
+// ---- removing a PC ----
+let delFor = '';
+function askRemove(id) {
+  const h = hosts.find((v) => v.id === id);
+  if (!h) return;
+  delFor = id; $('delWho').textContent = shown(h);
+  $('delDlg').showModal();
+  $('delCancel').focus();
+}
+$('delCancel').onclick = () => $('delDlg').close();
+$('delDlg').querySelector('form').onsubmit = async (ev) => {
+  ev.preventDefault();
+  $('delDlg').close();
+  await api.remove(delFor);
+  await load();
+};
+
+$('search').oninput = render;
+addEventListener('keydown', (ev) => {
+  if (document.querySelector('dialog[open]')) return;
+  if (ev.key === 'Escape') { if (menuFor) hideMenu(); else if ($('search').value) { $('search').value = ''; render(); } return; }
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'n') { ev.preventDefault(); openAdd(); }
+  else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'f') { ev.preventDefault(); $('search').focus(); $('search').select(); }
+});
+setInterval(() => { if (!document.querySelector('dialog[open]') && !menuFor) render(); }, 30000); // "3분 전" moves on
+
+(async () => {
+  const info = (await api.info()) || {};
+  storeOk = info.store !== 'none';
+  $('ver').textContent = info.version ? 'v' + info.version : '';
+  const s = $('store');
+  s.className = info.store === 'os' ? '' : 'warn';
+  s.textContent = info.store === 'os' ? '🔒 접속 키는 이 PC에만, 운영체제가 암호화해 보관합니다'
+    : info.store === 'obscured' ? '⚠ 이 PC에는 키 보관소(키링)가 없어 접속 키가 가려진 채로만 저장됩니다'
+    : '⚠ 이 PC에서는 접속 키를 안전하게 보관할 수 없어 PC를 추가할 수 없습니다';
+  s.title = s.textContent;
+  $('add').disabled = $('add2').disabled = !storeOk;
+  // A key the app kept before it had this list (the loader's "이 브라우저에 키 저장") moves into the list, once.
+  try {
+    const old = localStorage.getItem('mr_key');
+    if (old && storeOk) {
+      const r = await api.add({ key: old, name: '' });
+      if (r && (r.ok || r.why === 'exists' || r.why === 'badkey')) for (const k of ['mr_key', 'mr_forget_key', 'mr_app_html', 'mr_app_hash']) localStorage.removeItem(k);
+    }
+  } catch {}
+  api.onChange(load);
+  await load();
+})();
+</script>
+</body>
+</html>

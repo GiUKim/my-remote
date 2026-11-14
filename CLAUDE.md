@@ -55,6 +55,11 @@ the client app instead).
   `./start-host.sh --show-key`. Never run `--show-key` yourself, in any form and on any machine: its
   output is the key.
 - **Never bake a key into `my-remote-client.html`.** The committed client contains no key by design.
+- **The client app's list of PCs holds keys too.** `%APPDATA%\my-remote-client\hosts.json` (Linux:
+  `~/.config/my-remote-client/hosts.json`) has the access key of every PC the person added, encrypted
+  like the host's own: never read or decrypt it, nor its `hosts.json.bad-<time>` copies, and never start
+  the client app on the person's own profile to look at the list. To try the list, use a profile of its
+  own: `electron client --loader=<file> --list` (see Commands), with made-up keys.
 - **Keep the loader and its bootstrap protocol stable.** `my-remote-client.html` is a loader that users
   receive once and keep; old copies stay in use. Changing the `ver`/`app` exchange, the key derivation
   or the signaling format in `signal.js` strands them. New behaviour belongs in
@@ -284,6 +289,41 @@ the client app instead).
   key could stay on a Linux host's clipboard for good.) The config and crash paths were checked with a Node harness of
   `main.js` with a fake Electron; in Electron only the reloads of the self-test ran through
   `pageGone()`; a real renderer crash and the start-up dialogs have not been exercised.
+- **The client app's list of PCs; several PCs at once.** The app (`client/main.js`) starts with a
+  list window (`home.html`, bridge `home-preload.js` -> `window.mrHome`) of the PCs kept by
+  `client/hosts.js` in `hosts.json`: a name the person gives, what the PC said it is at its last
+  connection (`os`, `osName`, `pc` = the computer's name, monitors), when that was, and its key as
+  safeStorage made it. Nothing hands a key to a page except as below; the list's page gets none back.
+  - Each PC opens in a window of its own, in a session partition of its own (`persist:host-<id>`), so
+    what one host's page keeps (its cached page, layouts) is not there for another host's page; any
+    number may be open at once, each a shell of its own in `shell.js` (`attach(win, { host: id })`).
+    Removing a PC clears its partition.
+  - The key reaches the loader without being in an address: `preload.js` asks `shell:bootKey` once per
+    load of such a window (only the window's top page, only when the document has the loader's `key`,
+    `go` and `remember` elements), puts it into the loader's field with "remember" off and presses its
+    button. So `mr_key` is not left in that window's storage. The loader file is unchanged.
+  - The page tells the list about its session through `mrShell.hostInfo({ connected, os, name, pc,
+    monitors })` (`tellList` in the page: on 'connected' and when a session is forgotten) and has a
+    `PC 목록` button (`mrShell.home`); both exist only in a window opened from the list. A host older
+    than 0.4.0 sends a page without that: the app then takes the picture starting to play
+    (`media-started-playing`) for "connected" and notes the time, but learns no name or system.
+  - Not shown: whether a PC is on before connecting. That would take a subscription and a message per
+    PC on the public relay (ntfy.sh limits both), so it was left out.
+  - The clipboard: every connected PC's session shares it with this PC, so text copied on host A goes
+    on to host B (checked with two hosts); files copied on A are fetched when the focus leaves A's
+    windows, also for B's window, and a paste there sends them to B (not tried).
+  - One app per profile (`requestSingleInstanceLock`): a second start brings the list forward.
+    `--loader=<file>` (no `--list`) is still one window on that loader with no list, as the self-test
+    and the local trial use it. A key the app kept before it had a list (`mr_key` in the default
+    session's storage, shared by all `file://` pages) is moved into the list by `home.html` at start.
+  - Checked: `release/test-hosts.js` (the store), the self-test's `--client-app-check` (a PC added
+    and opened through the list, the key from the app, the entry filled in), and two test hosts at once
+    on Xvfb (below). Not tried: the list on the person's real profile, the migration of a real kept key,
+    a Windows host and a Linux host side by side, files between two hosts, three or more PCs.
+- **The self-test keeps every display's picture moving.** The native capturer sends nothing while a
+  screen stays the same, and the checks that count frames failed now and then on a PC with two
+  monitors, one of them idle. A 64x28 counter window (no focus, no clicks) sits in a corner of every
+  display for the length of the test; before 2026-11-14 only on Linux.
 - **Throwaway profiles.** Every isolated run (`--selftest`, `--localtest`, `--bench`, and the bench's
   client side) starts `profile-cleanup.js` as a small detached process of its own, which removes the
   run's `%TEMP%\myremote-local-*` / `myremote-peer-*` profile once the run's process has ended and then
@@ -676,11 +716,14 @@ Run from `host/` with Electron's env var cleared.
 | `electron . --selftest --clip-check` | Same, plus putting two files on this PC's clipboard and reading them back, files copied on the host announced and fetched, files the client sent not announced back, and (Windows) text from the client on the clipboard before the next input. Only runs when the clipboard holds nothing or plain text, which is put back |
 | `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first. Windows only |
 | `electron . --selftest --input-check` | Linux (X11) only (`inputcheck.js`): the pointer read back after an XTest move, whether the engine's video has the pointer in it (INFO), all 133 keys of the table, five buttons and the wheel into a test window, window-or-desktop under the pointer, text and a file dragged out of a second program it starts, and the client app's drop placement. INJECTS INPUT: on a virtual display only, or with the user's agreement |
-| `electron . --selftest --client-app-check` | Same, plus at the end the client app (`client/main.js`, a process of its own, with a profile of its own) on a loader that talks to the test's relay only; passes when its measurements say it shows the host's picture. Opens a window for about 20 s |
+| `electron . --selftest --client-app-check` | Same, plus at the end the client app (`client/main.js`, a process of its own, with a profile of its own) on a loader that talks to the test's relay only, and then once more through its list of PCs (`--list`: the test's key added and opened as a PC, the loader given the key by the app); passes when its measurements say it shows the host's picture. Opens a window for about 20 s |
 | `xvfb-run -a -s "-screen 0 1920x1080x24" <electron> . --selftest --input-check --clip-check --client-app-check` | How the Linux side was verified on a server (Ubuntu 22.04, Xvfb). Add `--no-sandbox` where Chromium's sandbox cannot run (see Gotchas) |
 | `./setup.sh [--skip-selftest] [--hold]`, `./start-host.sh`, `./start-client.sh`, `./local-test.sh` | Linux counterparts of `setup.ps1` and the `.bat` files (shared code in `host/linux-launch.sh`); the launchers set the folder up on their first start (`ensure_setup`). Extra arguments go to Electron, e.g. `./start-host.sh --selftest`. `MY_REMOTE_NODE_DIST` points the Node download elsewhere (tests) |
 | `npm run bench -- --net=direct,home,narrow,wifi --try=old,base` | Measures delay and smoothness on this PC for the given link conditions and settings, prints a table (see "Performance"). `--picture-test=quality` measures picture quality instead (a window opening, a window being dragged, scrolling); `--snapshot` saves what the client showed next to what was drawn. About 45 s per run. Shows a test picture on one display and a small window on another for that time; they never take focus and no input is injected, but tell the user before a long series |
 | `npm run bench -- --remote=user@host --net=direct --try=base` | The same bench with the client page on another machine, reached over ssh: a real second machine and a real network instead of one PC. That machine needs `~/my-remote-dev/electron/` (an unpacked Electron release for its platform) and `xvfb-run`; signaling goes through an ssh tunnel, only the WebRTC traffic crosses the network directly. Add `--capture-probe` to split the delay into its parts. This sends the picture of one of this PC's displays to that machine, so the user must have agreed |
+| `node release/install-local.js [--dry]` | Puts the release in `dist/release` into this PC's installed app as its updater would (the signature checked, then `core.installVersion` and `activate`): the app runs it from its next start, on trial. For a PC whose app cannot reach a feed, and for trying a release before it is published. It changes the person's installed app, so only when they asked for that version there |
+| `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept. A second |
+| `electron client --loader=<file> --list [--home-shot=<file.png> --home-size=940x480 --home-js=<code>]` | The client app's list on a profile of its own next to `<file>` (any loader file), never the person's. PCs come from `home-import.json` next to it (`[{ name, key, open, loader, seen, lastAt }]`, made-up keys; removed when read). With `--home-shot` no window is shown: a picture of the list is written and the app ends (how `docs/img/home.png` was made) |
 | `node release/test-update.js` | The update logic (`app/core.js`, `app/updater.js`) in plain Node with made-up releases and feeds: signatures, file names, downgrades, the trial and going back, ordinary and required updates. A few seconds |
 | `node release/test-app.js [--packaged]` | The app's shell in real Electron against a feed on this machine (made-up versions; nothing leaves the PC, the real host is not started). `--packaged` also builds this folder's code as the real package (test key, temporary folder) and runs its self-test through the shell: about 4 minutes. On Linux under `xvfb-run`; `MR_TEST_ELECTRON_ARGS=--no-sandbox` where the sandbox cannot run |
 | `node release/build.js [--critical]` | Builds a release from the checked-out commit into `dist/release` (`latest.json`, its signature, the bundle, and `bundle/` for packaging). Signs with the key outside the repository |
@@ -708,7 +751,10 @@ must then be given the new file). Run `npm run selftest` after either.
 | `setup.sh`, `start-host.sh`, `start-client.sh`, `local-test.sh` | The same for Linux (bash, executable in git, LF line endings) |
 | `host/linux-launch.sh` | Sourced by those: Electron's path, the first-start setup (`ensure_setup`), X11 session, library and sandbox checks, errors also as a dialog (`fail`: zenity or notify-send, when there is no terminal), starting Electron in the background |
 | `host/icon.svg` | The app's icon for the Linux app menu entries (the tray icon is drawn in `main.js`) |
-| `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js`: Win32 or X11, and `host/files.js`). Exposes `window.mrShell` (`fileAbort`, `pointerOwn`, `clipPoll` and `clipWrite` from 2026-11-13 on), and from 2026-11-13 on marks a minimized or hidden window's document (`data-mr-hidden`, event `mrshown`): its windows run with `backgroundThrottling` off, so `visibilityState` never says hidden there, and the page (`unseen()`) stops asking the host for what such a window shows. `main.js --loader=<file>` shows another loader with a profile of its own (self-test, local trial on Linux). These files are not updated through the loader: the page must feature-detect what an installed app offers |
+| `client/hosts.js`, `client/home.html`, `client/home-preload.js` | The client app's list of PCs: the store (`hosts.json`, keys only encrypted; Electron-free), the list window's page and its bridge `window.mrHome` (see Gotchas) |
+| `release/test-hosts.js` | The store's test, plain Node |
+| `release/install-local.js` | A built release into this PC's installed app, the updater's way without a feed |
+| `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: the list of PCs and, for each PC, a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js`: Win32 or X11, and `host/files.js`). Exposes `window.mrShell` (`fileAbort`, `pointerOwn`, `clipPoll` and `clipWrite` from 2026-11-13 on), and from 2026-11-13 on marks a minimized or hidden window's document (`data-mr-hidden`, event `mrshown`): its windows run with `backgroundThrottling` off, so `visibilityState` never says hidden there, and the page (`unseen()`) stops asking the host for what such a window shows. `main.js --loader=<file>` shows another loader with a profile of its own (self-test, local trial on Linux). These files are not updated through the loader: the page must feature-detect what an installed app offers |
 | `app/boot.js`, `app/core.js`, `app/updater.js`, `app/guard.js` | The installed app's shell: picks host or client and the code bundle to run, verifies it, keeps a new version on trial and goes back when it does not come up; finds and installs updates. See "The installed app, releases and updates" |
 | `app/update-config.json`, `app/package.json` | Where updates are fetched from and the public keys that may sign them; the shell's generation (`base`) |
 | `app/my-remote.sh`, `app/icon.png`, `app/icon.ico` | The installed app's launcher on Linux; its icons (drawn by `release/make-icon.js`) |
@@ -772,7 +818,7 @@ Signaling (through the relay, each message deflated, encrypted, chunked to 3000 
 
 1. client -> host topic: `{t:'hello', sid, ts, mode, codec}` (`codec` optional: `H264`, `H264HQ`, `VP9`, `AV1`)
 2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, codec, cursorHidden, app, os, monitors:[{idx, mid, x, y, width, height, primary, hdr?}]}`
-   (`os`: `{os: 'windows'|'linux'|'mac', name}`, what the host runs, e.g. `Windows 10` or `Ubuntu 22.04.5 LTS`; the arrangement panel shows it with a logo)
+   (`os`: `{os: 'windows'|'linux'|'mac', name, pc}`, what the host runs, e.g. `Windows 10` or `Ubuntu 22.04.5 LTS`, and from 0.4.0 the computer's name (`os.hostname()`); the arrangement panel shows them with a logo, the client app's list keeps them)
    (`x`,`y`,`width`,`height` are the monitor's rectangle on the host's virtual desktop, physical pixels)
 3. client -> host topic: `{t:'answer', sid, ts, sdp}`
 
@@ -1028,6 +1074,14 @@ Verified for native capture: the whole self-test with it in use (it is what `aut
 three monitors on two graphics cards, a host window reload during a session, the figures in
 "Performance". Not verified: a monitor in HDR mode or rotated, the lock screen and permission prompts
 (the capturer should pause and resume), a resolution change during a session, any PC but this one.
+
+Verified for the list of PCs and several PCs at once (2026-11-14, the Ubuntu 24.04 PC, three Xvfb
+displays, a harness outside the repository): two test hosts, each with a relay and a throwaway key of
+its own, and the client app with its list on the third display, given both as PCs to add and open. Both
+windows showed their host's picture at the same time (each host got the app's measurements, 40 fps), the
+list showed both as connected with system and computer name, neither window kept a key in its storage,
+closing one left the other connected, opening it again connected again. On Windows the list was only
+looked at (pictures with made-up PCs) and exercised by the self-test with one host.
 
 Verified with real input and the real client app (2026-11-14, the Ubuntu 24.04 PC, two Xvfb displays:
 the host with GNOME Shell and Nautilus 46 on one, the client app as a program of its own on the other,

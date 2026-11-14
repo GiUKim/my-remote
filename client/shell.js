@@ -19,7 +19,12 @@ const ALLOWED = new Set(['window-management', 'fullscreen', 'keyboardLock', 'poi
 const FULLSCREEN_JS = `document.documentElement.requestFullscreen()
   .then(() => (navigator.keyboard && navigator.keyboard.lock ? navigator.keyboard.lock() : null))
   .then(() => true, () => false)`;
-const shells = new Map(); // main webContents id -> { win, children }
+const shells = new Map(); // main webContents id -> { win, children, host }
+// The app's list of PCs (client/main.js), when there is one: { key(id) -> Promise<key | null>,
+// info(id, what the page says about its session), home() }. A window opened for a PC of that list
+// (attach(win, { host: id })) gets that PC's key from here; see shell:bootKey.
+let list = null;
+function setList(hooks) { list = hooks || null; }
 
 function shellOf(sender) {
   for (const s of shells.values()) {
@@ -252,6 +257,16 @@ function setupIpc() {
   if (ipcReady) return;
   ipcReady = true;
   // What is being carried out of the remote picture, shown at the pointer (see above). `o.on` false ends it.
+  // A window opened for a PC of the app's list. Its loader is given that PC's key (preload.js puts it into
+  // the loader's own field and presses its button), so the person is not asked and the key is never in
+  // an address. Only the window's own top page gets it: the loader file, or the page the loader wrote
+  // in its place, which has the key anyway; the window can go nowhere else (stayOnPage).
+  const listed = (e) => { const s = shellOf(e.sender); return s && s.host && list && e.sender === s.win.webContents && (!e.senderFrame || e.senderFrame === e.sender.mainFrame) ? s : null; };
+  ipcMain.on('shell:inList', (e) => { e.returnValue = !!listed(e); });
+  ipcMain.handle('shell:bootKey', async (e) => { const s = listed(e); return s ? list.key(s.host) : null; });
+  // What the page says about its session: connected or not, and what the host said it is.
+  ipcMain.handle('shell:hostInfo', (e, info) => { const s = listed(e); if (!s) return false; list.info(s.host, info && typeof info === 'object' ? info : {}); return true; });
+  ipcMain.handle('shell:home', (e) => { if (!listed(e)) return false; list.home(); return true; });
   ipcMain.handle('shell:dragGhost', async (e, o) => {
     if (!shellOf(e.sender)) return false;
     if (!o || !o.on) { ghostOff(); return true; }
@@ -424,10 +439,11 @@ function reportShown(bw) {
   for (const ev of ['minimize', 'restore', 'hide', 'show']) bw.on(ev, send);
 }
 
-function attach(win) {
+// host: the id of the PC of the app's list this window is for (see setList), if any.
+function attach(win, { host = null } = {}) {
   setupIpc();
   const wc = win.webContents;
-  const state = { win, children: new Set() };
+  const state = { win, children: new Set(), host };
   shells.set(wc.id, state);
   win.on('closed', () => { shells.delete(wc.id); if (!shells.size) ghostGone(); }); // a window left behind would keep the app from quitting
   reportShown(win);
@@ -460,4 +476,4 @@ function attach(win) {
   return state;
 }
 
-module.exports = { attach, PRELOAD, _drop: { safeName, freePath, placeFiles, explorerFolder, stagedPath, moveInto, mayClick, NO_CLICK } };
+module.exports = { attach, setList, PRELOAD, _drop: { safeName, freePath, placeFiles, explorerFolder, stagedPath, moveInto, mayClick, NO_CLICK } };
