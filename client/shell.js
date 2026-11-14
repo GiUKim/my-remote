@@ -12,6 +12,16 @@ const { execFile } = require('child_process');
 const { safeName, freePath, stagedPath, sweep } = require('../host/files');
 
 const PRELOAD = path.join(__dirname, 'preload.js');
+// The app's icon for its windows (the taskbar, Alt+Tab, X11's window list): the installed app's shell has
+// it in resources/app, a source folder in app/. Without it Windows showed the exe's own icon (Electron's)
+// for windows of an app started without our shortcut, and X11 a generic one.
+const ICON = (() => {
+  const names = process.platform === 'win32' ? ['icon.ico', 'icon.png'] : ['icon.png'];
+  for (const dir of [path.join(process.resourcesPath || '', 'app'), path.join(__dirname, '..', 'app')]) {
+    for (const n of names) { const f = path.join(dir, n); if (fs.existsSync(f)) return f; }
+  }
+  return undefined;
+})();
 // Not 'clipboard-read': the page (sent by the host) never reads this PC's clipboard itself. Pasted text
 // and files reach it through the paste event, and copied text through shell:clipPoll, which hands over
 // only text that changed while a session is on, never what a password manager marked as private.
@@ -457,7 +467,7 @@ function attach(win, { host = null } = {}) {
     if (!blank(url)) return { action: 'deny' };
     const num = (k) => { const r = new RegExp('(?:^|,)\\s*' + k + '=(-?\\d+)').exec(features || ''); return r ? Number(r[1]) : null; };
     const left = num('left'), top = num('top');
-    const opts = { autoHideMenuBar: true, backgroundColor: '#000000', webPreferences: { preload: PRELOAD, backgroundThrottling: false } };
+    const opts = { autoHideMenuBar: true, backgroundColor: '#000000', icon: ICON, webPreferences: { preload: PRELOAD, backgroundThrottling: false } };
     if (left != null && top != null) {
       const d = screen.getDisplayNearestPoint({ x: left + 20, y: top + 20 });
       Object.assign(opts, { x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height, frame: false });
@@ -476,4 +486,4 @@ function attach(win, { host = null } = {}) {
   return state;
 }
 
-module.exports = { attach, setList, PRELOAD, _drop: { safeName, freePath, placeFiles, explorerFolder, stagedPath, moveInto, mayClick, NO_CLICK } };
+module.exports = { attach, setList, PRELOAD, ICON, _drop: { safeName, freePath, placeFiles, explorerFolder, stagedPath, moveInto, mayClick, NO_CLICK } };

@@ -71,7 +71,7 @@ function appUp(win) {
 function single() {
   app.whenReady().then(() => {
     const win = new BrowserWindow({
-      width: 1280, height: 800, title: 'My Remote' + (APP ? ` ${APP.version}` : ''), autoHideMenuBar: true, backgroundColor: '#14171c',
+      width: 1280, height: 800, title: 'My Remote' + (APP ? ` ${APP.version}` : ''), autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
       webPreferences: { preload: shell.PRELOAD, backgroundThrottling: false },
     });
     shell.attach(win);
@@ -115,7 +115,7 @@ function listMode() {
   function showHome() {
     if (home && !home.isDestroyed()) { if (home.isMinimized()) home.restore(); home.show(); home.focus(); return home; }
     home = new BrowserWindow({
-      width: 940, height: 660, minWidth: 520, minHeight: 420, show: false, title: 'My Remote', autoHideMenuBar: true, backgroundColor: '#14171c',
+      width: 940, height: 660, minWidth: 520, minHeight: 420, show: false, title: 'My Remote', autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
       webPreferences: { preload: path.join(__dirname, 'home-preload.js') },
     });
     home.setMenuBarVisibility(false);
@@ -139,7 +139,7 @@ function listMode() {
     const width = Math.min(1280, area.width), height = Math.min(800, area.height);
     const win = new BrowserWindow({
       width, height, x: area.x + Math.max(0, Math.round((area.width - width) / 2)) + n * 28, y: area.y + Math.max(0, Math.round((area.height - height) / 2)) + n * 28,
-      title: titleOf(h), autoHideMenuBar: true, backgroundColor: '#14171c',
+      title: titleOf(h), autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
       // Storage of its own per PC: what one host's page keeps here (its copy of the page, the layout
       // chosen for that PC) is not there for another host's page to read.
       webPreferences: { preload: shell.PRELOAD, backgroundThrottling: false, partition: 'persist:host-' + id },
