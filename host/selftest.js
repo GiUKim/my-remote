@@ -912,6 +912,48 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       check('the client says when the host screen is locked or behind a secure prompt, and when it is back', on && shown && off && gone && !/not (shown|cleared)/.test(secure),
         `lock ${on && shown ? 'shown' : 'not shown'}, ${off && gone ? 'cleared' : 'not cleared'}; ${secure}`);
     }
+    // A session that starts while the screen cannot be read (the PC locked; acted out by the native
+    // capturer, mc_test_elsewhere): it comes up all the same (before 0.5.1 it ended with "Could not start
+    // video source", so a locked PC could not be reached at all), the client is told why the picture
+    // waits, and the picture, and the sound fetched only then, follow once the screen can be read.
+    if (await hostWin.webContents.executeJavaScript('!!(session && session.native && api.nativeTestElsewhere(false))')) {
+      const hadSound = s.audio;
+      const audioIn = () => js(`(async () => { let n = 0; if (pc) (await pc.getStats()).forEach((r) => { if (r.type === 'inbound-rtp' && r.kind === 'audio') n += r.packetsReceived || 0; }); return n; })()`);
+      // No sound for the next session to take over, as when nobody was connected before the PC locked.
+      await hostWin.webContents.executeJavaScript('session.streams.forEach((st) => st.getAudioTracks().forEach((t) => t.stop())); api.nativeTestElsewhere(true); 1');
+      const before = s.connects;
+      hostWin.webContents.send('displays-changed');
+      let up = false, waits = false, h = {};
+      try {
+        [up, s] = await until((x) => x.connects > before && x.state === 'connected', 40);
+        if (up) [waits, s] = await until((x) => x.lock === 'secure', 8);
+        h = await hostWin.webContents.executeJavaScript('({ waiting: !!(session && session.native && session.native.some((n) => n.waiting)), soundLater: !!(session && session.soundLater) })');
+      } finally { await hostWin.webContents.executeJavaScript('api.nativeTestElsewhere(false); 1'); }
+      const f0 = s.frames, a0 = await audioIn();
+      let back;
+      [back, s] = await until((x) => x.lock === '' && x.frames > f0 + 5, 12);
+      let sound = 'sound not checked (no audio output device)';
+      if (hadSound) {
+        let a1 = a0;
+        for (let i = 0; i < 8 && a1 <= a0 + 20; i++) { await sleep(1000); a1 = await audioIn(); }
+        sound = !h.soundLater ? 'no sound: the offer had no place for it' : a1 > a0 + 20 ? 'the sound follows' : `no sound after the screen came back (${a0} -> ${a1} packets)`;
+      }
+      check('a session started while the screen cannot be read (PC locked) comes up, says so, and the picture and sound follow',
+        up && waits && h.waiting && back && !/^no sound/.test(sound),
+        `${up ? 'connected' : 'did not connect'}; ${waits ? 'the client was told the screen waits' : 'the client was not told'}; capturer ${h.waiting ? 'opened waiting' : 'not waiting'}; ${back ? 'picture back' : 'picture not back'}; ${sound}`);
+    } else info('session start on a locked PC not checked: Windows native capture is not in use');
+    // Installing or removing the lock screen support during a remote session is refused before anything
+    // runs elevated: Windows' consent prompt could not be answered from the client. A stand-in runs in
+    // place of the elevated winassist.exe here, so a broken refusal shows as a call, never as a real prompt.
+    if (require('./assist').supported) {
+      const A = require('./assist')._test, calls = [];
+      A.elevate = (verb) => { calls.push(verb); return 1223; };
+      let r = null;
+      try { r = await hostWin.webContents.executeJavaScript('Promise.all([api.assist.install(), api.assist.uninstall()]).then((all) => all.map((x) => x.why))'); }
+      finally { A.elevate = null; }
+      check('the lock screen support is never installed or removed during a remote session (Windows would ask at the host)',
+        Array.isArray(r) && r.every((w) => w === 'remote') && !calls.length, JSON.stringify({ why: r, elevated: calls }));
+    }
     // A phone (attachTouch, the phone keyboard): fingers on the picture made of synthetic touch pointer
     // events, traced (nothing is sent), and what the host makes of the characters a phone types.
     {

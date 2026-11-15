@@ -731,6 +731,9 @@ function createWindow() {
   // The installed app: this version counts as up once its page has loaded and stayed for a while (a
   // page that keeps crashing never gets there, and the shell goes back to the version before).
   if (APP && !ISOLATED) win.webContents.on('did-finish-load', () => setTimeout(() => { if (!win.isDestroyed() && !win.webContents.isCrashed()) APP.ok(); }, 8000));
+  // The host's first start on Windows: the lock screen support is offered at once (assist.offer).
+  // --offer-assist: in a local trial too (its throwaway profile has never been asked), to try the offer.
+  if (assist.supported && (!ISOLATED || (LOCALTEST && process.argv.includes('--offer-assist')))) win.webContents.once('did-finish-load', () => setTimeout(offerAssist, 1500));
   // Closing the window keeps the host running in the tray; quit from the tray menu.
   win.on('close', (e) => { if (!quitting && !ISOLATED) { e.preventDefault(); win.hide(); } });
   // The page goes away without its own teardown when it reloads or its process ends (see pageGone).
@@ -747,6 +750,24 @@ function createWindow() {
     clearTimeout(reloadTimer);
     reloadTimer = setTimeout(reloadCrashedPage, Math.min(60e3, 1000 * 2 ** (crashes.length - 1)));
   });
+}
+// Asked once per profile (the mark file); with yes Windows asks for an administrator's consent at once,
+// as Chrome Remote Desktop's installer does for its service. Never during a remote session.
+function offerAssist() {
+  if (!win || win.isDestroyed()) return;
+  const send = (m) => { if (win && !win.isDestroyed()) win.webContents.send('assist-changed', m); };
+  assist.offer({
+    mark: path.join(app.getPath('userData'), 'assist-offered.json'),
+    remote: () => sessionLive,
+    notify: send,
+    ask: async () => (await dialog.showMessageBox(win, {
+      type: 'question', title: 'My Remote Host', noLink: true, defaultId: 0, cancelId: 1,
+      message: '잠금 화면에서도 원격 조종을 켤까요? (권장)',
+      detail: '켜 두면 이 PC가 잠겨 있을 때도 다른 PC에서 잠금 화면을 보고 비밀번호를 입력해 잠금을 풀 수 있습니다. Chrome 원격 데스크톱과 같은 방식이고, 비밀번호는 그대로 필요합니다.\n\n' +
+        '"켜기"를 누르면 Windows가 관리자 승인(UAC)을 한 번 묻습니다. 나중에 이 창의 "잠금 화면에서도 원격 조종"에서 켜거나 끌 수 있습니다.',
+      buttons: ['켜기 (권장)', '나중에'],
+    })).response === 0,
+  }).then((r) => console.log('[assist] offered at the first start: ' + r), (e) => console.error('[assist] offer', e));
 }
 let crashes = [], reloadTimer = null;
 function reloadCrashedPage() {
@@ -925,8 +946,9 @@ else {
       }
     });
     ipcMain.handle('assist-status', () => assist.status());
-    ipcMain.handle('assist-install', () => assist.install());
-    ipcMain.handle('assist-uninstall', () => assist.uninstall());
+    // Never during a remote session: Windows' consent prompt cannot be answered from the client (assist.install).
+    ipcMain.handle('assist-install', () => assist.install({ remote: sessionLive }));
+    ipcMain.handle('assist-uninstall', () => assist.uninstall({ remote: sessionLive }));
     ipcMain.on('assist-sas', () => assist.sas());
     // Updates of the installed app (see updateInfo above). A required update restarts the host by
     // itself: not in the middle of a remote session (the shell waits for it to end, half an hour at most).

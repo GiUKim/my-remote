@@ -32,10 +32,11 @@ const BUNDLED = path.join(__dirname, 'bin', 'winassist.exe');
 const installedPath = () => path.join(process.env.ProgramFiles || 'C:\\Program Files', 'MyRemote', 'winassist.exe');
 const log = (s) => console.log('[assist] ' + s);
 const supported = process.platform === 'win32';
-// release/test-assist.js only: other pipe names, the session the control pipe's server must run in
-// ('own': the test's), whether the service runs, the first retry delay. A test's fake service runs in the
-// test's own session and is no service.
-const T = { control: CONTROL, data: DATA, controlSession: 0, serviceState: null, retryMs: 2500 };
+// release/test-assist.js and the self-test only: other pipe names, the session the control pipe's server
+// must run in ('own': the test's), whether the service runs, the first retry delay, and what runs in place
+// of the elevated winassist.exe (verb -> exit code), so that no test ever raises a real UAC prompt. A
+// test's fake service runs in the test's own session and is no service.
+const T = { control: CONTROL, data: DATA, controlSession: 0, serviceState: null, retryMs: 2500, elevate: null };
 
 // ---- Win32 through koffi -----------------------------------------------------------------
 let w = null;
@@ -159,6 +160,7 @@ class Pipe {
 
 // ---- installed, running, current ------------------------------------------------------------
 function serviceState() { // 'none' | 'stopped' | 'running' | 'other'
+  if (T.serviceState) return T.serviceState();
   const k = win();
   const scm = k.OpenSCManagerW(0, 0, 0x0001 /* SC_MANAGER_CONNECT */);
   if (!scm) return 'none';
@@ -185,7 +187,8 @@ function status() {
 let busy = null;
 function elevated(verb) {
   if (busy) return busy;
-  const ps = "$ErrorActionPreference='Stop'; try { $p = Start-Process -FilePath '" + BUNDLED.replace(/'/g, "''") +
+  if (T.elevate) { busy = Promise.resolve().then(() => T.elevate(verb)).finally(() => { busy = null; }); return busy; }
+  const ps ="$ErrorActionPreference='Stop'; try { $p = Start-Process -FilePath '" + BUNDLED.replace(/'/g, "''") +
     "' -ArgumentList '" + verb + "' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode } catch { exit 1223 }";
   busy = new Promise((done) => {
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(ps, 'utf16le').toString('base64')],
@@ -193,18 +196,46 @@ function elevated(verb) {
   }).finally(() => { busy = null; });
   return busy;
 }
-async function install() {
+// opts.remote: a remote session is on. Windows asks on this PC's secure desktop, where no input from the
+// client ever arrives (see the top): an unattended PC would sit on that prompt, its client seeing only a
+// notice, until someone at the PC answered it. So never then; the window says to do it at the PC.
+async function install(opts) {
+  if (opts && opts.remote) return { ok: false, why: 'remote', status: status() };
   if (!supported || !fs.existsSync(BUNDLED)) return { ok: false, why: 'missing', status: status() };
   const code = await elevated('install');
   log(`install: exit ${code}`);
   return { ok: code === 0, why: code === 1223 ? 'declined' : code ? 'failed' : '', status: status() };
 }
-async function uninstall() {
+async function uninstall(opts) {
+  if (opts && opts.remote) return { ok: false, why: 'remote', status: status() };
   if (!supported || !fs.existsSync(BUNDLED)) return { ok: false, why: 'missing', status: status() };
   stop();
   const code = await elevated('uninstall');
   log(`uninstall: exit ${code}`);
   return { ok: code === 0, why: code === 1223 ? 'declined' : code ? 'failed' : '', status: status() };
+}
+
+// Offered once, at the host's first start (main.js). Chrome Remote Desktop installs its service with the
+// program; this app comes as a folder to unpack, so its first start is when the PC is set up: the host
+// asks whether to set up the lock screen support too, and on yes Windows asks for an administrator's
+// consent at once. Answered either way, it is not asked again (`mark`, a file in the profile); the host
+// window's card does it later. Not when the service is there already, nor during a remote session.
+//   ask(): -> true to install;  remote(): a remote session is on;  notify({ busy } | { result }): the window
+// -> 'asked' | 'installed' | 'declined' | 'failed' | 'later' | 'remote' | why it was not asked
+async function offer({ mark, ask, remote, notify }) {
+  if (!supported) return 'unsupported';
+  if (fs.existsSync(mark)) return 'asked before';
+  const st = status();
+  if (!st.bundled) return 'not bundled';
+  if (st.state !== 'none') return 'installed already';
+  if (remote()) return 'remote session';
+  const yes = !!(await ask());
+  try { fs.writeFileSync(mark, JSON.stringify({ at: new Date().toISOString(), answer: yes ? 'yes' : 'later' })); } catch (e) { log('offer: ' + e.message); }
+  if (!yes) return 'later';
+  notify({ busy: true });
+  const r = await install({ remote: remote() });
+  notify({ result: r });
+  return r.ok ? 'installed' : r.why;
 }
 
 // ---- during a session --------------------------------------------------------------------------
@@ -239,7 +270,7 @@ function again(c, why) {
 async function connect(c) {
   if (conn !== c) return;
   let state = 'none';
-  try { state = (T.serviceState || serviceState)(); } catch {}
+  try { state = serviceState(); } catch {}
   if (state !== 'running') return; // not installed (or stopped): the host works as before, the client is told about locks only
   if (ownSession < 0) { const id = [0]; ownSession = win().ProcessIdToSessionId(process.pid, id) ? id[0] : -2; }
   const control = Pipe.open(T.control);
@@ -344,4 +375,4 @@ function sas() {
 }
 const state = () => (conn ? { ...conn.state } : { secure: false, locked: false, input: false });
 
-module.exports = { supported, status, install, uninstall, start, stop, sas, state, installedPath, BUNDLED, PROTOCOL, _test: T };
+module.exports = { supported, status, install, uninstall, offer, start, stop, sas, state, installedPath, BUNDLED, PROTOCOL, _test: T };

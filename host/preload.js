@@ -50,9 +50,12 @@ contextBridge.exposeInMainWorld('hostApi', {
     uninstall: () => ipcRenderer.invoke('assist-uninstall'),
     sas: () => ipcRenderer.send('assist-sas'),
     onMessage: (fn) => ipcRenderer.on('assist', (_e, m) => fn(m)),
+    onChanged: (fn) => ipcRenderer.on('assist-changed', (_e, m) => fn(m)), // the offer at the first start: { busy } | { result }
   },
   nativeCapture: () => !!capturer(),
   nativeOpen: () => { const c = capturer(); return c && c.openCount ? c.openCount() : -1; }, // X11: capturers not let go yet (the self-test)
+  // The self-test: new captures act as while the lock screen has the screen (Windows' DLL only; false elsewhere).
+  nativeTestElsewhere: (on) => { const c = capturer(); if (!c || !c.testElsewhere) return false; c.testElsewhere(on ? 1 : 0); return true; },
   others: () => ipcRenderer.invoke('others'),
 });
 
@@ -91,6 +94,7 @@ function capturer() {
         next: dll.func('int mc_next(int handle, uint8_t *dst, int dstLen, int timeoutMs, double *info)'),
         close: dll.func('void mc_close(int handle)'),
         error: dll.func('const char *mc_error()'),
+        testElsewhere: dll.func('void mc_test_elsewhere(int on)'), // the self-test: act as on the lock screen
       };
       // A page that was here before in this process may have left capturers open (a monitor can only
       // be captured once per process): close whatever is left.
@@ -166,9 +170,10 @@ window.addEventListener('message', (e) => {
       // The DLL finds the monitor from a point inside it; X11 is told its rectangle on the root window.
       const handle = !c ? -1 : c.openRect ? (m.rect ? c.openRect(m.rect) : -1) : c.open(m.x, m.y);
       if (handle < 0) return port.postMessage({ t: 'opened', i: m.i, ok: false, error: c ? c.error() : 'no native capturer' });
-      c.size(handle, w, h);
+      // waiting: the lock screen or a permission prompt has the screen; the loop reports 'paused' until it can read it.
+      const waiting = c.size(handle, w, h) === 2;
       runs.set(m.i, captureLoop(port, m.i, handle, w[0], h[0], m.gap || 0));
-      port.postMessage({ t: 'opened', i: m.i, ok: true, width: w[0], height: h[0] });
+      port.postMessage({ t: 'opened', i: m.i, ok: true, width: w[0], height: h[0], waiting });
     } else if (m.t === 'show') {
       // Sent whenever the encoding was set (the connection is up, the monitor came on screen, its
       // size changed): the last image goes again with a full series of repeats. The encoder drops

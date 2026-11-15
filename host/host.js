@@ -116,6 +116,7 @@ function nativeChannel() {
     if (m.t === 'frame') {
       const n = session && session.native && session.native[m.i];
       if (n) n.writer.write(m.frame).catch(() => {}); else m.frame.close();
+      if (n && session.soundLater) soundSoon(session); // started on the lock screen: the screen is readable now
     } else if (m.t === 'opened') {
       const done = nativeOpening.get(m.i);
       if (done) { nativeOpening.delete(m.i); done(m); }
@@ -169,7 +170,8 @@ async function openNativeLoops(s, sources) {
       return null;
     }
     const gen = new MediaStreamTrackGenerator({ kind: 'video' });
-    list.push({ gen, writer: gen.writable.getWriter() });
+    // waiting: the lock screen or a permission prompt has the screen now; the loop says 'paused' until it can read it.
+    list.push({ gen, writer: gen.writable.getWriter(), waiting: !!r.waiting });
     // From the first loop on, so that a teardown closes them and their frames and failures count as
     // this session's.
     s.native = list;
@@ -324,6 +326,29 @@ function keepSpareAudio(track) {
   const k = (spareAudio = { track, timer: setTimeout(() => { if (spareAudio === k) { spareAudio = null; track.stop(); } }, SPARE_AUDIO_MS) });
 }
 window.addEventListener('beforeunload', () => { const t = takeSpareAudio(); if (t) t.stop(); });
+// A session that started while the PC was locked (or behind a permission prompt) could not start the
+// engine's capture, which brings the sound: its offer has a sound transceiver without a track
+// (s.soundLater, see startSession), and once a capture loop delivers a picture again the sound is
+// fetched and put on it. Once per session: every start of that capture costs the main process handles.
+function soundSoon(s) {
+  if (!s || !s.soundLater || s.soundTimer) return;
+  s.soundTimer = setTimeout(() => soundNow(s), 1000); // the desktop settles first
+}
+async function soundNow(s) {
+  if (session !== s || !s.soundLater) return;
+  const sender = s.soundLater;
+  s.soundLater = null;
+  let stream;
+  try { stream = await capture(s.sources[0], true, false); }
+  catch (e) { log('시스템 소리 캡처 불가 — 소리 없이 진행: ' + e.message); return; }
+  stream.getVideoTracks().forEach((t) => t.stop());
+  const a = stream.getAudioTracks()[0];
+  if (!a) return;
+  if (session !== s) return void keepSpareAudio(a);
+  s.streams.push(new MediaStream([a])); // the teardown keeps it for the next session, as any session's sound
+  try { await sender.replaceTrack(a); log('잠금이 풀려 시스템 소리도 보냅니다'); }
+  catch (e) { log('시스템 소리를 보낼 수 없습니다: ' + e.message); }
+}
 function capture(src, withAudio, refine) {
   const video = { mandatory: {
     chromeMediaSource: 'desktop', chromeMediaSourceId: src.id,
@@ -610,6 +635,10 @@ async function startSession(hello) {
   Object.assign(s, pickCodec(hello));
   const refine = s.codec === 'AV1' ? (cfg.refine === 'always' ? 'always' : cfg.refine !== false) : false;
 
+  // The lock screen or a permission prompt has the screen: the engine's capture, which brings the sound,
+  // cannot start now either (and each start costs the main process handles). The sound follows once a
+  // capture loop reads the screen again (soundSoon).
+  const unreadable = !!(s.native && s.native.some((n) => n.waiting));
   let audio = false;
   for (let i = 0; i < sources.length; i++) {
     let stream;
@@ -617,7 +646,7 @@ async function startSession(hello) {
       let kept = takeSpareAudio(); // the sound of the session before (see keepSpareAudio)
       if (kept && !s.native) { kept.stop(); kept = null; } // the engine's capture of the picture brings its own
       if (kept) { stream = new MediaStream([kept]); audio = true; audioReuses++; }
-      else {
+      else if (!unreadable) {
         try { stream = await capture(sources[i], true, refine); audio = true; }
         catch (e) { log('시스템 소리 캡처 불가 — 소리 없이 진행: ' + e.message); }
       }
@@ -638,6 +667,12 @@ async function startSession(hello) {
     // once more than it needs lip sync.
     const a = stream.getAudioTracks()[0];
     if (a) pc.addTrack(a, new MediaStream([a]));
+  }
+  // A sound transceiver without a track goes into the offer, so that no renegotiation is needed later.
+  if (cfg.audio && unreadable && !audio) {
+    s.soundLater = pc.addTransceiver('audio', { direction: 'sendonly', streams: [new MediaStream()] }).sender;
+    audio = true;
+    log('잠금 화면 상태에서 접속: 화면과 소리는 잠금이 풀리면 이어서 보냅니다');
   }
   preferCodec(pc, s.codec);
 
@@ -839,7 +874,20 @@ function watchUpdates() {
 
 // The lock screen support (Windows; host/assist.js): installed once with administrator rights, from this
 // window. Windows asks the person at this PC (UAC), which no one can answer from the client.
-const ASSIST_WHY = { declined: 'Windows 확인 창에서 취소했습니다', failed: '설치 프로그램이 실패했습니다', missing: '이 버전에 설치 프로그램이 없습니다' };
+const ASSIST_WHY = {
+  declined: 'Windows 확인 창에서 취소했습니다', failed: '설치 프로그램이 실패했습니다', missing: '이 버전에 설치 프로그램이 없습니다',
+  remote: '원격 접속 중에는 할 수 없습니다. Windows가 이 PC 화면에 관리자 승인 창을 띄우는데, 그 창은 원격에서 누를 수 없습니다. 이 PC 앞에서 해 주세요',
+};
+function assistDone(what, r) {
+  if (r.ok) log(what === 'install' ? '잠금 화면 지원을 설치했습니다' : '잠금 화면 지원을 제거했습니다');
+  else log(`잠금 화면 지원 ${what === 'install' ? '설치' : '제거'}: ${ASSIST_WHY[r.why] || r.why}`);
+  showAssist(r.status);
+}
+// The offer at the host's first start (main.js): the card follows it.
+if (api.assist && api.assist.onChanged) api.assist.onChanged((m) => {
+  if (m && m.busy) api.assist.status().then((st) => showAssist({ ...st, busy: true }), () => {});
+  else if (m && m.result) assistDone('install', m.result);
+});
 async function showAssist(st) {
   if (!api.assist) return;
   st = st || await api.assist.status().catch(() => null);
@@ -864,9 +912,7 @@ async function showAssist(st) {
   const act = async (what) => {
     showAssist({ ...st, busy: true });
     const r = await (what === 'install' ? api.assist.install() : api.assist.uninstall()).catch(() => ({ ok: false, why: 'failed' }));
-    if (r.ok) log(what === 'install' ? '잠금 화면 지원을 설치했습니다' : '잠금 화면 지원을 제거했습니다');
-    else log(`잠금 화면 지원 ${what === 'install' ? '설치' : '제거'}: ${ASSIST_WHY[r.why] || r.why}`);
-    showAssist(r.status);
+    assistDone(what, r);
   };
   $('assistGo').onclick = () => act('install');
   $('assistOff').onclick = () => act('uninstall');

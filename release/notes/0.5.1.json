@@ -1,0 +1,12 @@
+{
+  "ko": [
+    "이미 잠겨 있는 Windows 호스트에도 접속됩니다: 전에는 잠긴 PC에 접속하면 화면 캡처를 시작하지 못해 접속이 끊겼습니다. 이제 잠금 화면이 보이고 비밀번호를 입력해 풀면 바탕화면과 소리가 이어집니다",
+    "호스트를 처음 시작할 때 \"잠금 화면에서도 원격 조종\"을 켤지 묻습니다. 켜기를 누르면 Windows 관리자 승인 한 번으로 설치가 끝납니다(Chrome 원격 데스크톱처럼)",
+    "원격 접속 중에는 잠금 화면 지원을 설치하거나 지울 수 없습니다: Windows의 승인 창은 그 PC 앞에서만 누를 수 있어, 원격에서 누르면 PC가 그 창에 묶였습니다"
+  ],
+  "en": [
+    "A Windows host that is already locked can be reached: connecting to a locked PC used to end the session (the screen capture could not start). Now the lock screen shows, and after the password the desktop and the sound follow",
+    "The host's first start asks whether to turn on \"잠금 화면에서도 원격 조종\": one Windows administrator prompt and it is set up (as Chrome Remote Desktop does)",
+    "The lock screen support cannot be installed or removed during a remote session: Windows' prompt can only be answered at that PC, and a click from the client left the PC waiting on it"
+  ]
+}

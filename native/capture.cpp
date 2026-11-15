@@ -70,12 +70,14 @@ static void fail(const char* what, HRESULT hr) { snprintf(g_error, sizeof g_erro
 template <class T> static void drop(T*& p) { if (p) { p->Release(); p = nullptr; } }
 // The lock screen, a permission prompt (UAC) or another user's session has the screen.
 static bool elsewhere(HRESULT hr) { return hr == E_ACCESSDENIED || hr == DXGI_ERROR_SESSION_DISCONNECTED; }
+// For the self-test only (mc_test_elsewhere): every new duplication fails as on the lock screen.
+static volatile LONG g_testElsewhere = 0;
 
 // (Re)starts the duplication of the capturer's output. Fails e.g. while the lock screen or a
 // permission prompt has the screen.
 static HRESULT duplicate(Capturer& c) {
   drop(c.dup);
-  HRESULT hr = c.output->DuplicateOutput(c.device, &c.dup);
+  HRESULT hr = g_testElsewhere ? E_ACCESSDENIED : c.output->DuplicateOutput(c.device, &c.dup);
   if (FAILED(hr)) { fail(elsewhere(hr) ? "another desktop has the screen (lock screen, permission prompt, other session)" : "DuplicateOutput", hr); return hr; }
   DXGI_OUTDUPL_DESC d; c.dup->GetDesc(&d);
   if (d.Rotation != DXGI_MODE_ROTATION_IDENTITY && d.Rotation != DXGI_MODE_ROTATION_UNSPECIFIED) { fail("the monitor is rotated", E_NOTIMPL); drop(c.dup); return E_NOTIMPL; }
@@ -164,7 +166,11 @@ static double changedShare(Capturer& c, const DXGI_OUTDUPL_FRAME_INFO& fi) {
 }
 
 // Starts capturing the monitor that contains the desktop point (px,py), in physical pixels.
-// Returns a handle (0..7), or -1 (see mc_error).
+// Returns a handle (0..7), or -1 (see mc_error). While another desktop has the screen (the lock
+// screen, a permission prompt) the monitor is opened all the same, at its size on the desktop, and
+// mc_next returns 2 until the screen can be read, as when that happens during a capture. Before, a host
+// reached while its PC was locked could not start a session at all (the engine's capturer cannot read
+// that screen either), and the assist service's pictures of the lock screen need the session's track.
 EXPORT int mc_open(int px, int py) {
   initClock();
   AcquireSRWLockExclusive(&g_table);
@@ -176,16 +182,25 @@ EXPORT int mc_open(int px, int py) {
   InitializeSRWLock(&c.lock);
   c.slot = handle;
   c.px = px; c.py = py;
-  if (FAILED(start(c))) { closeAll(c); handle = -1; } else c.used = true;
+  const HRESULT hr = start(c);
+  DXGI_OUTPUT_DESC d;
+  if (SUCCEEDED(hr)) c.used = true;
+  else if (elsewhere(hr) && c.output && c.device && SUCCEEDED(c.output->GetDesc(&d))) {
+    c.width = (int)(d.DesktopCoordinates.right - d.DesktopCoordinates.left);
+    c.height = (int)(d.DesktopCoordinates.bottom - d.DesktopCoordinates.top);
+    setback(c, hr); // the first try is at once; time on another desktop never counts towards GIVE_UP_MS
+    c.used = true;
+  } else { closeAll(c); handle = -1; }
   ReleaseSRWLockExclusive(&g_table);
   return handle;
 }
 
-// Size of the monitor's image in pixels.
+// Size of the monitor's image in pixels. Returns 0, or 2 when the screen cannot be read yet (another
+// desktop had it when the capturer was opened, see mc_open), -1 for a handle that is not open.
 EXPORT int mc_size(int handle, int* width, int* height) {
   if (handle < 0 || handle >= 8 || !g_caps[handle].used) return -1;
   *width = g_caps[handle].width; *height = g_caps[handle].height;
-  return 0;
+  return g_caps[handle].dup ? 0 : 2;
 }
 
 // Waits up to timeoutMs for the next desktop image and copies it into dst (width*height*4 bytes).
@@ -294,3 +309,7 @@ EXPORT void mc_test_lose(int handle, int what) {
   }
   ReleaseSRWLockExclusive(&c.lock);
 }
+// For the self-test only: while on, every new duplication fails as while the lock screen has the screen
+// (a capturer opened meanwhile waits, see mc_open), so that a session started on a locked PC can be
+// tested without locking it. Capturers that are running go on until their duplication is lost.
+EXPORT void mc_test_elsewhere(int on) { InterlockedExchange(&g_testElsewhere, on ? 1 : 0); }

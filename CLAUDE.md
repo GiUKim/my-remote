@@ -149,7 +149,24 @@ the client app instead).
     screen and session switches do not count) give -4, which, like a monitor in HDR mode or rotated
     (-2), renegotiates with the engine's capturer (`nativeOff`, until the host page restarts); -3 (a
     size change) renegotiates and stays native. `mc_test_lose(handle, 1|2|3)` simulates the losses.
-    Recovery from a real lock screen, UAC prompt or driver restart has not been tried.
+    Recovery from a real lock screen was seen in the test VM (see "Lock screen / UAC"); from a real UAC
+    prompt or driver restart it has not been tried.
+  - **A PC that is already locked when the client connects** (reported from the person's home PC,
+    2026-11-15, with 0.5.0 and the assist service installed: "여전히 접속되지 않습니다"): `mc_open` failed
+    with E_ACCESSDENIED, the host fell back to the engine's capturer, which cannot read the lock screen
+    either ("Could not start video source"), and the session ended before the assist service was ever
+    asked. Now `mc_open` opens such a monitor all the same, at its size on the desktop (DXGI's
+    `DesktopCoordinates`: physical pixels, the page's process being per-monitor DPI aware, measured),
+    with no duplication: `mc_size` returns 2 for it (`waiting` in the preload's `opened`), `mc_next` 2
+    until the screen can be read, as after a desktop switch. The session comes up, the loops say
+    `paused`, the assist service's pictures fill the primary monitor's track, and the native capture
+    takes over after the unlock. The engine's capture, which brings the sound, is not even tried then:
+    the offer gets a sound transceiver without a track (`s.soundLater`) and the first native frame after
+    the unlock fetches the sound and `replaceTrack`s it (`soundSoon`, once per session). `mc_test_elsewhere(1)`
+    makes every new duplication fail as on the lock screen: the self-test starts a session that way.
+    Verified in the test VM: locked first, then the real client page connected, saw the lock screen,
+    typed the password, got the desktop. The sound part only on this PC through the self-test (the VM
+    has no sound device).
   - `desktopCapturer.getSources` sets DXGI duplication up twice on the main thread (the one that
     injects input) and starts a thread; `getSources()` in `main.js` keeps its list until the displays
     change (or a session start failed), so a reconnect does not pay for it again.
@@ -524,6 +541,19 @@ the client app instead).
     it to `%ProgramFiles%\MyRemote`, admin-only, registers the LocalSystem service `MyRemoteAssist` and
     starts it; run again it updates in place; `uninstall` removes it all). The card says "업데이트 필요"
     when the installed program is not the one this app brings.
+  - **Offered at the host's first start** (the user's wish, 2026-11-15: "설치 시 크롬원격처럼 한번에"; Chrome
+    Remote Desktop's installer sets its service up with the program): `assist.offer` asks once per profile
+    (`assist-offered.json` in the host's userData, written with the answer) with a dialog whose default is
+    "켜기 (권장)", and on yes runs the elevated install at once (one UAC prompt). Not asked when the
+    service is there, in the isolated modes, or during a remote session. It lives in the bundle, not in
+    the shell's first-start dialog (`app/boot.js`), so installed apps get it by update and the shell stays
+    as it is; a host that ran before this version is asked once at its next start.
+  - **Never installed or removed during a remote session** (`assist.install({ remote })`, why `remote`):
+    Windows shows the consent prompt on the secure desktop, where nothing from the client arrives (the
+    helper never types into UAC), so a click from the client on the card's button would leave an
+    unattended PC waiting on that prompt, its client seeing only the notice. The card says to do it at
+    the PC. `T.elevate` stands in for the elevated winassist.exe in `release/test-assist.js` and the
+    self-test, so no test ever raises a real prompt.
   - The service (session 0) only keeps one helper alive as LocalSystem in the console session
     (`CreateProcessAsUser` with its own token moved to that session). The helper follows the input
     desktop, sends `S` (secure desktop? session locked? input accepted?) and, while a secure desktop has
@@ -552,8 +582,9 @@ the client app instead).
     the VM), the service updates in place; and end to end, the real client page on the Windows PC against
     the real host in the VM (`--localtest --no-client`, relay tunnelled): lock -> the client shows the lock
     screen live with the bar -> click, password typed with trusted key events, Enter -> unlocked.
-    `release/test-assist.js` (18 checks, fake service and helper) covers the protocol, the session checks,
-    input routing and encoding, pictures in pieces, reconnecting. Not verified: a real PC's lock screen
+    `release/test-assist.js` (20 checks, fake service and helper) covers the protocol, the session checks,
+    input routing and encoding, pictures in pieces, reconnecting, the refusal during a remote session and
+    the first-start offer. Not verified: the offer's dialog on a real first start, a real PC's lock screen
     with several monitors (only the primary is sent), Ctrl+Alt+Del with `SoftwareSASGeneration` (not set
     by the installer), a UAC prompt through the service, the logon screen after a reboot (out of scope:
     the host is a per-user program), Windows 11.
@@ -861,7 +892,7 @@ Run from `host/` with Electron's env var cleared.
 | `node release/ci-checks.js [--staged]` | The static checks CI and the pre-commit hook run: syntax of every JS file and of the built pages' scripts, JSON, `my-remote-client.html` up to date, ASCII names, native records, the leak scan. Seconds, no Electron |
 | `node release/ci-native.js` | Rebuilds the committed binaries from `native/` (needs `x86_64-w64-mingw32-g++`: CI's Ubuntu 22.04, or the build server) and compares them byte for byte with `host/bin` |
 | `node release/bench-gate.js --profile=dev\|ci` | Runs the bench and fails when a figure leaves `release/bench-thresholds.json` (dev: a development PC; ci: CI machines). About a minute; shows the bench's test picture meanwhile |
-| `node release/test-assist.js` | The host's side of the Windows assist service (`host/assist.js`) against a fake service and helper on test pipes: protocol and version, the pipe-server session checks, input routing per state and its encoding, pictures in pieces, Ctrl+Alt+Del, reconnecting. Windows only (skips elsewhere); no input reaches the PC (the sink is recorded, never installed). A few seconds |
+| `node release/test-assist.js` | The host's side of the Windows assist service (`host/assist.js`) against a fake service and helper on test pipes: protocol and version, the pipe-server session checks, input routing per state and its encoding, pictures in pieces, Ctrl+Alt+Del, reconnecting, installing refused during a remote session, the first-start offer. Windows only (skips elsewhere); no input reaches the PC (the sink is recorded, never installed) and nothing runs elevated (`T.elevate`). A few seconds |
 | `host\bin\winassist.exe install`, `uninstall`, `status`, `grab <file.bmp>` | The assist service itself: install/uninstall need an elevated prompt (the host window's card does this through UAC). `grab` writes the current input desktop to a BMP (a secure one only when run as LocalSystem) |
 | `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept. A second |
 | `electron client --loader=<file> --list [--home-shot=<file.png> --home-size=940x480 --home-js=<code>]` | The client app's list on a profile of its own next to `<file>` (any loader file), never the person's. PCs come from `home-import.json` next to it (`[{ name, key, open, loader, seen, lastAt }]`, made-up keys; removed when read). With `--home-shot` no window is shown: a picture of the list is written and the app ends (how `docs/img/home.png` was made) |

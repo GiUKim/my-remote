@@ -1,12 +1,17 @@
 // The host's side of the Windows assist service (host/assist.js) against a fake service and helper in
 // this process: the pipes, the protocol and its version, the check of which session serves a pipe, where
-// input goes in each state and how it is encoded, pictures put together from pieces, Ctrl+Alt+Del, and
-// connecting again after the helper went away. Plain Node, Windows only (named pipes, session ids).
-// Nothing is installed, and no input can reach this PC: input.setSink is replaced by a recorder before
-// anything starts, so the platform layer never sees the sink.
+// input goes in each state and how it is encoded, pictures put together from pieces, Ctrl+Alt+Del,
+// connecting again after the helper went away, and installing: never during a remote session, and the
+// offer at the host's first start. Plain Node, Windows only (named pipes, session ids).
+// Nothing is installed (a stand-in runs instead of the elevated winassist.exe), and no input can reach
+// this PC: input.setSink is replaced by a recorder before anything starts, so the platform layer never
+// sees the sink.
 //   node release/test-assist.js
 'use strict';
 if (process.platform !== 'win32') { console.log('SKIP  test-assist runs on Windows only'); process.exit(0); }
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const net = require('net');
 const input = require('../host/input');
 const assist = require('../host/assist');
@@ -140,8 +145,39 @@ const frames = () => toPage.filter((m) => m.t === 'frame');
   assist.stop();
   ok('stopping closes the connection to the helper', await until(() => helperEnded, 2000) && sink === null);
 
-  // 11. the service manager is read (this PC's state is whatever it is: only that it answers)
+  // 11. installing and removing: never during a remote session (Windows' consent prompt cannot be answered
+  // from the client); the offer at the host's first start asks once, and only where the service is not
+  // there yet. Nothing runs elevated here: T.elevate stands in for winassist.exe.
+  {
+    const calls = [];
+    T.elevate = (verb) => { calls.push(verb); return 0; };
+    const mark = path.join(os.tmpdir(), tag + '-offered.json');
+    fs.rmSync(mark, { force: true });
+    const r1 = await assist.install({ remote: true }), r2 = await assist.uninstall({ remote: true });
+    ok('installing or removing is refused during a remote session, before anything runs elevated', r1.why === 'remote' && r2.why === 'remote' && calls.length === 0, JSON.stringify(calls));
+    const asked = [], notes = [];
+    const offer = (answer, remote) => assist.offer({ mark, remote: () => !!remote, ask: async () => { asked.push(answer); return answer; }, notify: (m) => notes.push(m.busy ? 'busy' : m.result && m.result.ok ? 'done' : 'not done') });
+    T.serviceState = () => 'none';
+    const a = await offer(false); // "later"
+    const b = await offer(true); // asked before: not again
+    fs.rmSync(mark, { force: true });
+    const c = await offer(true, true); // a remote session is on: not asked
+    const d = await offer(true); // yes: installed at once
+    fs.rmSync(mark, { force: true });
+    T.serviceState = () => 'running';
+    const e = await offer(true); // the service is there already
+    ok('the first start offers the lock screen support once and installs it on yes; not during a remote session, not when it is there',
+      a === 'later' && b === 'asked before' && c === 'remote session' && d === 'installed' && e === 'installed already' && asked.join() === 'false,true' && calls.join() === 'install' && notes.join() === 'busy,done',
+      JSON.stringify({ a, b, c, d, e, asked, calls, notes }));
+    fs.rmSync(mark, { force: true });
+    T.elevate = null;
+  }
+
+  // 12. the service manager is read (this PC's state is whatever it is: only that it answers)
+  const fake = T.serviceState;
+  T.serviceState = null;
   const st = assist.status();
+  T.serviceState = fake;
   ok('status answers from the service manager', st.supported === true && typeof st.state === 'string' && st.bundled === true, JSON.stringify(st));
 
   controlServer.close(); dataServer.close();
