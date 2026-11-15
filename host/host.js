@@ -841,6 +841,7 @@ let updateLater = '', updateTold = false; // the version the person put off (unt
 function showUpdate(u) {
   if (!u) return;
   $('ver').textContent = 'v' + u.version + (u.installed ? '' : ' · 소스 폴더에서 실행 중');
+  document.title = 'My Remote Host v' + u.version; // the window's title too
   // "업데이트 확인": the installed app with a feed (from a source folder updates come by git).
   $('updCheck').style.display = u.installed && u.state && u.state !== 'off' && u.state !== 'none' ? '' : 'none';
   $('updCheck').disabled = ['checking', 'downloading', 'ready'].includes(u.state);
@@ -876,7 +877,7 @@ async function checkUpdate() {
   $('updCheck').disabled = true;
   $('updMsg').textContent = '확인 중…';
   let u = null;
-  try { u = await api.update.check(); } catch {}
+  try { u = await api.update.check(true); } catch {} // an update found is asked about in a dialog of main's
   updateChecked(u);
 }
 function updateChecked(u) {

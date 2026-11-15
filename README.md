@@ -17,6 +17,29 @@
   <sub>⊞ Windows 10 · 11 (64비트) &nbsp;|&nbsp; 🐧 Linux X11 세션 (Ubuntu 22.04 · 24.04) &nbsp;|&nbsp; 🍎 macOS용은 아직 없습니다 &nbsp;|&nbsp; <a href="https://github.com/GiUKim/my-remote/releases">모든 버전</a></sub>
 </p>
 
+### 🐧 Ubuntu는 터미널로도 설치할 수 있습니다
+
+위 **Linux용 내려받기**와 같은 파일(데스크톱 앱)을 받아 `~/MyRemote`에 풉니다. 블록 오른쪽 위의 복사 단추로 복사해 터미널에 붙여 넣으세요.
+
+```bash
+cd ~ && wget -qO- https://github.com/GiUKim/my-remote/releases/latest/download/MyRemote-Linux-x64.tar.gz | tar -xz
+```
+
+Ubuntu 24.04(23.10 이후)만, 한 번: 브라우저 엔진의 샌드박스 도우미를 켭니다(관리자 비밀번호를 묻습니다).
+
+```bash
+sudo chown root:root ~/MyRemote/chrome-sandbox && sudo chmod 4755 ~/MyRemote/chrome-sandbox
+```
+
+앱 메뉴에 `My Remote Host`·`My Remote Client`를 만들고 시작합니다.
+
+```bash
+~/MyRemote/my-remote.sh --shortcuts
+~/MyRemote/my-remote.sh --host      # 호스트(조종받을 PC). 클라이언트(내가 앉은 PC)는 --client
+```
+
+<sub>X11 데스크톱 세션이 필요합니다(Wayland면 로그인 화면 오른쪽 아래 톱니바퀴에서 "Ubuntu on Xorg"). SSH 터미널에서 실행하면 그 PC에 로그인되어 있는 데스크톱에 뜨고, 접속 키는 `~/MyRemote/my-remote.sh --show-key`로 터미널에서 봅니다. 화면 앞에 없는 PC(SSH로만 관리하는 PC)는 [Linux](#linux)를 보세요.</sub>
+
 ## 🚀 3단계로 시작
 
 <p align="center">
@@ -141,7 +164,7 @@
 ## 🔄 업데이트
 
 - 🔔 **일반 업데이트** — 새 버전을 알려 주고, `지금 업데이트`를 눌러야 설치합니다.
-- 🔍 **바로 확인** — 호스트 창 제목 옆과 클라이언트 앱 PC 목록 아래쪽의 `업데이트 확인`을 누르면 그 자리에서 확인합니다. 누르지 않아도 시작 20초 뒤와 6시간마다 확인합니다.
+- 🔍 **바로 확인** — 두 앱 모두 이름 옆에 지금 버전과 `업데이트 확인`이 있습니다(호스트 창 맨 위, 클라이언트 앱 PC 목록 맨 위). 누르면 바로 확인하고, 새 버전이 있으면 지금 업데이트할지 묻습니다. 누르지 않아도 시작 20초 뒤와 6시간마다 확인합니다.
 - 🚨 **중요 업데이트** — 심각한 문제를 고친 버전은 묻지 않고 설치합니다. 호스트는 원격 접속이 없을 때 다시 시작합니다.
 - ↩️ **되돌리기** — 새 버전이 시작되지 않으면 스스로 이전 버전으로 돌아갑니다.
 

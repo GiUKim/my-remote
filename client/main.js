@@ -56,8 +56,8 @@ function watchUpdates(win) {
       if (r.response === 0 && APP.downloads) openWith.openExternal(APP.downloads).catch(() => {});
       return;
     }
-    const r = await dialog.showMessageBox(parent, { type: 'info', noLink: true, buttons: ['지금 업데이트', '나중에'], defaultId: 0, cancelId: 1,
-      message: `새 버전 ${a.version}이 있습니다`, detail: `${notes(a)}\n\n업데이트하면 앱이 다시 시작됩니다. 원격 접속 중이면 다시 연결해야 합니다. (현재 v${APP.version})`.trim() });
+    const r = await dialog.showMessageBox(parent, { type: 'question', noLink: true, buttons: ['지금 업데이트', '나중에'], defaultId: 0, cancelId: 1,
+      message: `새 버전 ${a.version}이 있습니다. 지금 업데이트할까요?`, detail: `${notes(a)}\n\n업데이트하면 앱이 다시 시작됩니다. 원격 접속 중이면 다시 연결해야 합니다. (현재 v${APP.version})`.trim() });
     if (r.response === 0) u.install().catch((e) => dialog.showErrorBox('My Remote', '업데이트하지 못했습니다: ' + e.message));
   };
   u.onChange((s) => { if (s.state === 'available') offerUpdate(s.available, false); });

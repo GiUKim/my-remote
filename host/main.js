@@ -751,6 +751,31 @@ function createWindow() {
     reloadTimer = setTimeout(reloadCrashedPage, Math.min(60e3, 1000 * 2 ** (crashes.length - 1)));
   });
 }
+// "업데이트 확인" found an ordinary update: "지금 업데이트할까요?" (the window's card offers the same, for
+// whoever answers later). A required one installs by itself; one that needs a new package opens the
+// downloads page on yes.
+async function installUpdate() {
+  try { if (APP && APP.update) { quitting = true; await APP.update.install(); return true; } } catch (e) { quitting = false; console.error('[host] update:', e.message); }
+  return false;
+}
+function downloadsPage() { if (APP && APP.downloads) shell.openExternal(APP.downloads).catch(() => {}); return true; }
+let askingUpdate = false;
+async function askUpdate() {
+  const s = APP.update.status(), a = s.available;
+  if (askingUpdate || !a || s.state !== 'available' || a.required || !win || win.isDestroyed()) return;
+  askingUpdate = true;
+  try {
+    const pack = a.kind === 'package', notes = ((a.notes && a.notes.ko) || []).map((x) => '· ' + x).join('\n');
+    const r = await dialog.showMessageBox(win, {
+      type: 'question', title: 'My Remote Host', noLink: true, defaultId: 0, cancelId: 1,
+      buttons: [pack ? '내려받기 페이지 열기' : '지금 업데이트', '나중에'],
+      message: pack ? `새 버전 ${a.version}이 있습니다` : `새 버전 ${a.version}이 있습니다. 지금 업데이트할까요?`,
+      detail: [pack ? '이 버전은 새 설치 파일이 필요합니다. 내려받아 다시 설치해 주세요(접속 키와 설정은 그대로 남습니다).' : '', notes,
+        pack ? '' : `업데이트하면 호스트가 다시 시작됩니다${sessionLive ? '. 접속 중인 클라이언트는 잠시 뒤 다시 연결됩니다' : ''}. (현재 v${APP.version})`].filter(Boolean).join('\n\n'),
+    });
+    if (r.response === 0) await (pack ? downloadsPage() : installUpdate());
+  } finally { askingUpdate = false; }
+}
 // Asked once per profile (the mark file); with yes Windows asks for an administrator's consent at once,
 // as Chrome Remote Desktop's installer does for its service. Never during a remote session.
 function offerAssist() {
@@ -781,7 +806,7 @@ function createTray() {
     { label: '열기', click: showWindow },
     { label: '원격 연결 끊기', click: () => win && win.webContents.send('kick') },
     // From a source folder: the code on disk (git pull). The installed app: a look at the update feed.
-    APP && APP.update ? { label: '업데이트 확인', click: () => { showWindow(); APP.update.check(); } } : { label: '다시 시작 (업데이트 적용)', click: restart },
+    APP && APP.update ? { label: '업데이트 확인', click: () => { showWindow(); APP.update.check().then(askUpdate); } } : { label: '다시 시작 (업데이트 적용)', click: restart },
     { type: 'separator' },
     { label: '종료', click: () => { quitting = true; app.quit(); } },
   ]));
@@ -953,9 +978,11 @@ else {
     // Updates of the installed app (see updateInfo above). A required update restarts the host by
     // itself: not in the middle of a remote session (the shell waits for it to end, half an hour at most).
     ipcMain.handle('update-status', updateInfo);
-    ipcMain.handle('update-check', async () => { if (APP && APP.update) await APP.update.check(); return updateInfo(); });
-    ipcMain.handle('update-install', async () => { try { if (APP && APP.update) { quitting = true; await APP.update.install(); return true; } } catch (e) { quitting = false; console.error('[host] update:', e.message); } return false; });
-    ipcMain.handle('update-page', () => { if (APP && APP.downloads) shell.openExternal(APP.downloads).catch(() => {}); return true; });
+    // ask: the person pressed "업데이트 확인", so an update found is asked about at once (askUpdate), as
+    // the client app does; not waited for, so that the window can say what the check found meanwhile.
+    ipcMain.handle('update-check', async (_e, ask) => { if (APP && APP.update) { await APP.update.check(); if (ask) askUpdate(); } return updateInfo(); });
+    ipcMain.handle('update-install', installUpdate);
+    ipcMain.handle('update-page', downloadsPage);
     if (APP && APP.update) {
       APP.update.setCanRestart(() => { if (sessionLive) return false; quitting = true; return true; });
       APP.update.onChange(() => { if (win && !win.isDestroyed()) win.webContents.send('update-changed', updateInfo()); });

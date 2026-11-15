@@ -27,6 +27,11 @@
   .title { flex: 1 1 auto; min-width: 0; }
   .title b { display: block; font-size: 18px; line-height: 1.2; }
   .title small { color: var(--muted); }
+  .tline { display: flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; }
+  .tline b { flex: none; }
+  #ver { flex: none; color: var(--muted); font-size: 13px; }
+  button.mini { flex: none; padding: 2px 9px; font-size: 12px; }
+  #updMsg { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12.5px; }
   #search { flex: 0 1 230px; min-width: 120px; }
   #add { flex: none; }
 
@@ -69,8 +74,6 @@
   footer { display: flex; gap: 12px; align-items: center; padding: 9px 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
   footer #store { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   footer #store.warn { color: var(--amber); }
-  footer button.mini { flex: none; padding: 3px 10px; font-size: 12px; }
-  footer #updMsg { flex: none; }
 
   #menu { position: fixed; z-index: 20; display: none; min-width: 168px; padding: 5px; background: #232a33; border: 1px solid var(--line2); border-radius: 9px; box-shadow: 0 12px 30px rgba(0, 0, 0, .5); }
   #menu button { display: block; width: 100%; text-align: left; padding: 7px 10px; border-radius: 6px; }
@@ -95,7 +98,10 @@
 <body>
 <header>
   <div class="logo"><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="2" fill="#fff"/><path d="M8.5 20h7M12 16.5V20" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></div>
-  <div class="title"><b>My Remote</b><small id="count">&nbsp;</small></div>
+  <div class="title">
+    <div class="tline"><b>My Remote</b><span id="ver"></span><button id="updCheck" class="plain mini" hidden>업데이트 확인</button><span id="updMsg"></span></div>
+    <small id="count">&nbsp;</small>
+  </div>
   <input id="search" type="search" placeholder="이름, 컴퓨터 이름으로 찾기" spellcheck="false" autocomplete="off">
   <button id="add" class="primary" title="Ctrl+N">＋ PC 추가</button>
 </header>
@@ -110,7 +116,7 @@
     <button id="add2" class="primary">＋ PC 추가</button>
   </div>
 </main>
-<footer><span id="store"></span><span id="updMsg"></span><span id="ver"></span><button id="updCheck" class="plain mini" hidden>업데이트 확인</button></footer>
+<footer><span id="store"></span></footer>
 
 <div id="menu" role="menu">
   <button data-do="open" role="menuitem">접속</button>
@@ -470,6 +476,7 @@ async function checkUpdate() {
   const info = (await api.info()) || {};
   storeOk = info.store !== 'none';
   $('ver').textContent = info.version ? 'v' + info.version : '';
+  if (info.version) document.title = 'My Remote v' + info.version; // the window's title too
   if (info.updates) { $('updCheck').hidden = false; $('updCheck').onclick = checkUpdate; }
   const s = $('store');
   s.className = info.store === 'os' ? '' : 'warn';

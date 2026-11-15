@@ -1,12 +1,12 @@
 {
   "ko": [
-    "호스트 창(버전 옆)과 클라이언트 앱의 PC 목록(아래쪽)에 \"업데이트 확인\" 버튼이 생겼습니다. 누르면 바로 새 버전을 확인하고, 전에 \"나중에\"를 누른 업데이트도 다시 알려 줍니다",
+    "호스트 창과 클라이언트 앱의 PC 목록 맨 위, 앱 이름 옆에 지금 버전과 \"업데이트 확인\" 버튼이 생겼습니다. 누르면 바로 확인하고, 새 버전이 있으면 지금 업데이트할지 묻습니다(전에 \"나중에\"를 누른 업데이트도)",
     "(0.5.1) 이미 잠겨 있는 Windows 호스트에도 접속됩니다: 잠금 화면이 보이고, 비밀번호를 입력해 풀면 바탕화면과 소리가 이어집니다",
     "(0.5.1) 호스트를 처음 시작할 때 \"잠금 화면에서도 원격 조종\"을 켤지 묻습니다. 켜기를 누르면 Windows 관리자 승인 한 번으로 설치가 끝납니다",
     "(0.5.1) 원격 접속 중에는 잠금 화면 지원을 설치하거나 지울 수 없습니다(Windows의 승인 창은 그 PC 앞에서만 누를 수 있습니다)"
   ],
   "en": [
-    "An \"업데이트 확인\" (check for updates) button in the host window (next to the version) and in the client app's list (at the bottom): it looks for a new version at once, and offers again an update that was put off",
+    "The host window and the client app's list show their version next to the app's name, with an \"업데이트 확인\" (check for updates) button: it looks at once and, when there is a new version, asks whether to update now (also one that was put off)",
     "(0.5.1) A Windows host that is already locked can be reached: the lock screen shows, and after the password the desktop and the sound follow",
     "(0.5.1) The host's first start asks whether to turn on \"잠금 화면에서도 원격 조종\": one Windows administrator prompt and it is set up",
     "(0.5.1) The lock screen support cannot be installed or removed during a remote session (Windows' prompt can only be answered at that PC)"

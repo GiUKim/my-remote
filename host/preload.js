@@ -37,7 +37,7 @@ contextBridge.exposeInMainWorld('hostApi', {
   // The installed app's version and updates (main.js: updateInfo). `state` is 'none' when run from a source folder.
   update: {
     status: () => ipcRenderer.invoke('update-status'),
-    check: () => ipcRenderer.invoke('update-check'),
+    check: (ask) => ipcRenderer.invoke('update-check', !!ask), // ask: the person pressed "업데이트 확인" (an update found is asked about)
     install: () => ipcRenderer.invoke('update-install'),
     page: () => ipcRenderer.invoke('update-page'),
     onChange: (fn) => ipcRenderer.on('update-changed', (_e, s) => fn(s)),
