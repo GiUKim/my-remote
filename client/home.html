@@ -69,6 +69,8 @@
   footer { display: flex; gap: 12px; align-items: center; padding: 9px 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
   footer #store { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   footer #store.warn { color: var(--amber); }
+  footer button.mini { flex: none; padding: 3px 10px; font-size: 12px; }
+  footer #updMsg { flex: none; }
 
   #menu { position: fixed; z-index: 20; display: none; min-width: 168px; padding: 5px; background: #232a33; border: 1px solid var(--line2); border-radius: 9px; box-shadow: 0 12px 30px rgba(0, 0, 0, .5); }
   #menu button { display: block; width: 100%; text-align: left; padding: 7px 10px; border-radius: 6px; }
@@ -108,7 +110,7 @@
     <button id="add2" class="primary">＋ PC 추가</button>
   </div>
 </main>
-<footer><span id="store"></span><span id="ver"></span></footer>
+<footer><span id="store"></span><span id="updMsg"></span><span id="ver"></span><button id="updCheck" class="plain mini" hidden>업데이트 확인</button></footer>
 
 <div id="menu" role="menu">
   <button data-do="open" role="menuitem">접속</button>
@@ -443,10 +445,32 @@ addEventListener('keydown', (ev) => {
 });
 setInterval(() => { if (!document.querySelector('dialog[open]') && !menuFor) render(); }, 30000); // "3분 전" moves on
 
+// "업데이트 확인" (the installed app): the app asks about an update it finds in a dialog of its own; here
+// only how the check went.
+let updMsgTimer = 0;
+async function checkUpdate() {
+  const b = $('updCheck'), m = $('updMsg');
+  b.disabled = true;
+  m.textContent = '확인 중…';
+  const r = await api.checkUpdate().catch(() => null);
+  b.disabled = false;
+  const a = r && r.available;
+  m.textContent = !r || r.state === 'none' ? '확인하지 못했습니다'
+    : r.state === 'downloading' ? '업데이트를 받는 중…'
+    : r.state === 'ready' ? '업데이트를 설치했습니다. 곧 다시 시작합니다'
+    : a ? (a.required ? `중요 업데이트 ${a.version}을 설치합니다` : `새 버전 ${a.version}이 있습니다`)
+    : r.error ? '확인하지 못했습니다: ' + r.error
+    : '최신 버전입니다';
+  m.title = m.textContent;
+  clearTimeout(updMsgTimer);
+  updMsgTimer = setTimeout(() => { m.textContent = ''; }, 20000);
+}
+
 (async () => {
   const info = (await api.info()) || {};
   storeOk = info.store !== 'none';
   $('ver').textContent = info.version ? 'v' + info.version : '';
+  if (info.updates) { $('updCheck').hidden = false; $('updCheck').onclick = checkUpdate; }
   const s = $('store');
   s.className = info.store === 'os' ? '' : 'warn';
   s.textContent = info.store === 'os' ? '🔒 접속 키는 이 PC에만, 운영체제가 암호화해 보관합니다'

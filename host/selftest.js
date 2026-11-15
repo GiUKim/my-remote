@@ -252,13 +252,26 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         out.required = vis('upd') && /중요/.test(text('updTitle')) && !vis('updGo') && !vis('updLater');
         offer('2.0.0', false, 'package');
         out.newPackage = vis('upd') && vis('updGo') && /내려받기/.test(text('updGo'));
+        // "업데이트 확인" (the answer of a check the person asked for, without the feed): up to date, the
+        // feed not reached, and an update that was put off shown again.
+        showUpdate({ ...base, state: 'idle', available: null });
+        out.checkButton = vis('updCheck');
+        updateChecked({ ...base, state: 'idle', available: null, checkedAt: 1 });
+        out.upToDate = /최신/.test(text('updMsg')) && !vis('upd');
+        updateChecked({ ...base, state: 'idle', available: null, error: 'latest.json: HTTP 404' });
+        out.checkFailed = /확인하지 못했습니다/.test(text('updMsg'));
+        offer('1.0.3', false, 'bundle');
+        document.getElementById('updLater').click();
+        updateChecked({ ...base, state: 'available', available: { version: '1.0.3', required: false, kind: 'bundle', notes, size: 500000 } });
+        out.putOffShownWhenAsked = vis('upd') && /1\\.0\\.3/.test(text('updTitle')) && text('updMsg') === '';
         showUpdate({ ...base, installed: false, state: 'none', available: null });
-        out.fromSource = !vis('upd') && /소스/.test(text('ver'));
+        out.fromSource = !vis('upd') && /소스/.test(text('ver')) && !vis('updCheck');
         updateLater = '';
+        document.getElementById('updMsg').textContent = '';
         api.update.status().then(showUpdate);
         return out;
       })()`);
-      check('the host window shows an update on offer, lets it be put off, and says when one is required or needs a new package', Object.values(r).every(Boolean), JSON.stringify(r));
+      check('the host window shows an update on offer, lets it be put off, says when one is required or needs a new package, and checks when asked (its check-for-updates button)', Object.values(r).every(Boolean), JSON.stringify(r));
     }
 
     // --soak=<minutes>: a long session instead of the rest, to find what grows (no input injected).

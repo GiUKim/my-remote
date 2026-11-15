@@ -762,7 +762,10 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
 - **The updater lives in the shell**, not in the bundle: a bad release cannot take away the means to
   replace it. It looks at the feed 20 s after the start and every 6 h. An ordinary update is only
   announced (the host window's card, `showUpdate` in `host.js`; the client app asks in a dialog) and
-  installed when the person says so. A *required* one (`critical`, or the running version is below the
+  installed when the person says so. "업데이트 확인" (the user's wish, 2026-11-15) looks at once: next to the
+  version in the host window (`checkUpdate`/`updateChecked`, shown only in the installed app) and in the
+  footer of the client app's list (`home:checkUpdate`, `offerUpdate`); an update put off before is offered
+  again then, and the client app's question is asked once although a check also tells its listeners. A *required* one (`critical`, or the running version is below the
   release's `minimum`) is installed without asking and the app restarted when the code says the moment
   fits (`setCanRestart`: the host when no session is on, 30 min at most; the client app after a notice).
   `release/policy.json` carries `minimum` forward, so apps that missed a critical release are still

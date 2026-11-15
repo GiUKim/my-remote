@@ -34,37 +34,48 @@ const LOADER = alt || homeAlt ? path.resolve(alt || homeAlt) : path.join(__dirna
 // asked about an ordinary one; a required one is installed without asking and only the restart is
 // announced. Run from a source folder there is no shell.
 const APP = global.__mrApp || null;
+// Asks about an update on offer (set by watchUpdates); `again`: the person pressed "업데이트 확인", so one
+// they put off before is asked about once more.
+let offerUpdate = null;
+// win: the window the questions belong to, or a function that names it (the list: whichever list window is open).
 function watchUpdates(win) {
   const u = APP.update;
-  let asked = '';
+  let asked = '', showing = ''; // showing: a question about that version is open (a check that finds it asks at once, see onChange)
   const notes = (a) => ((a.notes && a.notes.ko) || []).map((s) => '· ' + s).join('\n');
-  u.onChange(async (s) => {
-    const a = s.available;
-    if (!a || s.state !== 'available' || asked === a.version || a.required || win.isDestroyed()) return;
-    asked = a.version;
+  const parentOf = () => { const w = typeof win === 'function' ? win() : win; return w && !w.isDestroyed() ? w : null; };
+  offerUpdate = async (a, again) => {
+    const parent = parentOf();
+    if (!a || a.required || !parent || showing === a.version || (asked === a.version && !again)) return;
+    asked = showing = a.version;
+    try { await ask(parent, a); } finally { showing = ''; }
+  };
+  const ask = async (parent, a) => {
     if (a.kind === 'package') {
-      const r = await dialog.showMessageBox(win, { type: 'info', noLink: true, buttons: ['내려받기 페이지 열기', '나중에'], defaultId: 0, cancelId: 1,
+      const r = await dialog.showMessageBox(parent, { type: 'info', noLink: true, buttons: ['내려받기 페이지 열기', '나중에'], defaultId: 0, cancelId: 1,
         message: `새 버전 ${a.version}이 있습니다`, detail: '이 버전은 새 설치 파일이 필요합니다. 내려받아 다시 설치해 주세요.\n\n' + notes(a) });
       if (r.response === 0 && APP.downloads) openWith.openExternal(APP.downloads).catch(() => {});
       return;
     }
-    const r = await dialog.showMessageBox(win, { type: 'info', noLink: true, buttons: ['지금 업데이트', '나중에'], defaultId: 0, cancelId: 1,
+    const r = await dialog.showMessageBox(parent, { type: 'info', noLink: true, buttons: ['지금 업데이트', '나중에'], defaultId: 0, cancelId: 1,
       message: `새 버전 ${a.version}이 있습니다`, detail: `${notes(a)}\n\n업데이트하면 앱이 다시 시작됩니다. 원격 접속 중이면 다시 연결해야 합니다. (현재 v${APP.version})`.trim() });
     if (r.response === 0) u.install().catch((e) => dialog.showErrorBox('My Remote', '업데이트하지 못했습니다: ' + e.message));
-  });
+  };
+  u.onChange((s) => { if (s.state === 'available') offerUpdate(s.available, false); });
   u.setCanRestart(async (s) => {
-    if (win.isDestroyed()) return true;
-    const told = dialog.showMessageBox(win, { type: 'warning', noLink: true, buttons: ['다시 시작'],
+    const parent = parentOf();
+    if (!parent) return true;
+    const told = dialog.showMessageBox(parent, { type: 'warning', noLink: true, buttons: ['다시 시작'],
       message: `중요 업데이트 ${s.available ? s.available.version : ''}을 설치했습니다`, detail: '이 버전의 심각한 문제를 고친 업데이트입니다. 확인을 누르면 앱이 다시 시작됩니다(10분 뒤에는 자동으로 다시 시작합니다).' });
     await Promise.race([told, new Promise((r) => setTimeout(r, 10 * 60e3))]);
     return true;
   });
 }
-function appUp(win) {
+// parent: the window update questions belong to (default: win), or a function naming it.
+function appUp(win, parent) {
   if (!APP) return;
   // This version counts as up once its window has shown its page for a while (see app/boot.js).
   win.webContents.once('did-finish-load', () => setTimeout(() => { if (!win.isDestroyed()) APP.ok(); }, 4000));
-  if (APP.update && !testDir) watchUpdates(win);
+  if (APP.update && !testDir) watchUpdates(parent || win);
 }
 
 // ---- one window on one loader (--loader=) ------------------------------------------------
@@ -179,7 +190,17 @@ function listMode() {
     // How well the keys are kept on this PC: by the operating system, only obscured (Linux without a keyring), or not at all.
     store: !(await crypt.ready().catch(() => false)) ? 'none' : obscuredOnly() ? 'obscured' : 'os',
     rolledBack: APP ? APP.rolledBack : [],
+    updates: !!(APP && APP.update), // the installed app: the list has "업데이트 확인"
   }));
+  // "업데이트 확인": the feed now instead of at the next look (20 s after the start, then every 6 h). An
+  // update found is asked about as usual (offerUpdate), also one put off before; the page says the rest.
+  handle('home:checkUpdate', async () => {
+    if (!APP || !APP.update) return { state: 'none' };
+    const s = await APP.update.check();
+    const a = s.available;
+    if (a && s.state === 'available' && offerUpdate) offerUpdate(a, true);
+    return { state: s.state, version: APP.version, error: s.error || '', available: a ? { version: a.version, required: !!a.required, kind: a.kind } : null };
+  });
   handle('home:add', async (o) => { const r = await hosts.add({ key: o && o.key, name: o && o.name }); if (r.ok) changed(); return r; });
   handle('home:rename', (id, name) => { const ok = hosts.rename(String(id), name); if (ok) { retitle(String(id)); changed(); } return ok; });
   handle('home:setKey', async (id, key) => {
@@ -204,7 +225,7 @@ function listMode() {
   app.on('second-instance', () => showHome()); // started again: the list comes forward
   app.whenReady().then(async () => {
     const win = showHome();
-    appUp(win);
+    appUp(win, () => home); // questions about updates go to whichever list window is open (it can be closed and opened again)
     if (!homeAlt) return;
     // The self-test's PCs (see --list above).
     const file = path.join(testDir, 'home-import.json');

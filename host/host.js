@@ -841,6 +841,9 @@ let updateLater = '', updateTold = false; // the version the person put off (unt
 function showUpdate(u) {
   if (!u) return;
   $('ver').textContent = 'v' + u.version + (u.installed ? '' : ' · 소스 폴더에서 실행 중');
+  // "업데이트 확인": the installed app with a feed (from a source folder updates come by git).
+  $('updCheck').style.display = u.installed && u.state && u.state !== 'off' && u.state !== 'none' ? '' : 'none';
+  $('updCheck').disabled = ['checking', 'downloading', 'ready'].includes(u.state);
   $('ver').title = !u.installed ? '소스 폴더에서 실행 중입니다. 업데이트는 git pull과 설치 스크립트로 합니다.'
     : u.error ? '업데이트를 확인하지 못했습니다: ' + u.error
     : u.checkedAt ? '최신 버전입니다 · 확인 ' + new Date(u.checkedAt).toLocaleTimeString() : '';
@@ -866,8 +869,29 @@ function showUpdate(u) {
   $('updLater').style.display = busy || a.required ? 'none' : '';
   $('updLater').onclick = () => { updateLater = a.version; card.style.display = 'none'; };
 }
+// "업데이트 확인": the feed now instead of at the next look (20 s after the start, then every 6 h). An
+// update found shows on its card, also one that was put off; otherwise the button's note says how it went.
+let updMsgTimer = 0;
+async function checkUpdate() {
+  $('updCheck').disabled = true;
+  $('updMsg').textContent = '확인 중…';
+  let u = null;
+  try { u = await api.update.check(); } catch {}
+  updateChecked(u);
+}
+function updateChecked(u) {
+  const m = $('updMsg');
+  $('updCheck').disabled = false;
+  updateLater = ''; // the person asked: one put off before is shown again
+  if (u) showUpdate(u);
+  m.textContent = !u ? '확인하지 못했습니다' : u.available ? '' : u.error ? '확인하지 못했습니다: ' + u.error : '최신 버전입니다';
+  if (m.textContent) log('업데이트 확인: ' + m.textContent + (u && !u.available && !u.error ? ` (v${u.version})` : ''));
+  clearTimeout(updMsgTimer);
+  updMsgTimer = setTimeout(() => { m.textContent = ''; }, 20000);
+}
 function watchUpdates() {
   if (!api.update) return;
+  $('updCheck').onclick = checkUpdate;
   api.update.status().then(showUpdate, () => {});
   api.update.onChange(showUpdate);
 }
