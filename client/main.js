@@ -170,8 +170,11 @@ function listMode() {
   // The host, as a program of its own (its window, tray and profile; a second start only brings it forward).
   // The installed app is told --host; on Linux through its launcher script, which brings the checks and the
   // sandbox switch. From a source folder Electron is given the host folder. Not in a test (--loader).
+  let hostStarted = false; // the start screen's "이 PC 공유": the host swaps the shell then, not this app's quit
+  let relaunching = false; // this app starts again at once (a version the host installed): no swap at this quit
   function startHost() {
     if (testDir) { console.log('[client] start screen: the host would start now'); return; }
+    hostStarted = true;
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
     const o = { env, detached: true, stdio: 'ignore' };
@@ -317,7 +320,7 @@ function listMode() {
   function newerInstalled(v) {
     const onlyStart = !!launcher && !launcher.isDestroyed() && !(home && !home.isDestroyed());
     const args = process.argv.slice(1).filter((a) => a !== '--launcher');
-    const again = () => { app.relaunch({ args: onlyStart ? [...args, '--launcher'] : args }); app.quit(); };
+    const again = () => { relaunching = true; app.relaunch({ args: onlyStart ? [...args, '--launcher'] : args }); app.quit(); };
     console.log(`[client] version ${v} was installed by the host: restarting into it${open.size ? ' when the person says so' : ''}`);
     if (!open.size) return again();
     const parent = (home && !home.isDestroyed() && home) || [...open.values()].find((w) => !w.isDestroyed());
@@ -360,7 +363,12 @@ function listMode() {
     try { if (JSON.parse(fs.readFileSync(runningFile(), 'utf8')).pid === process.pid) fs.rmSync(runningFile(), { force: true }); } catch {}
     if (shellLook) shellLook.abort();
     const next = shellswap.readNext(shellCtx.root, shellCtx.appDir);
-    if (!next || hostRunning().running || shellswap.heldRecently(shellCtx.root)) return;
+    // Not when this app just started the host (it ends right after, and the host, still starting, has
+    // no running.json yet): the script would find the host running and hold the host's own swap back.
+    // Nor when it starts again at once (its own update installed, or the host's followed): the new start
+    // would be found running.
+    const updating = !!(APP.update && APP.update.status && APP.update.status().state === 'ready');
+    if (!next || hostStarted || relaunching || updating || hostRunning().running || shellswap.heldRecently(shellCtx.root)) return;
     // The quit waits until the script runs (it then waits for this app to end).
     e.preventDefault();
     shellSwapping = true;
