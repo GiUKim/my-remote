@@ -1,0 +1,14 @@
+{
+  "ko": [
+    "원격 조종 중에 호스트 창의 제목 표시줄(최소화·최대화·닫기 버튼, 창 끌기)을 누르면 조종이 완전히 멈추던 문제를 고쳤습니다. 이제 그 버튼들이 바로 동작하고, 비슷한 일이 다른 데서 생겨도 1초 안에 스스로 풀립니다",
+    "업데이트로 받은 버전에서 빠른 화면 캡처(네이티브)가 쓰이지 않고 기본 캡처로만 돌던 문제를 고쳤습니다. 화면이 더 빠르고 매끄러워지며, 일부 프로그램(PowerPoint 표 등)에서 마우스 포인터 잔상이 보이던 것도 사라집니다",
+    "호스트가 업데이트나 다시 시작으로 꺼진 뒤 다시 켜지지 않으면, 감시 프로세스가 1분 안에 다시 켭니다. 트레이에서 직접 종료한 경우만 꺼진 채로 둡니다",
+    "호스트가 하는 일을 이 PC의 host.log에 남깁니다. 문제가 생겼을 때 원인을 찾을 수 있습니다"
+  ],
+  "en": [
+    "Pressing the host window's title bar (its minimize, maximize and close buttons, or dragging it) from the client no longer stops remote control for good: the buttons act at once, and anything similar elsewhere is freed within a second",
+    "A version installed by an update now uses the native screen capture again (it had fallen back to the engine's): faster and smoother, and no trailing pointer over some programs (PowerPoint tables)",
+    "When the host quits for an update or a restart and does not come back, the watchdog starts it within a minute; only a quit from the tray leaves it down",
+    "The host keeps what it does in host.log on this PC, to find out what happened when something goes wrong"
+  ]
+}

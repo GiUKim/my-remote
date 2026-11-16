@@ -111,7 +111,18 @@ if (api.assist) api.assist.onMessage((m) => { if (m.t === 'state') assistState(m
 // The preload script runs the native capturer and sends each monitor's frames over a message
 // port (see preload.js); here they go into a MediaStreamTrackGenerator, which the engine encodes
 // and sends like any other video track.
-let nativePort = null, nativeOff = false, nativeTurn = Promise.resolve(), sizeRenewAt = 0;
+let nativePort = null, nativeTurn = Promise.resolve(), sizeRenewAt = 0;
+// Native capture given up for a while, and why (the diagnostics log says it: before 0.8.1 nothing told
+// that a host ran on the engine's capturer for hours). A monitor in HDR mode stays that way for good (each
+// session would start natively, fail and reconnect); anything else is tried again by a session that starts
+// NATIVE_RETRY_MS later: one failed start must not cost native capture until the host restarts.
+const NATIVE_RETRY_MS = 10 * 60e3;
+let nativeOffUntil = 0, nativeOffWhy = '';
+const nativeOff = () => performance.now() < nativeOffUntil;
+function nativeGiveUp(why) {
+  nativeOffWhy = String(why || 'failed').slice(0, 120);
+  nativeOffUntil = nativeOffWhy === 'hdr' ? Infinity : performance.now() + NATIVE_RETRY_MS;
+}
 const nativeOpening = new Map();
 function nativeChannel() {
   if (nativePort) return nativePort;
@@ -138,7 +149,7 @@ function nativeChannel() {
       // what a loop of an earlier session reported arrives before the first of this session's loops
       // has opened.
       log(`네이티브 캡처 중단 (모니터 ${m.i + 1}: ${m.error}) — 기본 캡처로 다시 연결합니다`);
-      if (m.error !== 'size') nativeOff = true; // a changed size is a changed monitor setup: that renegotiates by itself
+      if (m.error !== 'size') nativeGiveUp(m.error); // a changed size is a changed monitor setup: that renegotiates by itself
       else sizeRenewAt = performance.now(); // see onDisplaysChanged
       renew(session, '캡처 방식 변경');
     }
@@ -156,7 +167,7 @@ function openNative(s, sources) {
   return turn;
 }
 async function openNativeLoops(s, sources) {
-  if (nativeOff || session !== s) return null;
+  if (nativeOff() || session !== s) return null;
   const port = nativeChannel(), list = [];
   for (let i = 0; i < sources.length; i++) {
     const r = await new Promise((done) => {
@@ -165,12 +176,13 @@ async function openNativeLoops(s, sources) {
         rect: { x: sources[i].x, y: sources[i].y, w: sources[i].width, h: sources[i].height } });
       // A capturer that has not answered in 4 s is not asked again: its answer, should it still come,
       // would be taken for the answer to a later request.
-      setTimeout(() => { if (nativeOpening.get(i) === done) { nativeOpening.delete(i); nativeOff = true; } done({ ok: false, error: 'no answer' }); }, 4000);
+      setTimeout(() => { if (nativeOpening.get(i) === done) { nativeOpening.delete(i); nativeGiveUp('no answer'); } done({ ok: false, error: 'no answer' }); }, 4000);
     });
     // Replaced or ended meanwhile: close what was opened for it.
     if (session !== s) { port.postMessage({ t: 'close' }); return null; }
     if (!r.ok || r.width !== sources[i].width || r.height !== sources[i].height) {
       log(`네이티브 캡처를 쓸 수 없습니다 (모니터 ${i + 1}: ${r.ok ? '크기 불일치' : r.error}) — 기본 캡처를 사용합니다`);
+      s.capWhy = `monitor ${i + 1}: ${r.ok ? `size ${r.width}x${r.height}, expected ${sources[i].width}x${sources[i].height}` : r.error}`;
       port.postMessage({ t: 'close' });
       s.native = null;
       return null;
@@ -702,11 +714,13 @@ async function startSession(hello, route) {
   // The native capturer when it is there: its images carry no pointer, so nothing has to be hidden
   // on this PC. Otherwise the engine's capturer, with this PC's pointer hidden before capture
   // starts, so that the frames carry no pointer (see input.js).
-  s.native = cfg.capture !== 'engine' && !nativeOff && api.nativeCapture() ? await openNative(s, sources) : null;
+  s.native = cfg.capture !== 'engine' && !nativeOff() && api.nativeCapture() ? await openNative(s, sources) : null;
   if (session !== s) return; // the loops it opened are closed (see openNative)
+  // Why not natively, for this host's log and the diagnostics log (hs.capWhy).
+  if (!s.native && !s.capWhy) s.capWhy = cfg.capture === 'engine' ? 'config' : nativeOff() ? `given up: ${nativeOffWhy}` : !api.nativeCapture() ? `no capturer: ${api.nativeWhy ? api.nativeWhy() : '?'}` : 'not opened';
   s.cursorHidden = s.native ? true : await api.hideCursor(true);
   if (session !== s) return;
-  log(s.native ? '화면 캡처: 네이티브' : '화면 캡처: 기본(브라우저 엔진)');
+  log(s.native ? '화면 캡처: 네이티브' : `화면 캡처: 기본(브라우저 엔진) — ${s.capWhy}`);
   Object.assign(s, pickCodec(hello));
   const refine = s.codec === 'AV1' ? (cfg.refine === 'always' ? 'always' : cfg.refine !== false) : false;
 
@@ -812,7 +826,8 @@ async function startSession(hello, route) {
     const codec = codecId && rep.get(codecId) ? rep.get(codecId).mimeType.replace('video/', '') : '';
     const now = performance.now();
     // Host-side numbers for the client's diagnostics report.
-    s.lastHs = { codec, from: s.codecFrom, enc: impl, availMbps: +(avail / 1e6).toFixed(1), targetMbps: +(target / 1e6).toFixed(1), rtt: rtt != null ? Math.round(rtt * 1000) : null, mons };
+    s.lastHs = { codec, from: s.codecFrom, enc: impl, availMbps: +(avail / 1e6).toFixed(1), targetMbps: +(target / 1e6).toFixed(1), rtt: rtt != null ? Math.round(rtt * 1000) : null, mons,
+      cap: s.native ? 'native' : 'engine', ...(s.native ? {} : { capWhy: String(s.capWhy || '').slice(0, 120) }) };
     try { if (s.dc.readyState === 'open') s.dc.send(JSON.stringify({ t: 'hs', ...s.lastHs })); } catch {}
     if (last) {
       const mbps = ((bytes - last.bytes) * 8) / ((now - last.t) / 1000) / 1e6;

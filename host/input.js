@@ -37,6 +37,9 @@ const NEUTRAL = {
   processRunning: async () => null, // whether a program with this file name runs (a promise); null: cannot tell here
   clipSeq: (() => { let n = 0; return () => ++n; })(), // unknown: always "changed", so the clipboard is simply read
   setSink() {}, // Windows: injected input goes to the assist service while a secure desktop has the screen (host/assist.js)
+  // The frame of this host's own windows (Windows: see framePress below). Elsewhere a window manager of its
+  // own draws and runs the frames, so presses there are injected as any other.
+  ownFrame: () => null, windowPos: () => null, moveWindow: () => false, frameAction: () => false, mainThreadId: () => 0,
 };
 const platformModule = { win32: './platform/win32', linux: './platform/linux' }[process.platform];
 const backend = { ...NEUTRAL, ...(platformModule ? require(platformModule) : {}) };
@@ -50,6 +53,58 @@ const down = new Map(); // code -> the key as it was pressed: released the same 
 let buttonsDown = 0; // bit b = BTN[b] is held down here
 let released = 0;    // buttons let go here because the client said it no longer held them (diagnostics)
 let dry = null;      // when set (self-test only), input is recorded here instead of being injected
+let ownFrame = (px, py) => backend.ownFrame(px, py); // the self-test's dry run puts a stand-in here
+
+// A press on the frame of this host's own window (its title bar and buttons, its borders) is never injected
+// (Windows only; see ownFrame in platform/win32.js): Windows would hold the thread that injects input in a
+// loop until the button went up, and the release that ends it could then never be injected - remote
+// control stopped until someone at the PC clicked (the user's report of 2026-11-16: the host window's
+// minimize button pressed from the client). What the press means is done here instead: the window comes to
+// the front; min, max and close act on their release over them; the title bar moves the window with the
+// pointer, twice in a row it maximizes or restores; the borders and the window menu do nothing.
+let framePress = null; // { b, hwnd, hit, x, y, wx, wy } while such a press is held
+let frameButtons = 0; // the buttons pressed on the frame (not injected): their releases are not injected either
+let lastCaption = null; // { hwnd, x, y, at } the last left press on a title bar, for the second of a double click
+const DOUBLE_MS = 500;
+function frameDown(b, t) {
+  if (frameButtons & (1 << b)) return true;
+  const f = ownFrame(t.px, t.py);
+  if (!f) return false;
+  frameButtons |= 1 << b;
+  if (framePress) return true; // another button while one is held there: nothing more
+  const w = (dry ? null : backend.windowPos(f.hwnd)) || { x: 0, y: 0 };
+  framePress = { b, hwnd: f.hwnd, hit: f.hit, x: t.px, y: t.py, wx: w.x, wy: w.y, double: false };
+  if (b === 0) {
+    record({ frame: 'activate', hit: f.hit }, () => backend.frameAction(f.hwnd, 'activate'));
+    const now = Date.now(), l = lastCaption;
+    if (f.hit === 'caption') {
+      framePress.double = !!(l && l.hwnd === f.hwnd && now - l.at < DOUBLE_MS && Math.abs(l.x - t.px) <= 4 && Math.abs(l.y - t.py) <= 4);
+      lastCaption = framePress.double ? null : { hwnd: f.hwnd, x: t.px, y: t.py, at: now };
+    }
+  }
+  return true;
+}
+function frameMove(t) {
+  const f = framePress;
+  if (!f || f.b !== 0 || f.hit !== 'caption' || f.double) return;
+  record({ frame: 'move', dx: t.px - f.x, dy: t.py - f.y }, () => backend.moveWindow(f.hwnd, f.wx + t.px - f.x, f.wy + t.py - f.y));
+}
+function frameUp(b, t) {
+  if (!(frameButtons & (1 << b))) return false;
+  frameButtons &= ~(1 << b);
+  const f = framePress;
+  if (!f || f.b !== b) return true;
+  framePress = null;
+  if (b !== 0) return true;
+  if (f.double) { record({ frame: 'max' }, () => backend.frameAction(f.hwnd, 'max')); return true; }
+  if (!['min', 'max', 'close'].includes(f.hit)) return true;
+  // As a button does: only when let go over the same button.
+  const g = t ? ownFrame(t.px, t.py) : null;
+  if (g && g.hwnd === f.hwnd && g.hit === f.hit) record({ frame: f.hit }, () => backend.frameAction(f.hwnd, f.hit));
+  return true;
+}
+// What the dry run notes instead of doing it.
+function record(entry, act) { if (dry) dry.push(entry); else act(); }
 
 function setMonitors(rects) { monitors = rects; }
 
@@ -106,6 +161,7 @@ function key(code, keyName, up, shortcut) {
 
 function reset() {
   queued.length = 0; // input that waited for typing to end is not injected after this
+  framePress = null; frameButtons = 0; lastCaption = null; // presses on the host's own frame were never injected: nothing to let go
   // Alt or the Windows key let go with nothing pressed in between opens the program's menu bar or the
   // Start menu (a client that left with Alt+Tab, say, held Alt here): a key that means nothing in between.
   if ([...down.keys()].some((c) => /^(Alt|Meta)/.test(c))) { if (dry) dry.push({ key: 'mask', up: false }); else backend.maskKey(); }
@@ -142,7 +198,8 @@ function handle(text) {
   if (!m || typeof m !== 'object') return;
   switch (m.t) {
     case 'mm': {
-      moveTo(m.d | 0, +m.x, +m.y);
+      const t = target(m.d | 0, +m.x, +m.y);
+      if (t) move(t);
       // `h`: the buttons the client's pointer holds right now (same bits as buttonsDown). One held
       // here that the client no longer holds lost its release on the way (the browser cancelled the
       // pointer, the window changed under it, ...): let it go now, where the pointer is. Otherwise
@@ -150,12 +207,19 @@ function handle(text) {
       const lost = Number.isInteger(m.h) ? buttonsDown & ~m.h : 0;
       for (let b = 0; b < BTN.length; b++) if (lost & (1 << b)) { button(b, false); released++; }
       buttonsDown &= ~lost;
+      // Presses on the host's own window frame (not injected): the title bar moves the window; a lost release ends one.
+      const frameLost = Number.isInteger(m.h) ? frameButtons & ~m.h : 0;
+      for (let b = 0; b < BTN.length; b++) if (frameLost & (1 << b)) frameUp(b, null);
+      if (framePress && t) frameMove(t);
       break;
     }
     case 'md':
     case 'mu': {
       const b = m.b | 0;
-      if (!BTN[b] || !moveTo(m.d | 0, +m.x, +m.y)) break;
+      const t = BTN[b] ? target(m.d | 0, +m.x, +m.y) : null;
+      if (!t) break;
+      move(t);
+      if (m.t === 'md' ? !(buttonsDown & (1 << b)) && frameDown(b, t) : frameUp(b, t)) break; // the host's own window frame: see framePress
       if (m.t === 'md') buttonsDown |= 1 << b; else buttonsDown &= ~(1 << b);
       button(b, m.t === 'md');
       break;
@@ -205,10 +269,13 @@ function tap(codes) {
 // Self-test: runs input messages through handle() against the given monitor rectangles and returns
 // what would have been injected, without injecting anything; then `then()` if given, in the same dry
 // run (to see what tap() and buttonUp() would do). The real state is put back afterwards.
-function simulate(rects, msgs, then) {
-  const saved = { monitors, buttonsDown, released, down: [...down] };
+// opts.ownFrame: a stand-in for the platform's (px, py) -> { hwnd, hit } | null, to try the frame presses.
+function simulate(rects, msgs, then, opts = {}) {
+  const saved = { monitors, buttonsDown, released, down: [...down], ownFrame, framePress, frameButtons, lastCaption };
   dry = [];
   monitors = rects; buttonsDown = 0; released = 0; down.clear();
+  framePress = null; frameButtons = 0; lastCaption = null;
+  ownFrame = opts.ownFrame || (() => null); // never the real windows of this PC in a dry run
   try {
     for (const m of msgs) handle(JSON.stringify(m));
     if (then) then();
@@ -217,6 +284,7 @@ function simulate(rects, msgs, then) {
     dry = null;
     monitors = saved.monitors; buttonsDown = saved.buttonsDown; released = saved.released;
     down.clear(); for (const [c, k] of saved.down) down.set(c, k);
+    ownFrame = saved.ownFrame; framePress = saved.framePress; frameButtons = saved.frameButtons; lastCaption = saved.lastCaption;
   }
 }
 function takeReleased() { const n = released; released = 0; return n; }
@@ -251,4 +319,6 @@ module.exports = {
   clipboardPrivate: backend.clipboardPrivate,
   clipSeq: backend.clipSeq,
   setSink: backend.setSink,
+  mainThreadId: backend.mainThreadId, // Windows: the thread that injects (host/inputguard.js watches it)
+  ownFrame: (px, py) => backend.ownFrame(px, py), // the self-test's real-input check (framecheck.js)
 };

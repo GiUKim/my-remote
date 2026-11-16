@@ -1,5 +1,14 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// The installed app keeps koffi in its shell (resources/app/node_modules) and puts that folder into NODE_PATH
+// (app/boot.js), which this process inherits. A page's process does not search NODE_PATH by itself (measured
+// with Electron 45: the variable is there, require does not look in it), so the code an update put into the
+// data folder, with no node_modules above it, never found koffi here: no native capture after the first update,
+// the engine's capturer instead, with its pointer in the picture (seen 2026-11-17 on the user's PC; the
+// built-in code finds the shell's modules by its folder, which is all the packaged self-test ran). The search
+// paths are read again from the variable, as boot.js does in the main process.
+try { require('module').Module._initPaths(); } catch {}
+
 contextBridge.exposeInMainWorld('hostApi', {
   getConfig: () => ipcRenderer.invoke('cfg'),
   getSources: () => ipcRenderer.invoke('sources'),
@@ -82,6 +91,7 @@ contextBridge.exposeInMainWorld('hostApi', {
     onChanged: (fn) => ipcRenderer.on('assist-changed', (_e, m) => fn(m)), // the offer at the first start: { busy } | { result }
   },
   nativeCapture: () => !!capturer(),
+  nativeWhy: () => { capturer(); return libWhy; }, // why there is no native capturer ('' when there is one)
   nativeOpen: () => { const c = capturer(); return c && c.openCount ? c.openCount() : -1; }, // X11: capturers not let go yet (the self-test)
   // The self-test: new captures act as while the lock screen has the screen (Windows' DLL only; false elsewhere).
   nativeTestElsewhere: (on) => { const c = capturer(); if (!c || !c.testElsewhere) return false; c.testElsewhere(on ? 1 : 0); return true; },
@@ -103,18 +113,20 @@ const REPEATS = 45, REPEAT_MS = 20; // for about a second
 // sharp within a few frames. With the full count, a caret blinking every half second kept a still
 // monitor at about 50 frames a second for as long as it blinked.
 const FEW = 6, SMALL = 0.01;
-let lib = null;
+let lib = null, libWhy = '';
 function capturer() {
   if (lib !== null) return lib;
   lib = false;
+  libWhy = 'not this system';
   if (process.platform === 'linux') {
     // X11: the same calls, made in JavaScript (platform/x11capture.js): XDamage and MIT-SHM, no pointer in the picture
-    try { const x = require('./platform/x11capture'); if (x.available()) lib = x; else console.warn('native capture is not available:', x.error()); } catch (e) { console.error('native capture is not available:', e.message); }
+    try { const x = require('./platform/x11capture'); if (x.available()) { lib = x; libWhy = ''; } else { libWhy = String(x.error()); console.warn('native capture is not available:', libWhy); } } catch (e) { libWhy = e.message; console.error('native capture is not available:', e.message); }
     return lib;
   }
   if (process.platform !== 'win32') return lib; // a Windows DLL (DXGI Desktop Duplication); elsewhere the engine's capturer is used
   try {
     const file = path.join(__dirname, 'bin', 'capture.dll'); // built by native/build.js, committed
+    libWhy = 'no capture.dll';
     if (fs.existsSync(file)) {
       const dll = require('koffi').load(file);
       lib = {
@@ -128,8 +140,9 @@ function capturer() {
       // A page that was here before in this process may have left capturers open (a monitor can only
       // be captured once per process): close whatever is left.
       for (let i = 0; i < 8; i++) lib.close(i);
+      libWhy = '';
     }
-  } catch (e) { console.error('native capture is not available:', e.message); }
+  } catch (e) { lib = false; libWhy = String(e.message).split('\n')[0]; console.error('native capture is not available:', e.message); }
   return lib;
 }
 // Every loop that is running. They must all be closed before this page goes away: a wait that is

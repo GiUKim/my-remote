@@ -79,16 +79,23 @@ const cursorCache = new Map(); // handle -> { img, hx, hy } | null
 
 // ---- started again after a crash (host/watchdog.js) ------------------------------------------
 // A small process of its own, started once the host has been up for a while (8 s after its page loaded, the
-// moment a new version also says it is up), that starts the host again when it ends without quitting. A
-// quit on purpose writes this process's pid into the quit marker first (before-quit; also when Windows
-// ends the session or the system shuts down). Not in the isolated runs.
-// --localtest --watchdog: in a local trial too (its throwaway profile, the local relay), to check it end to end.
+// moment a new version also says it is up), that starts the host again when it ends without quitting.
+// Every quit writes the quit marker first (before-quit; also when Windows ends the session or the system
+// shuts down): { pid, kind, why }. Only `quit` (the person quit it: the tray's 종료, the key dialog; the
+// system goes down) leaves the host down. Every other quit (an update, a restart, a shell swap, a quit
+// nobody planned) is one after which a host must come back: the watchdog waits for it and starts one when
+// none came (the user's report of 2026-11-16: the host quit 20 s after an update, the marker said "on
+// purpose", nothing started it again, and the PC could be reached only through another remote tool).
+// Not in the isolated runs. --localtest --watchdog: in a local trial too (its throwaway profile, the local
+// relay), to check it end to end.
 let watchdog = null;
 const WATCHDOG_TRIAL = LOCALTEST && process.argv.includes('--watchdog');
 const quitMark = () => path.join(app.getPath('userData'), 'quit-on-purpose');
-function markQuit() {
+let quitKind = '', quitWhy = ''; // set by the code that quits; before-quit writes them (an unknown quit: a restart)
+function quitAs(kind, why) { if (!quitKind) { quitKind = kind; quitWhy = why; } }
+function markQuit(kind = quitKind || 'restart', why = quitWhy || 'unknown') {
   if (ISOLATED && !WATCHDOG_TRIAL) return;
-  try { fs.writeFileSync(quitMark(), String(process.pid)); } catch {}
+  try { fs.writeFileSync(quitMark(), JSON.stringify({ pid: process.pid, kind, why })); } catch {}
 }
 function startWatchdog() {
   if ((ISOLATED && !WATCHDOG_TRIAL) || watchdog) return;
@@ -100,6 +107,30 @@ function startWatchdog() {
     watchdog.stdin.on('error', () => {}); // its end closes when this process ends: that is how it knows
     watchdog.unref();
   } catch (e) { console.error('[host] watchdog: ' + e.message); }
+}
+
+// The safety net under input.js's frame presses (Windows): a worker thread that ends a window loop holding
+// this thread, the one that injects the client's input (see inputguard.js). The heartbeat is what it watches.
+let inputGuard = null, inputGuardBeat = null;
+function startInputGuard() {
+  if (process.platform !== 'win32' || inputGuard || !input.mainThreadId()) return;
+  try {
+    const { Worker } = require('worker_threads');
+    const hb = new Int32Array(new SharedArrayBuffer(8)), t0 = Date.now();
+    Atomics.store(hb, 0, 0);
+    inputGuardBeat = setInterval(() => Atomics.store(hb, 0, Date.now() - t0), 100);
+    inputGuard = new Worker(path.join(__dirname, 'inputguard.js'), { workerData: { koffi: require.resolve('koffi'), tid: input.mainThreadId(), hb, t0 } });
+    inputGuard.on('message', (m) => console.log('[host] input guard: ' + m));
+    inputGuard.on('error', (e) => { console.error('[host] input guard: ' + e.message); inputGuard = null; });
+    inputGuard.unref();
+    startInputGuard.hb = hb; // the self-test reads how many loops it ended
+  } catch (e) { console.error('[host] input guard: ' + e.message); inputGuard = null; }
+}
+function stopInputGuard() {
+  clearInterval(inputGuardBeat);
+  const w = inputGuard;
+  inputGuard = null;
+  if (w) w.terminate().catch(() => {});
 }
 
 let cursorGuard = null;
@@ -467,6 +498,35 @@ if (ISOLATED) {
 }
 const cfgPath = () => path.join(app.getPath('userData'), 'config.json');
 
+// What this host says (its own lines and its page's, `[host] ...`) also goes into host.log in its profile,
+// one file of up to a megabyte and the one before it (host.old.log): an installed host prints to nowhere,
+// and when one quit after an update (2026-11-16) nothing told why. Nothing it prints holds the key (the
+// key goes to stdout only with --show-key, which keeps no log). Read it with the diagnostics log.
+const hostLog = (() => {
+  if (SHOW_KEY) return null;
+  const file = path.join(app.getPath('userData'), 'host.log');
+  let size = -1;
+  const util = require('util');
+  const write = (level, args) => {
+    try {
+      if (size < 0) { try { size = fs.statSync(file).size; } catch { size = 0; } }
+      if (size > 1024 * 1024) { try { fs.renameSync(file, file.replace(/\.log$/, '.old.log')); } catch {} size = 0; }
+      const line = `${new Date().toISOString()} ${level === 'log' ? '' : level.toUpperCase() + ' '}${util.format(...args)}\n`;
+      fs.appendFileSync(file, line);
+      size += Buffer.byteLength(line);
+    } catch {}
+  };
+  for (const level of ['log', 'warn', 'error']) {
+    const orig = console[level].bind(console);
+    console[level] = (...args) => { try { orig(...args); } catch {} write(level, args); }; // a closed stdout (EPIPE) must not stop the file
+  }
+  return file;
+})();
+console.log(`[host] start: version ${(global.__mrApp && global.__mrApp.version) || require('./package.json').version}, pid ${process.pid}, ${process.argv.slice(1).filter((a) => /^--[a-z-]+$/.test(a)).join(' ') || 'no flags'}`);
+// An exception nobody caught: logged (Electron's default would show a dialog, which on a PC reached only
+// remotely nobody can close). The shell's trial watches for one too (app/boot.js) and goes back to the version before.
+process.on('uncaughtException', (e) => { console.error('[host] uncaught exception:', (e && e.stack) || e); });
+
 function newKey() { return crypto.randomBytes(32).toString('base64url'); }
 
 // What this PC runs and what it is called, for the client: a logo and a name next to "호스트 PC" in the
@@ -773,7 +833,7 @@ function codeStamp() {
   return latest;
 }
 const startedStamp = codeStamp();
-function restart() { quitting = true; app.relaunch(); app.quit(); }
+function restart(why = 'restart') { quitAs('restart', why); quitting = true; app.relaunch(); app.quit(); }
 
 // ---- the installed app -----------------------------------------------------------------
 // Started by the app's shell (app/boot.js) this code is one version of an installed app: the shell
@@ -838,7 +898,7 @@ function createWindow() {
   // page that keeps crashing never gets there, and the shell goes back to the version before).
   // The watchdog from the same moment on (a host that crashes while it starts is not started over and over).
   if (!ISOLATED || WATCHDOG_TRIAL) win.webContents.once('did-finish-load', () => setTimeout(startWatchdog, 8000));
-  win.on('session-end', markQuit); // Windows ends the session (log off, shut down): not a crash
+  win.on('session-end', () => { quitAs('quit', 'the system ends the session'); markQuit(); }); // log off, shut down: not a crash
   // A shell swap waits for the same moment (shellswap.confirm: the new shell's code is up).
   if (APP && (!ISOLATED || SHELL_SWAP_TRIAL)) win.webContents.on('did-finish-load', () => setTimeout(() => {
     if (win.isDestroyed() || win.webContents.isCrashed()) return;
@@ -885,7 +945,7 @@ function followNewer() {
   if (!newerVersion || quitting || sessionLive) return;
   console.log(`[host] restarting into version ${newerVersion}`);
   if (win && !win.isDestroyed()) win.webContents.send('update-changed', { ...updateInfo(), state: 'ready', available: { version: newerVersion, required: false, kind: 'bundle', notes: { ko: [], en: [] }, size: 0 } });
-  setTimeout(restart, 1500);
+  setTimeout(() => restart(`version ${newerVersion}, which the client app installed`), 1500);
 }
 async function installUpdate() {
   try { if (APP && APP.update) { quitting = true; await APP.update.install(); return true; } } catch (e) { quitting = false; console.error('[host] update:', e.message); }
@@ -944,6 +1004,9 @@ function shellSwapIfFits() {
   // script then finds it running, starts nothing new and holds the swap back for a while.
   shellswap.begin({ root: shellCtx.root, appDir: shellCtx.appDir, next, restart: [face], log: (s) => console.log('[host] ' + s) }).then(() => {
     if (sessionLive) { console.log('[host] shell swap: a session began meanwhile; not now'); return; }
+    // The swap script starts the host again (from the new folder, or the old one): the watchdog, which runs
+    // from this shell's program and would keep its files in use, steps aside at once.
+    quitAs('handover', 'shell swap');
     quitting = true;
     app.quit();
   }, (e) => console.error('[host] shell swap: ' + e.message)).finally(() => { shellBeginning = false; });
@@ -996,9 +1059,9 @@ function createTray() {
     { label: '열기', click: showWindow },
     { label: '원격 연결 끊기', click: () => win && win.webContents.send('kick') },
     // From a source folder: the code on disk (git pull). The installed app: a look at the update feed.
-    APP && APP.update ? { label: '업데이트 확인', click: () => { showWindow(); APP.update.check().then(askUpdate); } } : { label: '다시 시작 (업데이트 적용)', click: restart },
+    APP && APP.update ? { label: '업데이트 확인', click: () => { showWindow(); APP.update.check().then(askUpdate); } } : { label: '다시 시작 (업데이트 적용)', click: () => restart('the tray (a source folder)') },
     { type: 'separator' },
-    { label: '종료', click: () => { quitting = true; app.quit(); } },
+    { label: '종료', click: () => { quitAs('quit', 'the tray'); quitting = true; app.quit(); } },
   ]));
   tray.on('click', showWindow);
 }
@@ -1007,8 +1070,14 @@ if (SHOW_KEY) app.whenReady().then(showKey);
 else if (!ISOLATED && !app.requestSingleInstanceLock()) app.quit();
 else {
   // Started again: after an update restart; while the page waits to be loaded again after a crash, at once.
-  app.on('second-instance', () => { oneEntry(); if (codeStamp() !== startedStamp) restart(); else { reloadCrashedPage(); showWindow(); } });
-  app.on('before-quit', () => { quitting = true; markQuit(); assist.stop(); input.reset(); setCursorsHidden(false); clearKeyClip(); runningMark(false); });
+  app.on('second-instance', () => { oneEntry(); if (codeStamp() !== startedStamp) restart('the code on disk changed'); else { reloadCrashedPage(); showWindow(); } });
+  app.on('before-quit', () => {
+    // Who quits, in host.log: the code that quits names itself (quitAs); anything else (the shell's updater,
+    // a quit nobody planned) shows where it came from.
+    if (quitKind) console.log(`[host] quitting (${quitKind}: ${quitWhy})`);
+    else console.log('[host] quitting (not named: a restart is expected)\n' + String(new Error('quit called from').stack).split('\n').slice(1, 8).join('\n'));
+    quitting = true; markQuit(); assist.stop(); input.reset(); setCursorsHidden(false); clearKeyClip(); runningMark(false); stopInputGuard();
+  });
   process.on('exit', () => { if (cursorsHidden) input.restoreCursors(); });
   app.whenReady().then(async () => {
     // The code is newer than the Electron it runs on: it was updated (git pull) without setup.ps1/setup.sh.
@@ -1020,7 +1089,7 @@ else {
     // Waiting for the person's answer about a key that cannot be read is this PC's trouble, not this
     // version's: the installed app's shell must not take the wait for a version that does not come up.
     if (!cfg.key && APP && !ISOLATED) APP.ok();
-    if (!cfg.key && !(await askForKey())) { quitting = true; app.quit(); return; }
+    if (!cfg.key && !(await askForKey())) { quitAs('quit', 'no key: the person chose to quit'); quitting = true; app.quit(); return; }
     cfg.hostOs = hostOs();
     cfg.updateNote = oldElectron ? `업데이트가 덜 끝났습니다: 코드는 Electron ${wanted}용인데 ${oldElectron}에서 돌고 있습니다. 호스트를 끄고 ${process.platform === 'win32' ? 'setup.ps1' : './setup.sh'}을 실행한 뒤 다시 시작하세요.` : '';
     cfg.viewOnly = input.viewOnlyReason(); // '' = input from the client is injected here
@@ -1085,7 +1154,7 @@ else {
     const lockChanged = (on) => { screenLocked = on; if (win && !win.isDestroyed()) win.webContents.send('host-lock', on); };
     powerMonitor.on('lock-screen', () => lockChanged(true));
     powerMonitor.on('unlock-screen', () => lockChanged(false));
-    powerMonitor.on('shutdown', markQuit); // Linux and macOS: the system goes down, not a crash (the watchdog leaves it)
+    powerMonitor.on('shutdown', () => { quitAs('quit', 'the system shuts down'); markQuit(); }); // Linux and macOS: not a crash (the watchdog leaves it)
     ipcMain.handle('host-locked', () => { try { return powerMonitor.getSystemIdleState(1) === 'locked'; } catch { return screenLocked; } });
     // `nudge`: the pointer a pixel aside and back first (see input.nudge), while the client waits to learn
     // whether its drag became a drag-and-drop here.
@@ -1375,6 +1444,7 @@ else {
     });
 
     createWindow();
+    startInputGuard();
     // A config file with a mistake in it that still held a usable key: this host runs on the default
     // settings until it is fixed, and says so. (Without a usable key it asked before starting.)
     if (cfgIssue) {
@@ -1404,7 +1474,7 @@ else {
       }
     }
     if (SHELL_SWAP_TRIAL) shellSetup(); // the test VM's end-to-end check of the swap (see SHELL_SWAP_TRIAL)
-    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged, pageKey: testPageKeyPub, getClientApp });
+    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged, pageKey: testPageKeyPub, getClientApp, inputGuardHb: () => startInputGuard.hb || null });
     if (BENCH) require('./bench').run({ cfg, bench: benchCfg, buildClientHtml, app });
     if (LOCALTEST) {
       const file = path.join(app.getPath('userData'), 'my-remote-localtest.html');

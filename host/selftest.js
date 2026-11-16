@@ -89,10 +89,21 @@ async function restoreClipboard(rec) {
 module.exports.keepTextClipboard = keepTextClipboard; // also for dragcheck.js
 module.exports.restoreClipboard = restoreClipboard;
 
-exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged, pageKey, getClientApp }) => {
+exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged, pageKey, getClientApp, inputGuardHb }) => {
   const results = [];
   const check = (name, ok, detail) => { results.push(!!ok); console.log(`[selftest] ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  - ' + detail : ''}`); };
   const info = (text) => console.log(`[selftest] INFO  ${text}`);
+
+  // --frame-check: only presses from the client onto the host window's own frame (framecheck.js), then exit.
+  // It injects input onto the host window for about fifteen seconds: the test VM, or with the person's agreement.
+  if (process.argv.includes('--frame-check')) {
+    if (process.platform !== 'win32') { info('--frame-check is Windows-only (elsewhere a window manager of its own runs the frames)'); return app.exit(0); }
+    await sleep(1500);
+    await require('./framecheck').run({ check, info, guardHb: inputGuardHb ? inputGuardHb() : null });
+    const pass = results.length > 0 && results.every(Boolean);
+    console.log(pass ? '[selftest] ALL PASS' : '[selftest] SOME FAILED');
+    return app.exit(pass ? 0 : 1);
+  }
 
   // --dragout-check: only a real drag out of a real Explorer window (dragcheck.js), then exit.
   // It injects input on this PC for about ten seconds, so it is opt-in and the user must agree first.
@@ -108,6 +119,16 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     const pass = results.length > 0 && results.every(Boolean);
     console.log(pass ? '[selftest] ALL PASS' : '[selftest] SOME FAILED');
     return app.exit(pass ? 0 : 1);
+  }
+
+  // What keeps a remote host usable when something goes wrong (0.8.1): its messages in a file of its own, and
+  // (Windows) the worker that frees the input thread from a window loop (inputguard.js; --frame-check tries it).
+  { const f = path.join(app.getPath('userData'), 'host.log'), text = fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '';
+    check('the host keeps its messages in host.log', /\[host\] start: version/.test(text), `${text.split('\n').length - 1} lines`); }
+  if (process.platform === 'win32') {
+    const hb = inputGuardHb ? inputGuardHb() : null, t1 = hb ? Atomics.load(hb, 0) : 0;
+    await sleep(300);
+    check('the input guard watches the input thread (Windows)', !!hb && Atomics.load(hb, 0) > t1, hb ? `heartbeat ${t1} -> ${Atomics.load(hb, 0)} ms` : 'not started');
   }
 
   // The DLLs (and winassist.exe, which runs as LocalSystem) in host/bin are built files that are
@@ -184,6 +205,34 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       count(lost, UP) === 1 && lost.held === 0 && lost.released === 1 && count(normal, UP) === 1 && normal.released === 0 &&
       count(right, MF.RU) === 1 && right.held === 0 && count(never, DOWN) === 0,
       `lost: ${count(lost, UP)} up, normal: ${count(normal, UP)} up, right button: ${count(right, MF.RU)} up, presses from a move: ${count(never, DOWN)}`);
+  }
+
+  // A press on the host's own window frame is never injected (Windows would hold the injecting thread in a loop
+  // until a release only that thread could inject: remote control stopped, 2026-11-16); what it means is done
+  // instead. A stand-in for the frame: the right fifth of the screen is a window's title bar (x 0.8-0.9),
+  // its minimize button (0.9-0.95) and its close button (above 0.95); the rest is a page.
+  {
+    const R = [{ x: 0, y: 0, width: 1920, height: 1080 }], MF = input.MF;
+    const at = (t, x, extra) => ({ t, d: 0, x, y: 0.5, ...extra });
+    const frame = (px) => (px < 0.8 * 1919 ? null : { hwnd: 7, hit: px < 0.9 * 1919 ? 'caption' : px < 0.95 * 1919 ? 'min' : 'close' });
+    const run = (msgs) => input.simulate(R, msgs, null, { ownFrame: frame });
+    const pressed = (r) => r.log.filter((e) => e.mouse & (MF.LD | MF.LU | MF.RD | MF.RU | MF.MD | MF.MU)).length;
+    const acts = (r) => r.log.filter((e) => e.frame).map((e) => e.frame).join(',');
+    const min = run([at('md', 0.92, { b: 0 }), at('mu', 0.92, { b: 0 })]);
+    const away = run([at('md', 0.92, { b: 0 }), at('mm', 0.5, { h: 1 }), at('mu', 0.5, { b: 0 })]);
+    const drag = run([at('md', 0.85, { b: 0 }), at('mm', 0.86, { h: 1 }), at('mm', 0.87, { h: 1 }), at('mu', 0.87, { b: 0 })]);
+    const dbl = run([at('md', 0.85, { b: 0 }), at('mu', 0.85, { b: 0 }), at('md', 0.85, { b: 0 }), at('mu', 0.85, { b: 0 })]);
+    const right = run([at('md', 0.85, { b: 2 }), at('mu', 0.85, { b: 2 })]);
+    const both = run([at('md', 0.85, { b: 0 }), at('md', 0.85, { b: 2 }), at('mu', 0.85, { b: 2 }), at('mu', 0.85, { b: 0 })]);
+    const lost = run([at('md', 0.97, { b: 0 }), at('mm', 0.97, { h: 0 }), at('md', 0.5, { b: 0 }), at('mu', 0.5, { b: 0 })]);
+    const page = run([at('md', 0.5, { b: 0 }), at('mu', 0.5, { b: 0 })]);
+    const moved = drag.log.filter((e) => e.frame === 'move').map((e) => e.dx);
+    check('a press on the host\'s own window frame is not injected: its buttons, title bar and double click act instead',
+      pressed(min) + pressed(away) + pressed(drag) + pressed(dbl) + pressed(right) + pressed(both) === 0 && acts(min) === 'activate,min' && acts(away) === 'activate' &&
+      acts(drag) === 'activate,move,move' && moved[1] > moved[0] && acts(dbl) === 'activate,activate,max' && acts(right) === '' && acts(both) === 'activate' &&
+      pressed(lost) === 2 && acts(lost) === 'activate' && pressed(page) === 2 && acts(page) === '' && [min, drag, both, lost, page].every((r) => r.held === 0),
+      `min: ${acts(min)}; let go elsewhere: ${acts(away)}; title bar drag: ${acts(drag)} (${moved.join(',')} px); double click: ${acts(dbl)}; right button: '${acts(right)}'; both: ${acts(both)}; ` +
+      `injected presses and releases on the frame: ${pressed(min) + pressed(away) + pressed(drag) + pressed(dbl) + pressed(right) + pressed(both)}; a click in the page after a lost release: ${pressed(lost)}; in the page: ${pressed(page)}`);
   }
 
   // Picture of an app-specific cursor (read-only; uses the standard arrow as a stand-in).
@@ -489,7 +538,14 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     const encOf = (x) => (x.host && x.host.mons ? Object.entries(x.host.mons).map(([i, m]) => `monitor ${Number(i) + 1} ${m.res} ${m.impl}`).join('; ') : '?');
     const nativeName = process.platform === 'linux' ? 'native (X11: XDamage and MIT-SHM, platform/x11capture.js)' : 'native (native/capture.cpp)';
     info('screen capture: ' + (await hostWin.webContents.executeJavaScript(`session && session.native ? ${JSON.stringify(nativeName)} : "the browser engine's"`)));
+    // The page's process finds the shell's modules (koffi) too: code an update put into the data folder did not
+    // before 0.8.1 (the page's process does not search NODE_PATH by itself), and ran on the engine's capturer.
+    { const why = await hostWin.webContents.executeJavaScript('window.hostApi && window.hostApi.nativeWhy ? window.hostApi.nativeWhy() : "?"');
+      check('the native capturer loads in the host page (no module missing)', !/cannot find module|^\?$/i.test(why), why ? `not loaded: ${why}` : 'loaded'); }
     await sleep(4500); s = await state(); info('video encoder: ' + encOf(s) + ' (libaom = AV1 on the CPU, MediaFoundation = H.264 on the graphics card, OpenH264 = H.264 on the CPU)');
+    { const hs = await hostWin.webContents.executeJavaScript('session && session.lastHs ? { cap: session.lastHs.cap, capWhy: session.lastHs.capWhy || "" } : null');
+      check('the host says which capturer it uses, and why not natively (hs.cap, kept in the diagnostics log)', hs && (hs.cap === 'native' || (hs.cap === 'engine' && hs.capWhy)),
+        hs ? hs.cap + (hs.capWhy ? ': ' + hs.capWhy : '') : 'no host statistics'); }
     { const need = JSON.parse(s.view).find((e) => e.i === main);
       check('sends only as many pixels as are shown', ok, `monitor ${main + 1} is ${s.mons[main].w}x${s.mons[main].h}, shown at ${need ? need.w + 'x' + need.h : '?'}, received ${s.res[main]}, expected width ${need ? Math.round(expectW(s, need)) : '?'}`); }
 

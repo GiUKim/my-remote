@@ -392,6 +392,46 @@ function underPointer() {
   const leaf = WindowFromPoint(pt), root = leaf ? GetAncestor(leaf, 2) || leaf : 0; // 2 = GA_ROOT
   return { x: pt.x, y: pt.y, hwnd: Number(root), cls: root ? classOf(root) : '' };
 }
+// ---- the frame of this host's own windows (input.js: framePress) ----------------------------------
+// A press injected onto the frame of a window of the thread that injects (the host's own window: its title
+// bar, its buttons, its borders) is tracked by Windows in a loop on that thread until the button goes up -
+// and the release, the client's next message, can only be injected by that same thread once the loop has
+// ended: remote control stopped until someone at this PC clicked (2026-11-16; reproduced in the test VM,
+// with the press on the minimize button: the thread never came back by itself). So such a press is not
+// injected; input.js does what it means instead. -> { hwnd, hit } or null.
+const GetCurrentThreadId = kernel32.func('GetCurrentThreadId', 'uint32', []);
+const SendMessageW = user32.func('SendMessageW', 'intptr_t', ['uintptr_t', 'uint32', 'uintptr_t', 'intptr_t']);
+const HIT = { 2: 'caption', 3: 'menu', 8: 'min', 9: 'max', 20: 'close', 21: 'help' }; // WM_NCHITTEST codes; borders: 10-17
+function ownFrame(px, py) {
+  try {
+    const leaf = WindowFromPoint({ x: Math.round(px), y: Math.round(py) });
+    const root = leaf ? GetAncestor(leaf, 2) || leaf : 0; // GA_ROOT
+    if (!root || GetWindowThreadProcessId(root, null) !== GetCurrentThreadId()) return null;
+    const code = Number(SendMessageW(root, 0x0084, 0, ((Math.round(py) & 0xffff) << 16) | (Math.round(px) & 0xffff))); // WM_NCHITTEST, a call on this thread
+    if (code === 1 || code === 0 || code === -1 || code === -2) return null; // HTCLIENT, HTNOWHERE, HTTRANSPARENT, HTERROR: the page itself, injected as usual
+    return { hwnd: Number(root), hit: HIT[code] || (code >= 10 && code <= 17 ? 'border' : 'other') };
+  } catch { return null; }
+}
+const RECT_F = koffi.struct('RECT_F', { left: 'long', top: 'long', right: 'long', bottom: 'long' });
+const GetWindowRect = user32.func('GetWindowRect', 'bool', ['uintptr_t', koffi.out(koffi.pointer(RECT_F))]);
+const SetWindowPos = user32.func('SetWindowPos', 'bool', ['uintptr_t', 'uintptr_t', 'int', 'int', 'int', 'int', 'uint32']);
+const IsZoomed = user32.func('IsZoomed', 'bool', ['uintptr_t']);
+const SetForegroundWindow = user32.func('SetForegroundWindow', 'bool', ['uintptr_t']);
+function windowPos(hwnd) { const r = {}; return GetWindowRect(hwnd, r) ? { x: r.left, y: r.top } : null; }
+// SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+function moveWindow(hwnd, x, y) { try { return SetWindowPos(hwnd, 0, Math.round(x), Math.round(y), 0, 0, 0x0001 | 0x0004 | 0x0010); } catch { return false; } }
+// What a press on the frame means, done without the loop: posted, so it runs once this thread is free again.
+function frameAction(hwnd, what) {
+  try {
+    if (what === 'activate') return SetForegroundWindow(hwnd);
+    const sc = what === 'min' ? 0xF020 : what === 'max' ? (IsZoomed(hwnd) ? 0xF120 : 0xF030) : what === 'close' ? 0xF060 : 0;
+    return sc ? PostMessageW(hwnd, 0x0112, sc, 0) : false; // WM_SYSCOMMAND SC_MINIMIZE / SC_RESTORE / SC_MAXIMIZE / SC_CLOSE
+  } catch { return false; }
+}
+// The window loop a press on the frame starts is what stops this thread; where a press got through anyway
+// (one this check did not foresee), host/inputguard.js ends it from another thread.
+const mainThreadId = () => GetCurrentThreadId();
+
 // The mouse buttons held right now, numbered as the client numbers them: bit 0 primary (left),
 // 1 middle, 2 secondary (right), 3 back, 4 forward. Read-only. GetAsyncKeyState reads the physical
 // buttons, so with the buttons swapped for the left hand the primary one is VK_RBUTTON.
@@ -482,5 +522,6 @@ module.exports = {
   virtualDesktop, move, button, wheel, keyOf, sendKey, typeText, maskKey, setSink, clipboardPrivate,
   cursorState, cursorBitmap, hideCursors, restoreCursors, dragFullWindows, displayColor,
   captureClass, dragging, cancelDrag, clipboardFiles, underPointer, buttonsHeld, clickAt, dropFilesBuffer, setClipboardFiles, processRunning,
+  ownFrame, windowPos, moveWindow, frameAction, mainThreadId,
   clipSeq: () => GetClipboardSequenceNumber(),
 };

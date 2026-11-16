@@ -219,7 +219,28 @@ the client app instead).
 - **Another remote-control program connected at the same time.** In that session the host's main
   thread stalled three times (57, 71, 19 s), each stall ending when a Chrome Remote Desktop session
   to the same PC (re)connected (Windows Application log, source `chromoting`). Clicks did nothing
-  meanwhile and were then injected all at once. The host now tells the client (`others`).
+  meanwhile and were then injected all at once. The host now tells the client (`others`). Most likely
+  the stalls were the next item's, which Chrome Remote Desktop's connection happens to end.
+- **A press on the host's own window frame stopped remote control (until 0.8.1).** Reported 2026-11-16:
+  the person pressed the host window's minimize button from the client; the host's main thread did not
+  run for 184 s (diag.log `paused`) and came back when Chrome Remote Desktop connected. Reproduced in the
+  test VM with a bare Electron window (2026-11-17): input injected with `SendInput` on the main thread onto
+  that thread's own window's minimize, close or caption button (right button too, which then opens the
+  window menu) has Windows track the press in a loop on that thread (`GetGUIThreadInfo`: the window holds
+  the mouse) until the button goes up - and the release, the client's next message, is a task of the same
+  thread, which Chromium does not run inside that loop: it never came back by itself. A drag of the title
+  bar came back after about 0.5 s (Chromium runs its tasks inside the move loop); Alt+Space and Alt alone did
+  not stall. A posted `WM_CANCELMODE` does nothing there; a sent one (`SendMessageTimeoutW` from another
+  thread) ends the loop at once and the press is simply undone (the button stays down until the client's
+  own release, so nothing is released twice). So: `input.js` never injects a press onto the frame of a
+  window of its own thread (`ownFrame` in `platform/win32.js`: `WindowFromPoint`, its thread, `WM_NCHITTEST`)
+  and does what it means (the window comes to the front; minimize, maximize, close on their release over
+  them; the title bar moves the window with the pointer, twice in a row maximizes or restores; borders and
+  the window menu do nothing), and `host/inputguard.js`, a worker thread with a heartbeat from the main
+  thread, sends `WM_CANCELMODE` when the main thread has not beaten for 0.8 s while it holds the mouse, a
+  menu or a window being moved (the net under what `ownFrame` did not foresee). `--frame-check` tries both
+  with real input onto the host window (the test VM). Linux is not affected: the window manager, another
+  program, runs the frames.
 
 - **Dragging out of the remote picture.** A program that runs a drag-and-drop has handed the mouse to
   OLE's hidden window of class `CLIPBRDWNDCLASS`; `input.dragging()` reads that (`GetGUIThreadInfo`,
@@ -321,14 +342,33 @@ the client app instead).
   So: a small process of its own (the app's program as Node, `stdio[0]` a pipe the host holds, so it learns
   of the host's end at once, with no pid to be reused), started 8 s after the host page loaded (the moment
   a new version says it is up: a host that crashes while starting is not started over and over), starts
-  the host again with its own program, arguments and folder 3 s after it ended without quitting. Quitting
-  on purpose writes the host's pid into `quit-on-purpose` in its profile first (`before-quit`, Windows'
-  `session-end`, `powerMonitor` `shutdown`); a marker of another pid does not count. At most 3 restarts in
-  30 minutes (`watchdog.json`), each noted in `watchdog.log` there. It ends with the host, so a shell swap
-  is not held up by it. A host ended from Task Manager counts as a crash (use the tray's 종료).
-  Checked: `release/test-watchdog.js` (6 checks: quit on purpose, an end without a word, `abort()`, an older
-  marker, the limit, old restarts) on Windows and Ubuntu 24.04; with the real host on this PC (`--localtest
+  the host again with its own program, arguments and folder 3 s after it ended without quitting. Every quit
+  writes `quit-on-purpose` in its profile first (`before-quit`, Windows' `session-end`, `powerMonitor`
+  `shutdown`): `{ pid, kind, why }`; a marker of another pid does not count. From 0.8.1 only `kind: quit`
+  (the tray's 종료, "quit" in the key dialog, the system ending the session) leaves the host down;
+  `handover` (the shell swap, whose script restarts the host and needs this program's files free) makes the
+  watchdog step aside at once; anything else - `restart` (`restart()`, an update by the shell's updater, a
+  quit nobody named) - is one after which a host must come back: the watchdog waits up to 60 s for one
+  (`running.json` naming another live process) and starts it when none came. Before, every quit counted
+  as on purpose, and on 2026-11-16 the host (0.8.0, 20 s after an update) quit with a marker and stayed
+  down; what quit it is not known (the host kept no log then: `host.log` now, below; before-quit writes who
+  quit, with a stack when nobody named it). It never starts one while another host runs. At most 3
+  restarts in 30 minutes (`watchdog.json`), each noted in `watchdog.log` there. A host ended from Task
+  Manager counts as a crash (use the tray's 종료).
+  Checked: `release/test-watchdog.js` (11 checks: the old marker, quit, handover, a restart that did and
+  one that did not come back, a crash while another host runs, an end without a word, `abort()`, an older
+  marker, the limit, old restarts) on Windows; with the real host on this PC (0.7.1, `--localtest
   --no-client --watchdog`): killed, it came back within 6 s; its window closed, it stayed down.
+- **host.log** (0.8.1): what the host's main process and its page print also goes to `host.log` in its
+  profile (1 MB, then `host.old.log`): the start (version, pid, flags), sessions, the capture in use and why
+  not natively, quits and who quit, the input guard's interventions, uncaught exceptions (logged instead of
+  Electron's dialog, which nobody can close on a PC reached only remotely). Nothing it prints holds the key
+  (`--show-key` keeps no log). Read it with `diag.log` when something went wrong.
+- **koffi ends Node-mode helpers with 0xC0000409.** The cursor guard (`cursor-guard.js`, a Node-mode
+  process with koffi) ended that way four times on 2026-11-16, always after it had put the cursors back
+  (Windows' crash reports: 33 modules, `koffi.node+0x72bed`), and so did second host instances and two
+  hosts while quitting. Not reproduced elsewhere (the test VM, this PC, with the same calls). The guard now
+  ends with `TerminateProcess` on itself once its work is done.
 - **The host page going away, and the config file.** When the host page reloads or its process
   dies, `pageGone()` in `main.js` releases held keys and buttons, restores the cursors, drops offered
   drag-out files and unfinished uploads and sets the tray to idle (the page's own teardown does not
@@ -966,8 +1006,16 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
     shell's: the host page was not found. It is `path.join(__dirname, 'host.html')` now. Likewise the
     client app as a second program (`--localtest` on Linux, `--client-app-check`): from a source folder
     Electron is given the `client` folder, the installed app is told `--client`.
-  - koffi belongs to the shell; the bundle finds it through `NODE_PATH` (set in `boot.js`, inherited by
-    the page's process, where the native capture loads it).
+  - koffi belongs to the shell; the bundle finds it through `NODE_PATH` (set in `boot.js`). The page's
+    process inherits the variable but does NOT search it (measured with Electron 45: `require('koffi')`
+    fails in a preload whose folder has no node_modules above it): code an update put into the data folder
+    never loaded the native capturer, and every updated host ran on the engine's capturer, with its
+    pointer in the picture, from 0.3.x until 0.8.1 (found 2026-11-17 on the user's PC; the built-in code
+    finds the shell's modules by its folder, which was all the packaged test ran). `host/preload.js` reads
+    the paths from the variable again (`Module._initPaths()`, as `boot.js` does), and `test-app.js
+    --packaged` now runs the self-test a second time through the same code installed as an update
+    (version 9.9.9 in the test's data folder), which fails on the check "the native capturer loads in
+    the host page (no module missing)" without that.
   - `--selftest`, `--localtest`, `--bench`, `--show-key` and `--loader=` are errands: no updater, and no
     start counted against a trial.
 - **Names.** The two faces keep the profile names they always had (`my-remote-host`: its config and
@@ -1189,6 +1237,7 @@ Run from `host/` with Electron's env var cleared.
 | `node native/build.js user@host[:folder]` | Builds the native modules on a Linux machine with mingw-w64: `host/bin/capture.dll` + `capture.dll.json` (commit them with the source), `tools/native/capprobe.dll`. After a change in `native/` |
 | `npm run bench -- --native-probe --capture-probe ...` | Bench with a native observer of the same display: reports when the picture was on the host's own screen and how long after that the capturer in use had it. Needs `tools/native/capprobe.dll` |
 | `electron . --selftest --dragout-check` | Only real drags out of a real Explorer window this check opens on a temp folder (`dragcheck.js`): A straight on the host, B and C through a client window running the real page in the client app's shell (held outside; let go at once, before Explorer started its drag). INJECTS INPUT for about half a minute, so only with the user's agreement; skipped when the clipboard holds more than text, which is put back |
+| `electron . --selftest --frame-check` | Only presses from the client onto the host window's own frame (`framecheck.js`, Windows): its minimize button and a title-bar drag through the real input path, then a press around it that the input guard must end within about a second. Shows the host window and INJECTS INPUT onto it for about fifteen seconds: the test VM, or with the user's agreement |
 | `electron . --selftest --dropin-check` | Only real drags IN (`dragcheck.js runIn`): from an Explorer window on the second display onto a client window's picture of the first, dropped by the host into another Explorer window (empty space; a folder icon; a whole folder). Needs two displays. INJECTS INPUT for about half a minute: only with the user's agreement |
 | `electron . --selftest --soak=<minutes>` | A long session instead of the rest of the self-test, to find what grows: the view-only client keeps switching monitors and going to the overview, and the host drops the session every minute so the client reconnects. Every 20 s (15, 35 and 55 s after a reconnect), after collecting garbage in every process (the pages through the debugger protocol, the main process through V8's `gc()`): memory of every process (the host page and the client page separately), the script heaps of both pages and of the main process, and on Windows the kernel/GDI/USER handles of the main process and the host page. Fails when what each session leaves behind in the main process and both pages together (median of the last third of the samples minus the first, per reconnect, after the first 3 minutes) passes 2 MB. `--soak-heap=<folder>` writes two heap snapshots of the main process (they hold the test's throwaway key; delete them), `--soak-no-audio` leaves the system sound out after the first session. 2026-11-13, before that day's fixes: about +1.2 MB and +8 to +10 kernel handles (sections and mutexes) per reconnect in the main process. Traced with a bare Electron script to the engine's desktop capture started for the sound of every session (2 sections and 2 mutexes per start; `desktopCapturer.getSources` and peer connections leave nothing) and fixed (the sound is taken over, the source list cached). After: 10 min, 9 reconnects, main process 85-86 MB and its handles flat, both pages flat; the host page still gained about 2 handles per monitor per session, traced to destroyed D3D devices and fixed in `capture.dll` (see "Native capture") |
 | `electron . --selftest --clip-check` | Same, plus putting two files on this PC's clipboard and reading them back, files copied on the host announced and fetched, files the client sent not announced back, and (Windows) text from the client on the clipboard before the next input. Only runs when the clipboard holds nothing or plain text, which is put back |
@@ -1275,6 +1324,7 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/platform/x11capture.js` | Native screen capture on X11 for `preload.js` (XDamage + MIT-SHM through koffi, no pointer in the picture): the calls of `capture.dll` in JavaScript |
 | `host/inputcheck.js` | `--input-check` (Linux): real input into windows and a second program it opens itself |
 | `host/cursor-guard.js` | Separate small process that restores the cursors if the host process dies (Windows) |
+| `host/inputguard.js`, `host/framecheck.js` | A worker thread of the host's main process that frees the input thread from a window loop (Windows; see "A press on the host's own window frame"); the opt-in real-input check `--frame-check` |
 | `host/signal.js` | Shared by host and client: key derivation, encrypted signaling channel |
 | `host/loader.template.html` | Loader source: asks for the key, fetches the client page from the host, runs it |
 | `host/client.template.html` | The client page itself. Built in memory at host start and sent to loaders; never shipped as a file |
@@ -1556,7 +1606,11 @@ calls that took over 50 ms since the previous entry (`input mm`, `clip-read`, `c
 `drag clipboard` (reading the clipboard waits for its owner), `cursor`, ...) and
 `paused` (the main thread itself did not run for over a second), each as count, total and longest ms.
 The client's input is injected on that thread, so a stall there is a stall of every click. Entries
-written many at once after a gap mean the same. `released`: buttons the host let go because the
+written many at once after a gap mean the same. The host's part says which capturer runs (`cap`:
+`native` or `engine`, from 0.8.1) and, for the engine, why (`capWhy`: `config`, `given up: <error>` for
+10 minutes after a native failure (an HDR monitor: until the host restarts), `no capturer: <why>`, or
+the monitor that could not be opened). Before 0.8.1 nothing said so: an updated host ran on the engine's
+capturer for weeks unnoticed (see "The installed app"). `host.log` next to it has the host's own messages. `released`: buttons the host let go because the
 client's moves said they were no longer held. The client's part may carry `ptr`: `cancel` (the
 browser ended a pointer while a button was held), `lost` (pointer capture went away while held),
 `drag` (browser drag-and-drop starts that were blocked), `released` (host buttons let go after a

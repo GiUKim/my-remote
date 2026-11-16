@@ -208,6 +208,24 @@ function makeApp(name, builtin, port) {
       `exit ${r.status}; ${fails.slice(0, 3).join(' ; ') || outText.split('\n').filter((l) => /\[app\]|Error|error/.test(l)).slice(0, 5).join(' ; ')}`);
     const cap = (/\[selftest\] INFO {2}screen capture: (.*)/.exec(outText) || [])[1];
     console.log(`      screen capture in the package: ${cap || '?'} (native needs koffi, which the shell brings); ${(outText.match(/\[selftest\] PASS/g) || []).length} checks`);
+    // The same code once more as an UPDATE: installed into the data folder as the updater does, where it has
+    // no node_modules above it and finds the shell's modules only through NODE_PATH. Before 0.8.1 the host
+    // page's process did not (its native capturer never loaded: the engine's capturer for every updated host,
+    // seen on the user's PC on 2026-11-17), and this test only ever ran the code the package came with.
+    {
+      const upd = path.join(tmp, 'real-update'), data = path.join(tmp, 'real-data');
+      const u = build({ out: upd, key: keyFile, dirty: true, version: '9.9.9', notes: { ko: [], en: [] }, minimum: '0.0.0', date: '' });
+      const bytes = fs.readFileSync(path.join(upd, 'latest.json')), sig = fs.readFileSync(path.join(upd, 'latest.json.sig'), 'utf8');
+      const manifest = core.verifyManifest(bytes, sig, [PUB]);
+      core.installVersion(data, manifest, bytes, sig, fs.readFileSync(path.join(upd, u.bundleFile)));
+      core.activate(data, manifest.version, null);
+      const r2 = spawnSync(exe, [...EXTRA, '--selftest'], { env, encoding: 'utf8', timeout: 6 * 60e3, maxBuffer: 64 * 1024 * 1024 });
+      const out2 = String(r2.stdout || '') + String(r2.stderr || ''), fails2 = out2.split('\n').filter((l) => /\[selftest\] FAIL/.test(l));
+      check('the same code installed as an update (the data folder) passes the self-test through the shell, its native capturer loaded',
+        r2.status === 0 && /\[selftest\] ALL PASS/.test(out2) && /\[app\] host: version 9\.9\.9 \(installed/.test(out2) && /PASS {2}the native capturer loads in the host page/.test(out2),
+        `exit ${r2.status}; ${(/\[app\] host: [^\n]*/.exec(out2) || [''])[0]}; ${fails2.slice(0, 3).join(' ; ') || out2.split('\n').filter((l) => /\[app\]|Error|error/.test(l)).slice(0, 5).join(' ; ')}`);
+      console.log(`      screen capture as an update: ${(/\[selftest\] INFO {2}screen capture: (.*)/.exec(out2) || [])[1] || '?'}; ${(out2.match(/\[selftest\] PASS/g) || []).length} checks`);
+    }
     // What shell the package holds (host/shellswap.js reads it to decide whether a newer package replaces it).
     const held = require('../host/shellswap').readShell(path.join(p.dir, 'resources', 'app'));
     const electronVersion = fs.readFileSync(path.join(__dirname, '..', 'host', 'node_modules', 'electron', 'dist', 'version'), 'utf8').trim();
