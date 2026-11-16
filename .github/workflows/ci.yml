@@ -38,6 +38,8 @@ jobs:
         run: node release/ci-run.js node release/test-hosts.js
       - name: Host and client kept one app (updates followed, the one entry)
         run: node release/ci-run.js node release/test-appsync.js
+      - name: The shell replaced by a newer package (signed list, staging, the sh swap script on fake folders)
+        run: node release/ci-run.js node release/test-shellswap.js
 
   native:
     name: native binaries rebuilt byte for byte
@@ -72,6 +74,8 @@ jobs:
           node node_modules/electron/install.js
       - name: Assist service protocol (fake service, no input)
         run: node release/ci-run.js node release/test-assist.js
+      - name: The shell replaced by a newer package (the PowerShell swap script on fake folders)
+        run: node release/ci-run.js node release/test-shellswap.js
       - name: Self-test
         working-directory: host
         run: node ../release/ci-run.js node_modules/electron/dist/electron.exe . --selftest

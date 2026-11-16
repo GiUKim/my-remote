@@ -3,7 +3,7 @@
 // whatever they run. A PC's window is a thin shell around the same client page a browser uses: it loads
 // the loader file, which fetches the current page from that host, so the page needs no update of this
 // app. See shell.js for what the app adds to the page.
-const { app, BrowserWindow, dialog, ipcMain, safeStorage, screen, session, shell: openWith } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, net, safeStorage, screen, session, shell: openWith } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -11,6 +11,7 @@ const { spawn } = require('child_process');
 const shell = require('./shell');
 const Hosts = require('./hosts');
 const appsync = require('../host/appsync');
+const shellswap = require('../host/shellswap');
 
 const argOf = (name) => (process.argv.find((a) => a.startsWith(name)) || '').slice(name.length);
 // --loader=<file>: no list; one window on that loader file, with a profile of its own in a folder next
@@ -231,6 +232,7 @@ function listMode() {
     win.on('page-title-updated', (e) => e.preventDefault()); // the title names the PC, whatever the page calls itself
     shell.attach(win, { host: id });
     open.set(id, win);
+    if (shellLook) shellLook.abort(); // a new shell is fetched another time, not over this session's bandwidth
     win.on('closed', () => { if (open.get(id) === win) open.delete(id); connected.delete(id); changed(); });
     // A host older than this list does not send a page that tells the app about its session (hostInfo):
     // the picture starting to play says it is connected, and when. (It then stays "connected" in the
@@ -324,12 +326,55 @@ function listMode() {
       .then((r) => { if (r.response === 0) again(); }, () => {});
   }
 
+  // ---- the shell replaced by a newer package (host/shellswap.js) ----
+  // The host does it when it runs (host/main.js), and does not while this app runs (running.json in this
+  // profile: Windows keeps a running program's files). Without a host this app fetches the package (not
+  // while a PC's window is open: that session's bandwidth) and swaps when the person quits it: nothing is
+  // started again, the next start is the new shell's.
+  let shellCtx = null, shellLook = null;
+  const runningFile = () => path.join(app.getPath('userData'), 'running.json');
+  function clientShell() {
+    if (!shellswap.EXE[process.platform]) return;
+    const parts = appsync.shellParts();
+    if (!parts || !parts.conf) return;
+    shellCtx = { root: parts.root, conf: parts.conf, appDir: path.dirname(process.execPath), me: shellswap.readShell(parts.dir) };
+    try { fs.writeFileSync(runningFile(), JSON.stringify({ pid: process.pid, version: APP.version })); } catch {}
+    if (!hostRunning().running) shellswap.sweep(shellCtx.appDir, shellCtx.root).then((g) => { if (g.length) console.log('[client] shell: removed ' + g.join(', ')); }, () => {});
+    const lookNow = async () => {
+      if (!shellCtx || shellLook || open.size || hostRunning().running) return;
+      const ctl = new AbortController();
+      shellLook = ctl;
+      try {
+        const r = await shellswap.look({ feed: shellCtx.conf.feed, keys: shellCtx.conf.keys, root: shellCtx.root, appDir: shellCtx.appDir, current: shellCtx.me,
+          fetchFn: (u, o) => net.fetch(u, o), signal: ctl.signal, log: (s) => console.log('[client] ' + s) });
+        console.log(`[client] shell ${shellCtx.me.version}: ${r.state}${r.version ? ' ' + r.version : ''}${r.why ? ' (' + r.why + ')' : ''}`);
+      } finally { shellLook = null; }
+    };
+    const T = { firstLookMs: 3 * 60e3, everyMs: 6 * 3600e3, ...(shellCtx.conf.shellTiming || {}) }; // see host/main.js
+    setTimeout(lookNow, T.firstLookMs);
+    setInterval(lookNow, T.everyMs);
+  }
+  let shellSwapping = false;
+  app.on('will-quit', (e) => {
+    if (!shellCtx || shellSwapping) return;
+    try { if (JSON.parse(fs.readFileSync(runningFile(), 'utf8')).pid === process.pid) fs.rmSync(runningFile(), { force: true }); } catch {}
+    if (shellLook) shellLook.abort();
+    const next = shellswap.readNext(shellCtx.root, shellCtx.appDir);
+    if (!next || hostRunning().running || shellswap.heldRecently(shellCtx.root)) return;
+    // The quit waits until the script runs (it then waits for this app to end).
+    e.preventDefault();
+    shellSwapping = true;
+    shellswap.begin({ root: shellCtx.root, appDir: shellCtx.appDir, next, restart: [], log: (s) => console.log('[client] ' + s) })
+      .catch((err) => console.error('[client] shell swap: ' + err.message)).finally(() => app.exit(0));
+  });
+
   app.whenReady().then(async () => {
     const win = LAUNCHER ? showLauncher() : showHome();
     appUp(win, () => home || launcher); // questions about updates go to whichever list window is open (it can be closed and opened again)
     if (APP && !testDir) {
       appsync.watch({ running: APP.version, onNewer: newerInstalled });
       oneEntry();
+      clientShell();
     }
     if (!homeAlt) return;
     // The self-test's PCs (see --list above).

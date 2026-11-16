@@ -20,13 +20,13 @@ function dataRoot() {
   return path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'my-remote', 'app');
 }
 // The shell that started this code: app/boot.js is the main module; its folder holds core.js, the config
-// and the icons. null when there is none (a source folder).
+// (feed, keys: what host/shellswap.js needs too) and the icons. null when there is none (a source folder).
 function shellParts(mainFile = require.main && require.main.filename) {
   try {
     const dir = path.dirname(mainFile);
     const core = require(path.join(dir, 'core.js'));
     const conf = JSON.parse(fs.readFileSync(path.join(dir, 'update-config.json'), 'utf8'));
-    return { dir, core, root: conf.dataRoot || dataRoot() };
+    return { dir, core, root: conf.dataRoot || dataRoot(), conf };
   } catch { return null; }
 }
 

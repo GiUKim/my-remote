@@ -16,6 +16,12 @@
 //   --allow-dirty  take the files from the folder as they are (for trying things out; never for a release)
 // The signing key (release/keygen.js makes one) is never in the repository: --key, or
 // MY_REMOTE_RELEASE_KEY, or ~/.my-remote-release/update-signing-key.pem.
+//
+//   node release/build.js --sign-packages=<folder>
+// After the packages are made (release/package.js on each system): the list of them, packages.json and its
+// signature, from the records package.js wrote next to each archive (<name>.package.json, copied into
+// <folder> with the archives; each archive is hashed again). Installed apps read it to replace their shell
+// by a newer one (host/shellswap.js). Upload both files with the release.
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -42,7 +48,12 @@ function walk(rel, out = []) {
 }
 function collect(dirty) {
   let listed;
-  try { listed = git(['ls-files', '-z', '--', ...INCLUDE], { stdio: ['ignore', 'pipe', 'ignore'] }).toString('utf8').split('\0'); } catch (e) {
+  try {
+    listed = git(['ls-files', '-z', '--', ...INCLUDE], { stdio: ['ignore', 'pipe', 'ignore'] }).toString('utf8').split('\0');
+    // A try-out build takes new files that git does not have yet too (not ignored ones): twice a module that
+    // was required but not yet added left the packaged test's app unable to start (an error box on the PC).
+    if (dirty) listed = listed.concat(git(['ls-files', '-z', '--others', '--exclude-standard', '--', ...INCLUDE], { stdio: ['ignore', 'pipe', 'ignore'] }).toString('utf8').split('\0'));
+  } catch (e) {
     if (!dirty) throw new Error('this folder is no git checkout: a release is made from a commit');
     listed = INCLUDE.flatMap((p) => walk(p));
   }
@@ -100,6 +111,27 @@ function build({ out = path.join(ROOT, 'dist', 'release'), key = defaultKey(), c
   return { out, version, manifest, bundleFile, files: files.size, bytes: bundle.length, sig };
 }
 
+// packages.json(.sig) in `dir` from the package records there. -> { version, packages, bytes, sig }
+function signPackages(dir, key = defaultKey()) {
+  const records = fs.readdirSync(dir).filter((n) => n.endsWith('.package.json')).map((n) => JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')));
+  if (!records.length) throw new Error(`no package records (*.package.json, written by release/package.js) in ${dir}`);
+  const version = records[0].version, packages = {};
+  for (const r of records) {
+    if (r.version !== version) throw new Error(`the records are of different releases (${version}, ${r.version})`);
+    if (packages[r.platform]) throw new Error(`two packages for ${r.platform}`);
+    const buf = fs.readFileSync(path.join(dir, r.file));
+    if (buf.length !== r.size || core.sha256(buf) !== r.sha256) throw new Error(`${r.file} is not the archive its record names`);
+    packages[r.platform] = { file: r.file, sha256: r.sha256, size: r.size, shell: r.shell };
+  }
+  const bytes = Buffer.from(JSON.stringify({ format: 1, app: core.APP, kind: 'packages', version, packages }, null, 1) + '\n');
+  let pem;
+  try { pem = fs.readFileSync(key, 'utf8'); } catch { throw new Error(`no signing key at ${key} (node release/keygen.js makes one)`); }
+  const sig = core.signManifest(bytes, pem);
+  fs.writeFileSync(path.join(dir, 'packages.json'), bytes);
+  fs.writeFileSync(path.join(dir, 'packages.json.sig'), sig + '\n');
+  return { version, packages, bytes, sig };
+}
+
 // A release is made only from a commit that passed CI (.github/workflows/ci.yml) on GitHub: pushed, and
 // every check run of it finished successfully, each of the CI jobs among them. -> { ok, why }
 const CI_JOBS = ['checks', 'native', 'Windows', 'Linux', 'performance gate']; // the jobs' names begin so
@@ -124,6 +156,17 @@ async function ciPassed(sha) {
 
 if (require.main === module) (async () => {
   const arg = (name) => { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? a.slice(name.length + 3) : undefined; };
+  if (arg('sign-packages')) {
+    try {
+      const dir = path.resolve(arg('sign-packages')), r = signPackages(dir, arg('key'));
+      // Checked the way an app will check it, with the keys the app trusts.
+      const conf = JSON.parse(fs.readFileSync(path.join(ROOT, 'app', 'update-config.json'), 'utf8'));
+      require('../host/shellswap').verifyList(r.bytes, r.sig, conf.keys);
+      for (const [k, p] of Object.entries(r.packages)) console.log(`${k}: ${p.file} ${(p.size / 1048576).toFixed(0)} MB, shell ${require('../host/shellswap').identityOf(p.shell)}`);
+      console.log(`written to ${dir}: packages.json, packages.json.sig (release ${r.version}); verifies with the keys in app/update-config.json`);
+    } catch (e) { console.error('signing the packages failed: ' + e.message); process.exit(1); }
+    return;
+  }
   const dirty = process.argv.includes('--allow-dirty');
   // A try-out build (--allow-dirty) is no release and skips the CI gate; --skip-ci is for when GitHub
   // cannot be reached and you know the commit is good: it is said in the output.
@@ -145,4 +188,4 @@ if (require.main === module) (async () => {
   } catch (e) { console.error('release build failed: ' + e.message); process.exit(1); }
 })();
 
-module.exports = { build, collect, defaultKey, ciPassed };
+module.exports = { build, collect, defaultKey, ciPassed, signPackages };

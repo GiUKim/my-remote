@@ -1,0 +1,12 @@
+{
+  "ko": [
+    "앱 바탕(Electron 등 업데이트로는 바뀌지 않던 부분)도 스스로 바뀝니다: 바탕이 바뀐 새 설치 묶음이 나오면 앱이 받아 서명을 확인한 뒤, 호스트는 원격 접속이 없고 클라이언트 앱이 꺼져 있을 때 잠깐 꺼졌다가 새 바탕으로 다시 켜집니다(호스트를 쓰지 않는 PC는 클라이언트 앱을 닫을 때 바뀝니다)",
+    "새 바탕이 3분 안에 정상으로 뜨지 않으면 예전 바탕으로 되돌리고, 그 버전은 다시 받지 않습니다",
+    "0.6.x 이하 묶음으로 설치한 앱은 이 버전으로 업데이트한 뒤 한 번 새 묶음(약 140MB)을 받아 바탕을 바꿉니다. 그 뒤에는 MyRemote.exe를 직접 열어도 시작 화면이 뜹니다. 코드만 바뀐 릴리스에서는 다시 받지 않습니다"
+  ],
+  "en": [
+    "The app's shell (Electron and the other parts an update of the code could not replace) now replaces itself: when a release's package holds a new shell, the app fetches it and checks its signature; the host quits for a moment when no remote session is on and the client app is not running, and comes back on the new shell (on a PC without a host, the client app swaps when it is closed)",
+    "A new shell that does not come up within 3 minutes is put aside, the old one comes back, and that release is not fetched again",
+    "Apps installed from packages up to 0.6.x fetch the new package (about 140 MB) once after this update; MyRemote.exe started directly then opens the start screen too. Releases that change only the code are not fetched again"
+  ]
+}

@@ -1,4 +1,4 @@
-const { app, shell, BrowserWindow, ipcMain, desktopCapturer, screen, safeStorage, dialog, powerSaveBlocker, powerMonitor, clipboard, Tray, Menu, Notification, nativeImage } = require('electron');
+const { app, shell, BrowserWindow, ipcMain, desktopCapturer, screen, safeStorage, dialog, powerSaveBlocker, powerMonitor, clipboard, Tray, Menu, Notification, nativeImage, net } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const input = require('./input');
 const assist = require('./assist'); // Windows: the lock screen through the assist service (see assist.js)
 const appsync = require('./appsync'); // the installed app's two faces kept one app (see appsync.js)
+const shellswap = require('./shellswap'); // the installed app's shell replaced by a newer package (see shellswap.js)
 
 // The native capturer waits for each monitor's next image on a worker thread of the host page's
 // process; the default of four threads would be used up by three monitors. (Inherited by that process.)
@@ -747,7 +748,12 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'host.html')); // by this file's place: in the installed app the app's own folder is the shell's
   // The installed app: this version counts as up once its page has loaded and stayed for a while (a
   // page that keeps crashing never gets there, and the shell goes back to the version before).
-  if (APP && !ISOLATED) win.webContents.on('did-finish-load', () => setTimeout(() => { if (!win.isDestroyed() && !win.webContents.isCrashed()) APP.ok(); }, 8000));
+  // A shell swap waits for the same moment (shellswap.confirm: the new shell's code is up).
+  if (APP && (!ISOLATED || SHELL_SWAP_TRIAL)) win.webContents.on('did-finish-load', () => setTimeout(() => {
+    if (win.isDestroyed() || win.webContents.isCrashed()) return;
+    if (!ISOLATED) APP.ok();
+    if (shellCtx) shellswap.confirm(shellCtx.root, shellCtx.me.identity);
+  }, 8000));
   // The host's first start on Windows: the lock screen support is offered at once (assist.offer).
   // --offer-assist: in a local trial too (its throwaway profile has never been asked), to try the offer.
   if (assist.supported && (!ISOLATED || (LOCALTEST && process.argv.includes('--offer-assist')))) win.webContents.once('did-finish-load', () => setTimeout(offerAssist, 1500));
@@ -793,6 +799,63 @@ function followNewer() {
 async function installUpdate() {
   try { if (APP && APP.update) { quitting = true; await APP.update.install(); return true; } } catch (e) { quitting = false; console.error('[host] update:', e.message); }
   return false;
+}
+
+// ---- the shell replaced by a newer package (host/shellswap.js) -----------------------------
+// Looked for 3 minutes after the start and every 6 hours, fetched only while no remote session is on (it
+// would take the session's bandwidth; a session starting stops it), swapped when no session is on and
+// the client app does not run (Windows keeps a running program's files): this host starts the swap
+// script and quits, the script starts it again from the new folder, or from the old one when the new
+// shell does not come up.
+let shellCtx = null, shellLook = null;
+// --localtest --shell-swap: the swap in a local trial too (its throwaway profile, the local relay: no host
+// reachable from outside), started again the same way; how the test VM checks it from end to end.
+const SHELL_SWAP_TRIAL = LOCALTEST && process.argv.includes('--shell-swap');
+function clientAppRunning() {
+  try {
+    const r = JSON.parse(fs.readFileSync(path.join(app.getPath('appData'), 'my-remote-client', 'running.json'), 'utf8'));
+    process.kill(Number(r.pid), 0);
+    return true;
+  } catch (e) { return !!e && e.code === 'EPERM'; }
+}
+function shellSetup() {
+  if (!APP || (ISOLATED && !SHELL_SWAP_TRIAL) || !shellswap.EXE[process.platform]) return;
+  const parts = appsync.shellParts();
+  if (!parts || !parts.conf) return;
+  shellCtx = { root: parts.root, conf: parts.conf, appDir: path.dirname(process.execPath), me: shellswap.readShell(parts.dir) };
+  shellswap.sweep(shellCtx.appDir, shellCtx.root).then((g) => { if (g.length) console.log('[host] shell: removed ' + g.join(', ')); }, () => {});
+  const lookNow = async () => {
+    if (!shellCtx || sessionLive || quitting || shellLook) return;
+    const ctl = new AbortController();
+    shellLook = ctl;
+    try {
+      const r = await shellswap.look({ feed: shellCtx.conf.feed, keys: shellCtx.conf.keys, root: shellCtx.root, appDir: shellCtx.appDir, current: shellCtx.me,
+        fetchFn: (u, o) => net.fetch(u, o), signal: ctl.signal, log: (s) => console.log('[host] ' + s) });
+      console.log(`[host] shell ${shellCtx.me.version}: ${r.state}${r.version ? ' ' + r.version : ''}${r.why ? ' (' + r.why + ')' : ''}`);
+    } finally { shellLook = null; }
+    shellSwapIfFits();
+  };
+  // shellTiming in the shell's config: shorter waits for a test package (as the updater's `timing`).
+  const T = { firstLookMs: 3 * 60e3, everyMs: 6 * 3600e3, swapCheckMs: 10 * 60e3, ...(shellCtx.conf.shellTiming || {}) };
+  setTimeout(lookNow, T.firstLookMs);
+  setInterval(lookNow, T.everyMs);
+  setInterval(shellSwapIfFits, T.swapCheckMs);
+}
+let shellBeginning = false;
+function shellSwapIfFits() {
+  if (!shellCtx || sessionLive || quitting || shellBeginning) return;
+  const next = shellswap.readNext(shellCtx.root, shellCtx.appDir);
+  if (!next || clientAppRunning() || shellswap.heldRecently(shellCtx.root)) return;
+  const face = shellswap.hostFace();
+  if (SHELL_SWAP_TRIAL) face.args = ['--host', '--localtest', '--no-client', '--shell-swap'];
+  shellBeginning = true;
+  // Quits only once the script runs (begin resolves). A session that began meanwhile keeps the host: the
+  // script then finds it running, starts nothing new and holds the swap back for a while.
+  shellswap.begin({ root: shellCtx.root, appDir: shellCtx.appDir, next, restart: [face], log: (s) => console.log('[host] ' + s) }).then(() => {
+    if (sessionLive) { console.log('[host] shell swap: a session began meanwhile; not now'); return; }
+    quitting = true;
+    app.quit();
+  }, (e) => console.error('[host] shell swap: ' + e.message)).finally(() => { shellBeginning = false; });
 }
 function downloadsPage() { if (APP && APP.downloads) shell.openExternal(APP.downloads).catch(() => {}); return true; }
 let askingUpdate = false;
@@ -999,6 +1062,8 @@ else {
       sessionLive = !!live;
       setTray(!!live);
       if (!live) setTimeout(followNewer, 3000); // a version the client app installed meanwhile: now (the client may reconnect first)
+      if (live && shellLook) shellLook.abort(); // a new shell is fetched another time, not over the session's bandwidth
+      if (!live) setTimeout(shellSwapIfFits, 60e3); // a new shell staged: swapped once the client has not reconnected for a minute
       if (live && !SELFTEST && !BENCH && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: '원격 접속이 시작되었습니다.' }).show();
       // The assist service, when installed: the lock screen for the session's client. Not in the
       // automated runs (the self-test and the bench must not depend on what this PC has installed).
@@ -1090,8 +1155,10 @@ else {
         // The client face installed a newer version: this host follows when no remote session is on (see 'session').
         appsync.watch({ running: APP.version, onNewer: (v) => { newerVersion = v; console.log(`[host] version ${v} was installed by the client app: restarting into it when no session is on`); followNewer(); } });
         oneEntry();
+        shellSetup();
       }
     }
+    if (SHELL_SWAP_TRIAL) shellSetup(); // the test VM's end-to-end check of the swap (see SHELL_SWAP_TRIAL)
     if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder });
     if (BENCH) require('./bench').run({ cfg, bench: benchCfg, buildClientHtml, app });
     if (LOCALTEST) {

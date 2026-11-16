@@ -208,6 +208,10 @@ function makeApp(name, builtin, port) {
       `exit ${r.status}; ${fails.slice(0, 3).join(' ; ') || outText.split('\n').filter((l) => /\[app\]|Error|error/.test(l)).slice(0, 5).join(' ; ')}`);
     const cap = (/\[selftest\] INFO {2}screen capture: (.*)/.exec(outText) || [])[1];
     console.log(`      screen capture in the package: ${cap || '?'} (native needs koffi, which the shell brings); ${(outText.match(/\[selftest\] PASS/g) || []).length} checks`);
+    // What shell the package holds (host/shellswap.js reads it to decide whether a newer package replaces it).
+    const held = require('../host/shellswap').readShell(path.join(p.dir, 'resources', 'app'));
+    const electronVersion = fs.readFileSync(path.join(__dirname, '..', 'host', 'node_modules', 'electron', 'dist', 'version'), 'utf8').trim();
+    check('the package says which shell it holds (shell.json: Electron, koffi, the shell\'s files)', held.version === p.version && held.identity.startsWith(electronVersion + '|'), `${held.version} ${held.identity}`);
     // Windows: the host takes the one entry's id (its window with the client app's on the taskbar, its
     // notice of a remote session shown by that entry), although the shell gave it an id of its own.
     if (process.platform === 'win32') {

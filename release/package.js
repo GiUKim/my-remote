@@ -2,6 +2,8 @@
 //   node release/package.js [--release=dist/release] [--out=dist/pack] [--no-archive] [--config=<update-config.json>]
 // -> dist/pack/MyRemote/                       the app: unpack anywhere and start it
 //    dist/pack/MyRemote-Windows-x64.zip        (on Windows), MyRemote-Linux-x64.tar.gz (on Linux)
+//    dist/pack/MyRemote-<OS>-x64.package.json  what release/build.js --sign-packages lists in packages.json
+//                                              (the archive's SHA-256 and the shell it holds: shell.json)
 // The names carry no version: the download links point at "the latest release's MyRemote-Windows-x64.zip"
 // (https://github.com/<owner>/<repo>/releases/latest/download/<name>), and the app updates itself, so a
 // version in the folder's name would soon be the wrong one. The version is in the folder's read-me.
@@ -13,10 +15,32 @@
 // Linux on a Linux machine (file modes and links survive there), macOS on a Mac (where it must also be
 // signed to run at all; not done).
 'use strict';
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const core = require('../app/core');
+const shellswap = require('../host/shellswap');
+
+// What the package's shell is (host/shellswap.js, release/build.js --sign-packages): installed apps replace
+// their shell only by a newer release's package whose shell differs from theirs, so a release that changed
+// only the code costs them no download. The shell's own files are hashed with their line ends made plain
+// (a Windows checkout has CRLF), with the config and package.json without the release's version. Raise
+// SHELL_REV when this file changes what a package holds in another way (the exe's resources, what it copies).
+const SHELL_REV = 1;
+function shellInfo({ shell, conf, electron, koffi }) {
+  const h = crypto.createHash('sha256');
+  for (const f of ['boot.js', 'core.js', 'updater.js', 'guard.js', 'my-remote.sh', 'icon.png', 'icon.ico']) {
+    const p = path.join(ROOT, 'app', f);
+    if (!fs.existsSync(p)) continue;
+    let b = fs.readFileSync(p);
+    if (/\.(js|sh)$/.test(f)) b = Buffer.from(b.toString('utf8').replace(/\r\n/g, '\n'));
+    h.update(`${f}\0${core.sha256(b)}\n`);
+  }
+  const { version, ...rest } = shell; // eslint-disable-line no-unused-vars
+  h.update(`update-config\0${JSON.stringify(conf)}\npackage\0${JSON.stringify(rest)}\n`);
+  return { format: 1, electron, koffi, app: h.digest('hex').slice(0, 32), base: shell.base, rev: SHELL_REV };
+}
 
 const ROOT = path.join(__dirname, '..');
 const arg = (name) => { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? path.resolve(a.slice(name.length + 3)) : undefined; };
@@ -106,6 +130,8 @@ function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(RO
   if (!fs.existsSync(native)) throw new Error(`koffi has no binary for ${triplet}`);
   for (const f of ['package.json', 'index.js', 'indirect.js', 'LICENSE.txt']) if (fs.existsSync(path.join(koffi, f))) { fs.mkdirSync(path.join(app, 'node_modules', 'koffi'), { recursive: true }); fs.copyFileSync(path.join(koffi, f), path.join(app, 'node_modules', 'koffi', f)); }
   fs.cpSync(native, path.join(app, 'node_modules', 'koffi', 'build', 'koffi', triplet), { recursive: true });
+  const info = shellInfo({ shell, conf, electron: fs.readFileSync(path.join(dist, 'version'), 'utf8').trim(), koffi: JSON.parse(fs.readFileSync(path.join(koffi, 'package.json'), 'utf8')).version });
+  fs.writeFileSync(path.join(app, 'shell.json'), JSON.stringify(info, null, 1) + '\n');
   if (!win) {
     fs.copyFileSync(path.join(ROOT, 'app', 'my-remote.sh'), path.join(dir, 'my-remote.sh'));
     fs.chmodSync(path.join(dir, 'my-remote.sh'), 0o755);
@@ -144,7 +170,14 @@ function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(RO
     if (win) execFileSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'), ['-a', '-c', '-f', file, '-C', out, folder], { stdio: 'inherit' });
     else execFileSync('tar', ['-czf', file, '-C', out, folder], { stdio: 'inherit' });
   }
-  return { dir, file, version, name, sha256: file ? core.sha256(fs.readFileSync(file)) : '' };
+  const sha256 = file ? core.sha256(fs.readFileSync(file)) : '';
+  // The record release/build.js --sign-packages makes packages.json of (copy it next to the archive).
+  let record = '';
+  if (file) {
+    record = path.join(out, name + '.package.json');
+    fs.writeFileSync(record, JSON.stringify({ platform: shellswap.platformKey(), file: path.basename(file), sha256, size: fs.statSync(file).size, version, shell: info }, null, 1) + '\n');
+  }
+  return { dir, file, version, name, sha256, shell: info, record };
 }
 
 if (require.main === module) {
@@ -152,7 +185,8 @@ if (require.main === module) {
     const r = pack({ release: arg('release'), out: arg('out'), config: arg('config'), archive: !process.argv.includes('--no-archive') });
     console.log(`${r.name} ${r.version}: ${r.dir}`);
     if (r.file) console.log(`${path.basename(r.file)}: ${(fs.statSync(r.file).size / 1024 / 1024).toFixed(0)} MB, sha256 ${r.sha256}`);
+    console.log(`shell ${shellswap.identityOf(r.shell)}${r.record ? '; record ' + path.basename(r.record) + ' (for release/build.js --sign-packages)' : ''}`);
   } catch (e) { console.error('packaging failed: ' + e.message); process.exit(1); }
 }
 
-module.exports = { pack, brandExe };
+module.exports = { pack, brandExe, shellInfo, SHELL_REV };

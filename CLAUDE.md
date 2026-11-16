@@ -94,11 +94,13 @@ the client app instead).
 - **Publish a release only when the user asks for one.** Since 2026-11-16 (the user's decision, from
   v0.5.2 on) the agent publishes it, which was the user's step before: CI green on the commit
   (`release/build.js` checks), `release/build.js`, the packages (`release/package.js` on Windows; the
-  Linux one built and self-tested on the Linux PC), tag `v<version>` on that commit, then `gh release
-  create v<version> <latest.json, latest.json.sig, the bundle, both packages> --title "My Remote
-  <version>" --notes-file <from release/notes> --latest` (GitHub CLI, logged in as the user on the
-  Windows PC; never print its token), and check that `releases/latest/download/latest.json` is the new
-  one. Every installed app sees it within 6 h. Never mark a release `--critical` (it installs itself on
+  Linux one built and self-tested on the Linux PC; each writes `<name>.package.json` next to its archive),
+  both archives and both records in one folder and `release/build.js --sign-packages=<folder>`
+  (`packages.json` + `.sig`, from 0.7.0 on: what installed apps replace their shell by), tag `v<version>`
+  on that commit, then `gh release create v<version> <latest.json, latest.json.sig, the bundle, both
+  packages, packages.json, packages.json.sig> --title "My Remote <version>" --notes-file <from
+  release/notes> --latest` (GitHub CLI, logged in as the user on the Windows PC; never print its token),
+  and check that `releases/latest/download/latest.json` and `packages.json` are the new ones. Every installed app sees it within 6 h. Never mark a release `--critical` (it installs itself on
   every app, without asking) unless the user said so for that release.
 - **Keep `app/` small and stable.** It is the part an update cannot replace: a fault in `boot.js`,
   `core.js`, `updater.js` or `guard.js` stays with every installed app until its user installs a new
@@ -784,8 +786,8 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
   fits (`setCanRestart`: the host when no session is on, 30 min at most; the client app after a notice).
   `release/policy.json` carries `minimum` forward, so apps that missed a critical release are still
   forced by later ordinary ones. A release with a higher `needsBase` than the shell is only announced
-  (`kind: 'package'`): a new package must be installed by hand. Updating the shell itself (a new
-  Electron) automatically is not built; it matters, since Electron needs security updates.
+  (`kind: 'package'`): a new package must be installed by hand. Since 0.7.0 the code replaces the shell
+  itself with a newer package (see "The shell replaced by a newer package" below).
 - **Going back.** A version started for the first time is on trial until the code calls `ok()` (the
   host: its page loaded and stayed 8 s; the client app: 4 s after its window loaded). It is marked bad
   and the version before (at last the built-in one) runs again when it throws while starting, does not
@@ -857,6 +859,69 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
   screen and entry; the screen itself was looked at in pictures and both buttons pressed in a harness
   (test mode, no host started). Not tried yet: the real host started from the screen, the update
   followed by a running host in real use.
+- **The shell replaced by a newer package** (`host/shellswap.js`, 0.7.0; the user's go-ahead 2026-11-16,
+  after an app unpacked from the 0.4.2 package kept showing its old first-start dialog: without this every
+  PC needs its package unpacked again by hand for a new Electron or shell, and a PC reached only through
+  this app cannot be done at all, since quitting its host ends the connection).
+  - What a shell is: `release/package.js` writes `resources/app/shell.json` (Electron, koffi, a hash of
+    the shell's own files with plain line ends and of the config and package.json without the version,
+    `base`, `rev` = `SHELL_REV`, raised by hand when package.js changes a package in another way). Its
+    identity decides: a newer release whose package holds another shell replaces it; the same shell in a
+    newer release costs no download. Shells from before 0.7.0 have no shell.json: replaced once.
+  - What the newest packages are: `packages.json` in the feed, signed with the release key (`kind:
+    'packages'`, so a manifest cannot pass for it nor it for a manifest), made by `release/build.js
+    --sign-packages=<folder>` from the records package.js writes (`<name>.package.json`: platform, file,
+    SHA-256, size, version, shell). The public keys and feed come from the shell's update-config.json
+    (`appsync.shellParts().conf`).
+  - Staged next to the app folder (`<folder>.next`, the same disk; the archive into `<data>/shell/<v>/`,
+    checked against the list's size and SHA-256 while it comes, unpacked with Windows' own tar / tar -xz,
+    its shell.json checked again): `<data>/shell/next.json`. One stager (`stage.lock`). Not when the
+    folder above the app cannot be written (Program Files) or the disk lacks 3x the archive. The host
+    looks 3 min after the start and every 6 h, never while a session is on (a session starting aborts the
+    download); the client app only when no host runs and no PC window is open.
+  - Swapped by a script written for that one swap (`<data>/shell/swap.ps1` with a BOM for non-ASCII
+    paths, or `swap.sh`): the host starts it and quits when no session is on, the client app does not run
+    (its `running.json`) and no swap was held back in the last 6 h; the client app at `will-quit` when no
+    host runs (nothing is started again then: the new program runs once as Node and must load the shell's
+    core.js). The script waits up to 2 min for every process of the folder to end, renames the folder to
+    `.old` and `.next` into its place, starts the host (`--host`), and waits up to 3 min for `up.json`
+    with the new identity (`shellswap.confirm`, at the moment the host also calls `APP.ok()`). Not up: the
+    new folder becomes `.failed`, `.old` comes back and is started, `bad-<version>` keeps that release from
+    being staged again. App still running or a folder that cannot be moved: nothing swapped, the staged
+    shell stays, `held` keeps the app from trying again for 6 h. A later start removes a leftover `.old`,
+    and `.failed` after a week (`sweep`).
+  - Things that bit (found by `release/test-shellswap.js` on fake app folders whose program is a copy of
+    Node): a PowerShell that Node starts `detached` gets no console and ends at once without running its
+    script, and one started attached sits in the job object libuv puts children in, which ends them with
+    the parent: so a short-lived PowerShell `Start-Process`es the script's (a hidden window of its own;
+    libuv's job lets grandchildren go) and `begin` waits for it (`spawnSync`, about half a second). A
+    PowerShell function's single result comes back unrolled, and a CIM object has no `.Count`: the wait
+    for running processes saw none and swapped under a running program. Windows lets a folder be renamed
+    while a program in it runs, so that wait is the only guard. Windows refuses to delete any hard link
+    of a running image (a test artifact: give old and new programs different files). PowerShell 5.1 writes
+    UTF-8 with a BOM (readJson strips it). Twice a new module that was required but not yet in git left
+    the packaged test's app unable to start, with an error box on the PC: `build.js --allow-dirty` now
+    takes untracked files too.
+  - `--localtest --shell-swap`: the swap in a local trial (throwaway profile, local relay; started again
+    the same way); `shellTiming` in the shell's config shortens the waits for a test package.
+  - Hardened before the first release (a remote host must never quit for a swap that will not bring it
+    back): the script runs as a command (`Get-Content | Invoke-Expression`), not as a script file, which an
+    execution policy (a company PC's) could forbid; it writes `swap.started` first and the app quits only
+    once it sees it (`begin` resolves; 20 s, else the app keeps running and the swap is dropped); cmdlets
+    instead of .NET calls (constrained language); `Move-Item` never onto a folder that is there.
+  - "Up" is the moment the host calls `APP.ok()`: its page finished loading 8 s ago. A page that is missing
+    gives an error page that also finishes loading (a test package without host.html counted as up); a
+    shell whose program does not start, or whose code throws, never gets there.
+  - Verified 2026-11-16: `test-shellswap.js` (11 checks, the real PowerShell and sh scripts, a folder name
+    with Korean, a space and an apostrophe) on Windows 10 and Ubuntu 24.04. End to end with real packages
+    signed by a test key and a feed on 127.0.0.1, the host in `--localtest --shell-swap`: in the test VM
+    (Windows 10) a host on a shell without shell.json (0.7.0) fetched 0.7.1, quit, was swapped and came
+    back on the new shell, up 10 s later, the old folder gone; with the final code a 0.7.1 host fetched a
+    0.7.2 whose MyRemote.exe was no program, swapped, waited 3 min, put it aside as `.failed`, came back on
+    0.7.1 and recorded `bad-0.7.2`. On the Linux PC (Ubuntu 24.04, its own Xvfb display and data root) the
+    same first swap through `my-remote.sh`: swapped 2 s after the host quit, up 34 s later. Not verified: a
+    real feed (the first will be the release), the client app's swap at quit with the real app, a company
+    PC's policies (constrained language), a virus scanner holding files, a PC with the app in Program Files.
 - **Plain names.** No file or folder the package holds or the app makes has a space or anything but
   ASCII in its name (the user's rule, 2026-11-14: a path with Korean or a space fails on some systems
   and with some tools): `MyRemote.exe`, `README.txt` (Korean inside, with a byte order mark on
@@ -885,9 +950,9 @@ that asks host or client and the shortcuts in the real Start menu, the client ap
 Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하는 벤치마크, 버그를 잡는 CI/CD"):
 
 - **`.github/workflows/ci.yml`** on every push to `main`, every pull request, by hand and weekly:
-  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-appsync.js`), `native` (`release/ci-native.js`:
+  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-appsync.js`, `test-shellswap.js` with sh), `native` (`release/ci-native.js`:
   every committed binary rebuilt from `native/` with Ubuntu 22.04's mingw-w64 and compared byte for byte),
-  `Windows` (`test-assist.js`, the self-test, `test-app.js --packaged`), `Linux X11` (the self-test with
+  `Windows` (`test-assist.js`, `test-shellswap.js` with PowerShell, the self-test, `test-app.js --packaged`), `Linux X11` (the self-test with
   `--input-check --clip-check --client-app-check` under Xvfb, `test-app.js --packaged`) and the `performance
   gate` on both (`release/bench-gate.js --profile=ci`). `codeql.yml` scans the JavaScript; `dependabot.yml`
   proposes Electron/koffi/action updates as pull requests that CI then tests.
@@ -931,7 +996,10 @@ Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하�
   copies it from `koffi/build/koffi/<platform>_<arch>`, koffi 2's place. And koffi belongs to the shell:
   an installed app keeps the koffi its package brought, so the code must work on koffi 2 for as long as
   such apps are in use, with nothing in CI running it there once the source folder moved on. koffi 2 is
-  still maintained (2.16.3 of July 2026 came after 3.0.0 of May).
+  still maintained (2.16.3 of July 2026 came after 3.0.0 of May). The user agreed (2026-11-16): the PR was
+  closed with `@dependabot ignore this major version` (Dependabot answered it will not propose 3.x again;
+  2.x updates still come). koffi 3 comes back once the shell swap (above) has moved every app onto a new
+  package, together with package.js copying `@koromix/koffi-<platform>-<arch>`.
 - **A flake on GitHub's Linux runner**: "a window the client app reports minimized is not sent ..." and
   "1:1 mode receives the full resolution" failed once (2026-11-16, commit 7f9fd6c) and passed when the
   job ran again (`gh run rerun --failed`). Not seen on the Linux PCs.
@@ -966,6 +1034,8 @@ Run from `host/` with Electron's env var cleared.
 | `node release/test-assist.js` | The host's side of the Windows assist service (`host/assist.js`) against a fake service and helper on test pipes: protocol and version, the pipe-server session checks, input routing per state and its encoding, pictures in pieces, Ctrl+Alt+Del, reconnecting, installing refused during a remote session, the first-start offer. Windows only (skips elsewhere); no input reaches the PC (the sink is recorded, never installed) and nothing runs elevated (`T.elevate`). A few seconds |
 | `host\bin\winassist.exe install`, `uninstall`, `status`, `grab <file.bmp>` | The assist service itself: install/uninstall need an elevated prompt (the host window's card does this through UAC). `grab` writes the current input desktop to a BMP (a secure one only when run as LocalSystem) |
 | `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept. A second |
+| `node release/test-shellswap.js` | The shell replaced by a newer package (`host/shellswap.js`) in plain Node with keys, a feed on 127.0.0.1 and app folders of its own: the signed list, which package replaces which shell, staging (and archives that are not the listed one), and the real swap script (PowerShell / sh) on fake folders whose program is a copy of Node: swapped and confirmed, not confirmed (put back), still running (not swapped), nothing to start, the sweep. About a minute |
+| `node release/build.js --sign-packages=<folder>` | `packages.json` and its signature from the packages' records (`<name>.package.json`) and archives in `<folder>`, each archive hashed again; checked with the keys in `app/update-config.json`. Part of every release from 0.7.0 on |
 | `node release/test-appsync.js` | The two faces kept one app (`host/appsync.js`) in plain Node: a newer version followed once it came up in the other face (not on trial, not a bad one, once), the one entry in place of the two shortcuts (Windows and Linux layouts in folders of its own; a source folder's Linux entries stay). A second |
 | `electron client --loader=<file> --list [--home-shot=<file.png> --home-size=940x480 --home-js=<code>]` | The client app's list on a profile of its own next to `<file>` (any loader file), never the person's. PCs come from `home-import.json` next to it (`[{ name, key, open, loader, seen, lastAt }]`, made-up keys; removed when read). With `--home-shot` no window is shown: a picture of the list is written and the app ends (how `docs/img/home.png` was made) |
 | `node release/test-update.js` | The update logic (`app/core.js`, `app/updater.js`) in plain Node with made-up releases and feeds: signatures, file names, downgrades, the trial and going back, ordinary and required updates. A few seconds |
@@ -997,6 +1067,7 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/icon.svg` | The app's icon for the Linux app menu entries (the tray icon is drawn in `main.js`) |
 | `client/hosts.js`, `client/home.html`, `client/home-preload.js` | The client app's list of PCs: the store (`hosts.json`, keys only encrypted; Electron-free), the list window's page and its bridge `window.mrHome` (see Gotchas) |
 | `client/launcher.html`, `client/launcher-preload.js` | The installed app's start screen (two big buttons: this PC shared as the host, another PC reached as the client), the client app's first window with `--launcher`; its bridge `window.mrStart` |
+| `host/shellswap.js`, `release/test-shellswap.js` | The installed app's shell replaced by a newer package: the signed list, the decision, staging next to the folder, the swap script, the check that the new shell is up. Its test, plain Node (see "The shell replaced by a newer package") |
 | `host/appsync.js`, `release/test-appsync.js` | The two faces kept one app: a running face follows a version the other installed; the one "MyRemote" entry in place of older packages' two shortcuts. Its test, plain Node |
 | `release/test-hosts.js` | The store's test, plain Node |
 | `release/install-local.js` | A built release into this PC's installed app, the updater's way without a feed |
