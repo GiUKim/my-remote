@@ -243,7 +243,7 @@ exports.run = async ({ check, info, js, until, dragOut, native }) => {
     const sw = new BrowserWindow({ show: false, webPreferences: { preload: shell.PRELOAD, partition: 'input-check' } }); // its own session: attach() sets permission handlers
     try {
       app.setPath('desktop', stand);
-      shell.attach(sw);
+      shell.attach(sw, { trust: true }); // the page loaded as it is (no loader, nothing signed)
       await sw.loadURL('data:text/html,<p>drop</p>');
       // What the page does when something it received is let go at the pointer (receiveFiles in the client page).
       const dropHere = (name, group) => sw.webContents.executeJavaScript(`(async () => { const s = window.mrShell, id = await s.dropPoint();

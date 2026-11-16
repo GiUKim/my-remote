@@ -163,7 +163,7 @@ exports.runIn = async ({ check, info, cfg, buildClientHtml }) => {
     const page = path.join(os.tmpdir(), `myremote-dropin-client-${process.pid}.html`);
     fs.writeFileSync(page, buildClientHtml());
     cw = new BrowserWindow({ show: false, focusable: false, x: other.bounds.x + 700, y: other.bounds.y + 120, width: 900, height: 600, alwaysOnTop: true, webPreferences: { preload: shell.PRELOAD, backgroundThrottling: false } });
-    shell.attach(cw);
+    shell.attach(cw, { trust: true }); // the page loaded as it is (no loader, nothing signed)
     await cw.loadFile(page, { hash: `k=${cfg.key}&auto` });
     cw.showInactive();
     const cj = (code) => cw.webContents.executeJavaScript(code);
@@ -321,7 +321,7 @@ exports.run = async ({ check, info, dragOut, closeDragFiles, cfg, buildClientHtm
     const displays = screen.getAllDisplays(), prim = screen.getPrimaryDisplay(), other = displays.find((d) => d.id !== prim.id);
     const spot = other ? { x: other.bounds.x + 40, y: other.bounds.y + 40 } : { x: prim.bounds.x + prim.bounds.width - 760, y: prim.bounds.y + prim.bounds.height - 520 };
     cw = new BrowserWindow({ show: false, focusable: false, ...spot, width: 720, height: 460, webPreferences: { preload: shell.PRELOAD, backgroundThrottling: false } });
-    shell.attach(cw);
+    shell.attach(cw, { trust: true }); // the page loaded as it is (no loader, nothing signed)
     await cw.loadFile(page, { hash: `k=${cfg.key}&auto` });
     cw.showInactive();
     const cj = (code) => cw.webContents.executeJavaScript(code);

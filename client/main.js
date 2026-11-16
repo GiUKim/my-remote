@@ -35,6 +35,9 @@ const homeAlt = listTest ? loaderArg : '';
 const homeShot = homeAlt ? argOf('--home-shot=') : '';
 const testDir = alt || homeAlt ? path.dirname(path.resolve(alt || homeAlt)) : '';
 if (testDir) app.setPath('userData', path.join(testDir, 'client-app-profile'));
+// --trust-page-key=<public key> (a test only, with --loader=): the self-test's host signs its page with a key of
+// its own, which no release has (see client/pagecheck.js).
+if (testDir) shell.setTestPageKey(argOf('--trust-page-key='));
 const LOADER = alt || homeAlt ? path.resolve(alt || homeAlt) : path.join(__dirname, '..', 'my-remote-client.html');
 
 // The installed app (started by app/boot.js, see host/main.js): the shell finds and installs updates of

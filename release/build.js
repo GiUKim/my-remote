@@ -85,6 +85,19 @@ function build({ out = path.join(ROOT, 'dist', 'release'), key = defaultKey(), c
   if (needsBase === undefined) needsBase = JSON.parse(fs.readFileSync(path.join(ROOT, 'app', 'package.json'), 'utf8')).base;
   if (date === undefined) { try { date = git(['log', '-1', '--format=%cs'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString('utf8').trim(); } catch { date = ''; } }
 
+  // The client page a host of this release serves (built as main.js builds it, for the default relay),
+  // signed: the client app gives a page its powers (saving files, the clipboard, device tokens) only when a
+  // release key signed it (client/shell.js 'shell:pageCheck'). A host on another relay, or run from a source
+  // folder, serves an unsigned page. `kind: 'page'` keeps it from passing as a manifest, and the reverse.
+  if (files.has('host/client.template.html') && files.has('host/signal.js')) {
+    const builder = require('../host/build-client');
+    const html = builder.fillText(files.get('host/client.template.html').toString('utf8'), files.get('host/signal.js').toString('utf8'), builder.DEFAULT_SERVER);
+    const statement = Buffer.from(JSON.stringify({ format: 1, app: core.APP, kind: 'page', version, server: builder.DEFAULT_SERVER, sha256: core.sha256(Buffer.from(html, 'utf8')) }) + '\n');
+    let pagePem;
+    try { pagePem = fs.readFileSync(key, 'utf8'); } catch { throw new Error(`no signing key at ${key} (node release/keygen.js makes one)`); }
+    files.set('host/page.json', statement);
+    files.set('host/page.sig', Buffer.from(core.signManifest(statement, pagePem) + '\n'));
+  }
   const bundle = core.packBundle(files), bundleFile = `my-remote-${version}.bundle`;
   const manifest = {
     format: 1, app: core.APP, version, date, needsBase, minimum, critical: !!critical, notes,

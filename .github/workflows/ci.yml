@@ -40,6 +40,8 @@ jobs:
         run: node release/ci-run.js node release/test-devices.js
       - name: QR codes and one-time codes (for the opt-in authenticator app)
         run: node release/ci-run.js node release/test-qr.js && node release/ci-run.js node release/test-totp.js
+      - name: The client app's check of a host's page (signed by a release), and what release/build.js signs
+        run: node release/ci-run.js node release/test-pagecheck.js
       - name: Host and client kept one app (updates followed, the one entry)
         run: node release/ci-run.js node release/test-appsync.js
       - name: The shell replaced by a newer package (signed list, staging, the sh swap script on fake folders)

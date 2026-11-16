@@ -460,8 +460,22 @@ the client app instead).
     hashes (each once). Five wrong codes lock it for 15 minutes, doubling with each lock up to a day.
     Turning confirmation off, setting the app up or removing it are refused during a remote session.
     Recovery codes are copied through main (`copy-secret`: never passed on to a client, cleared after a minute).
-  - Still to come (agreed with the user 2026-11-16): the release key's signature on the page the host serves
-    (unsigned: no app powers), a one-time code with acceptance for helping others.
+  - **The page a host serves, signed** (the user's go-ahead the same day: "서명이 없으면 파일 저장 같은 앱 기능을
+    주지 않습니다"). `release/build.js` builds the client page a host of the release builds for the default
+    relay and signs `{kind:'page', app, version, server, sha256}` with the release key (`host/page.json`,
+    `host/page.sig` in the bundle: the manifest lists them). The host sends that statement with its page
+    (`app.sig`, `pageSig` in main.js) when the page it built is that one; a source folder or another relay
+    serves it unsigned. In the client app the loader asks `mrShell.pageCheck({ statement, sig, sha256 })`
+    before it writes the page in (`client/pagecheck.js`, with the keys of the app's own shell:
+    update-config.json beside boot.js, which an update of the code cannot change); the answer holds until
+    the window loads anything else (`did-start-navigation`). Only a signed page gets what the app adds to a
+    browser: saving files where they were dropped, the click and Ctrl+V after a drop, the clipboard both
+    ways (`clipPoll`/`clipWrite`), device tokens (`deviceHello`/`Paired`/`Verified`). Anything else runs as in
+    a browser (pictures, input, windows, fullscreen). So a host older than 0.8.0 loses those in a 0.8.0
+    client app until it is updated. `__mrBoot.signed` goes into the page's measurements (`cs.signed`).
+    The isolated runs sign with a throwaway key (`testPageKey`) and start the client app with
+    `--trust-page-key=` (taken only with `--loader=`); the in-process test windows are attached with `trust`.
+  - Still to come (agreed with the user 2026-11-16): a one-time code with acceptance for helping others.
   - Checked: `release/test-devices.js` (26: the store, an unreadable file, the log), `release/test-hosts.js`
     (34: the app's side, unreadable and broken files, an older version's rewrite), `release/test-totp.js`
     (RFC 6238's test values), `release/test-qr.js` (the standard's worked example and tables; not yet read by
@@ -1082,7 +1096,7 @@ that asks host or client and the shortcuts in the real Start menu, the client ap
 Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하는 벤치마크, 버그를 잡는 CI/CD"):
 
 - **`.github/workflows/ci.yml`** on every push to `main`, every pull request, by hand and weekly:
-  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-devices.js`, `test-appsync.js`, `test-shellswap.js` with sh, `test-watchdog.js`), `native` (`release/ci-native.js`:
+  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-devices.js`, `test-qr.js`, `test-totp.js`, `test-pagecheck.js`, `test-appsync.js`, `test-shellswap.js` with sh, `test-watchdog.js`), `native` (`release/ci-native.js`:
   every committed binary rebuilt from `native/` with Ubuntu 22.04's mingw-w64 and compared byte for byte),
   `Windows` (`test-assist.js`, `test-shellswap.js` with PowerShell, `test-watchdog.js`, the self-test with `--client-app-check` (from 2026-11-16: device tokens, and safeStorage's key that only a normal quit writes, are Windows matters), `test-app.js --packaged`), `Linux X11` (the self-test with
   `--input-check --clip-check --client-app-check` under Xvfb, `test-app.js --packaged`) and the `performance
@@ -1167,6 +1181,7 @@ Run from `host/` with Electron's env var cleared.
 | `host\bin\winassist.exe install`, `uninstall`, `status`, `grab <file.bmp>` | The assist service itself: install/uninstall need an elevated prompt (the host window's card does this through UAC). `grab` writes the current input desktop to a BMP (a secure one only when run as LocalSystem) |
 | `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept, device tokens (kept, the key let go only for the token that worked, a key given again replaces the token). A second |
 | `node release/test-devices.js` | The host's device tokens (`host/devices.js`) and access log (`host/accesslog.js`) in plain Node: tokens never as text, the same app pairing again, blocking, removal, the limit, a file that cannot be read never written over, a broken file kept; log entries with known fields only, kept 90 days and under 2 MB. A second |
+| `node release/test-pagecheck.js` | The client app's check of a host's page (`client/pagecheck.js`): signed by a release key or not, a changed statement, another page, a manifest that is no statement; and that `release/build.js` signs the page a host builds for the default relay (a real build with a test key). Seconds |
 | `node release/test-qr.js`, `node release/test-totp.js` | The QR codes (`host/qr.js`) against the standard's worked example, format and version information and the layout; the one-time codes (`host/totp.js`) against RFC 6238's test values, base32, recovery codes. For the opt-in authenticator app of "Devices". A second |
 | `node release/test-watchdog.js` | The host's watchdog (`host/watchdog.js`) in plain Node with a fake host that starts it as `main.js` does: a quit on purpose, an end without a word, `abort()`, an older host's marker, the limit of 3 restarts in 30 minutes. Half a minute |
 | `node release/test-shellswap.js` | The shell replaced by a newer package (`host/shellswap.js`) in plain Node with keys, a feed on 127.0.0.1 and app folders of its own: the signed list, which package replaces which shell, staging (and archives that are not the listed one), and the real swap script (PowerShell / sh) on fake folders whose program is a copy of Node: swapped and confirmed, not confirmed (put back), still running (not swapped), nothing to start, the sweep. About a minute |
@@ -1253,7 +1268,8 @@ direction) and two topic names.
 Bootstrap (loader, before anything else; same channel and encryption as signaling):
 
 - loader -> host topic: `{t:'ver', sid, ts, have}` where `have` is the hash of the page it has cached, or `''`
-- host -> client topic: `{t:'app', sid, ts, hash, html?}`; `html` is left out when `have === hash`
+- host -> client topic: `{t:'app', sid, ts, hash, html?, sig?}`; `html` is left out when `have === hash`; `sig`
+  (from 0.8.0): `{ statement, sig }`, the release's signature of the page (see "Devices"), which old loaders ignore
 
 The loader stores the page in localStorage, sets `window.__mrBoot = {key, device?, remember, preset, updated}`
 and replaces its own document with the page (`document.open/write`); the page then connects as below.

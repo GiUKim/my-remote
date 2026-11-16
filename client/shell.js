@@ -37,6 +37,12 @@ const shells = new Map(); // main webContents id -> { win, children, host }
 // see shell:bootKey and shell:bootDevice.
 let list = null;
 function setList(hooks) { list = hooks || null; }
+// Pages a release signed (client/pagecheck.js): only they get what the app adds to a browser. The release keys
+// are the shell's; a test adds one of its own (client/main.js --trust-page-key=, with --loader= only).
+const pagecheck = require('./pagecheck');
+let testPageKey = '';
+function setTestPageKey(k) { testPageKey = typeof k === 'string' && /^[A-Za-z0-9+/=]{40,120}$/.test(k) ? k : ''; }
+const pageKeys = () => [...pagecheck.releaseKeys(), ...(testPageKey ? [testPageKey] : [])];
 
 function shellOf(sender) {
   for (const s of shells.values()) {
@@ -45,6 +51,10 @@ function shellOf(sender) {
   }
   return null;
 }
+// The shell of a window whose page a release signed (shell:pageCheck), or of one a test trusts (attach's
+// `trust`): saving files, the clipboard, the click and Ctrl+V after a drop, device tokens. Other pages run as
+// in a browser.
+function trusted(e) { const s = shellOf(e.sender); return s && (s.trusted || s.trustAlways) ? s : null; }
 
 // ---- things dragged out of the remote picture and let go over this PC ---------------
 // The page tells us the moment the pointer is let go (dropPoint); what was dragged arrives a
@@ -280,13 +290,29 @@ function setupIpc() {
   // instead of the key, what the host is told about this PC, the token the host gave, and that it worked.
   // The relay a token's loader talks to is its own (the one it is built for), never one a page names.
   ipcMain.handle('shell:bootDevice', async (e) => { const s = listed(e); return s && list.device ? list.device(s.host) : null; });
-  ipcMain.handle('shell:deviceHello', (e) => (listed(e) && list.hello ? list.hello() : null));
+  // Only a page a release signed takes part in device tokens (a page from someone posing as the host must not
+  // leave this app a token of theirs, nor make it let go of the key).
+  ipcMain.handle('shell:deviceHello', (e) => (listed(e) && trusted(e) && list.hello ? list.hello() : null));
   ipcMain.handle('shell:devicePaired', async (e, dev) => {
     const s = listed(e);
-    if (!s || !list.paired || !dev || typeof dev !== 'object') return false;
+    if (!s || !trusted(e) || !list.paired || !dev || typeof dev !== 'object') return false;
     return list.paired(s.host, { id: String(dev.id || ''), secret: String(dev.secret || '') });
   });
-  ipcMain.handle('shell:deviceVerified', async (e, fp) => { const s = listed(e); return !!(s && list.verified && (await list.verified(s.host, String(fp || '')))); });
+  ipcMain.handle('shell:deviceVerified', async (e, fp) => { const s = listed(e); return !!(s && trusted(e) && list.verified && (await list.verified(s.host, String(fp || '')))); });
+  // The page about to run in a window (its loader asks before it writes it in): one a release signed? Asked by
+  // the window's own top page only, and once per load: the hash is the loader's word for the page it is about
+  // to run, and the page that then runs must not ask again with another page's hash for its own code. The
+  // answer holds until the window loads anything else.
+  ipcMain.handle('shell:pageCheck', (e, o) => {
+    const s = shellOf(e.sender);
+    if (!s || e.sender !== s.win.webContents || (e.senderFrame && e.senderFrame !== e.sender.mainFrame)) return false;
+    if (s.checked) return s.trusted;
+    s.checked = true;
+    const r = pagecheck.verifyPage(o && typeof o === 'object' ? o : {}, pageKeys());
+    s.trusted = r.ok;
+    if (!r.ok && !s.toldUnsigned) { s.toldUnsigned = true; console.log(`[client] the host's page is not one a release signed (${r.why}): it runs as in a browser, without saving files, the clipboard or device tokens`); }
+    return r.ok;
+  });
   // What the page says about its session: connected or not, and what the host said it is.
   ipcMain.handle('shell:hostInfo', (e, info) => { const s = listed(e); if (!s) return false; list.info(s.host, info && typeof info === 'object' ? info : {}); return true; });
   ipcMain.handle('shell:home', (e) => { if (!listed(e)) return false; list.home(); return true; });
@@ -305,7 +331,7 @@ function setupIpc() {
     }, 25);
   }
   ipcMain.handle('shell:dropPoint', (e) => {
-    const s = shellOf(e.sender), w = win32();
+    const s = trusted(e), w = win32();
     if (!s || !w) return null;
     const real = personsDrop();
     let at = null;
@@ -333,7 +359,7 @@ function setupIpc() {
   // be kept or passed on, and not a file list (files go over when pasted on the host).
   // (Electron's clipboard reads and writes return promises since Electron 44.)
   ipcMain.handle('shell:clipPoll', async (e, lastSeq) => {
-    const m = shellOf(e.sender) ? win32() : null;
+    const m = trusted(e) ? win32() : null;
     if (!m) return null;
     try {
       const seq = m.clipSeq();
@@ -347,12 +373,12 @@ function setupIpc() {
   // Text copied on the host, onto this PC's clipboard at once (also while none of our windows has the
   // focus, which the page's own clipboard writing needs).
   ipcMain.handle('shell:clipWrite', async (e, text) => {
-    if (!shellOf(e.sender) || typeof text !== 'string' || text.length > 60000) return false;
+    if (!trusted(e) || typeof text !== 'string' || text.length > 60000) return false;
     await clipboard.writeText(text);
     return true;
   });
   ipcMain.handle('shell:dropText', async (e, id, text) => {
-    if (!shellOf(e.sender) || typeof text !== 'string' || text.length > 200000) return '';
+    if (!trusted(e) || typeof text !== 'string' || text.length > 200000) return '';
     await clipboard.writeText(text); // before Ctrl+V is pressed at the drop point
     const d = drops.get(id);
     if (d && FOLDERISH.has(d.cls)) return 'copied'; // a folder cannot take text
@@ -363,7 +389,7 @@ function setupIpc() {
   // folder of its own (older pages).
   const groupDir = (group) => (typeof group === 'string' && /^[a-z0-9]{4,32}$/.test(group) ? path.join(stageDir(), 'g-' + group) : null);
   ipcMain.handle('shell:fileBegin', (e, name, group) => {
-    if (!shellOf(e.sender)) return null;
+    if (!trusted(e)) return null;
     const g = groupDir(group);
     const file = g ? stagedPath(g, name) : path.join(stageDir(), crypto.randomBytes(6).toString('hex'), safeName(name));
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -373,18 +399,18 @@ function setupIpc() {
   });
   ipcMain.handle('shell:makeDir', (e, name, group) => {
     const g = groupDir(group);
-    if (!shellOf(e.sender) || !g) return false;
+    if (!trusted(e) || !g) return false;
     fs.mkdirSync(stagedPath(g, name), { recursive: true });
     return true;
   });
-  ipcMain.handle('shell:fileChunk', (_e, id, bytes) => {
-    const f = staged.get(id);
+  ipcMain.handle('shell:fileChunk', (e, id, bytes) => {
+    const f = trusted(e) ? staged.get(id) : null;
     if (!f || f.fd == null) throw new Error('no such file');
     fs.writeSync(f.fd, Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
     return true;
   });
-  ipcMain.handle('shell:fileEnd', (_e, id) => {
-    const f = staged.get(id);
+  ipcMain.handle('shell:fileEnd', (e, id) => {
+    const f = trusted(e) ? staged.get(id) : null;
     if (!f || f.fd == null) return false;
     fs.closeSync(f.fd);
     f.fd = null; f.done = true;
@@ -406,7 +432,7 @@ function setupIpc() {
     return true;
   });
   ipcMain.handle('shell:dropFiles', async (e, id, ids, group) => {
-    if (!shellOf(e.sender) || !Array.isArray(ids)) return { how: '' };
+    if (!trusted(e) || !Array.isArray(ids)) return { how: '' };
     const got = ids.map((x) => staged.get(x)).filter((f) => f && f.done);
     for (const x of ids) unstage(x);
     // What goes to the drop target: the top-level files and folders of the transfer.
@@ -462,12 +488,19 @@ function reportShown(bw) {
   for (const ev of ['minimize', 'restore', 'hide', 'show']) bw.on(ev, send);
 }
 
-// host: the id of the PC of the app's list this window is for (see setList), if any.
-function attach(win, { host = null } = {}) {
+// host: the id of the PC of the app's list this window is for (see setList), if any. trust: a test's own page
+// (the self-test's in-process windows), which no release signed.
+function attach(win, { host = null, trust = false } = {}) {
   setupIpc();
   const wc = win.webContents;
-  const state = { win, children: new Set(), host };
+  const state = { win, children: new Set(), host, trusted: false, trustAlways: !!trust };
   shells.set(wc.id, state);
+  // Whatever the window loads next (a reload, the page fetching its new version) is checked anew by its loader.
+  wc.on('did-start-navigation', (d, url, inPlace, mainFrame) => {
+    const main = d && typeof d.isMainFrame === 'boolean' ? d.isMainFrame : mainFrame;
+    const same = d && typeof d.isSameDocument === 'boolean' ? d.isSameDocument : inPlace;
+    if (main && !same) { state.trusted = false; state.checked = false; }
+  });
   win.on('closed', () => { shells.delete(wc.id); if (!shells.size) ghostGone(); }); // a window left behind would keep the app from quitting
   reportShown(win);
 
@@ -499,4 +532,4 @@ function attach(win, { host = null } = {}) {
   return state;
 }
 
-module.exports = { attach, setList, PRELOAD, ICON, _drop: { safeName, freePath, placeFiles, explorerFolder, stagedPath, moveInto, mayClick, NO_CLICK } };
+module.exports = { attach, setList, setTestPageKey, PRELOAD, ICON, _drop: { safeName, freePath, placeFiles, explorerFolder, stagedPath, moveInto, mayClick, NO_CLICK } };

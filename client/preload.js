@@ -51,6 +51,9 @@ contextBridge.exposeInMainWorld('mrShell', {
     devicePaired: (dev) => ipcRenderer.invoke('shell:devicePaired', dev),
     deviceVerified: (id) => ipcRenderer.invoke('shell:deviceVerified', id),
   } : {}),
+  // The loader asks before it runs the page the host sent (from 2026-11-16 on): { statement, sig, sha256 } ->
+  // whether a release signed it. Only such a page gets the app's powers below (files, the clipboard, ...).
+  pageCheck: (o) => ipcRenderer.invoke('shell:pageCheck', o),
   screens: () => ipcRenderer.invoke('shell:screens'),
   fullscreenAll: () => ipcRenderer.invoke('shell:fullscreenAll'),
   // Things dragged out of the remote picture (see shell.js).

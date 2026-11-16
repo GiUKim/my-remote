@@ -1032,7 +1032,8 @@ async function onMessage(m, route) {
     try {
       const app = await api.getClientApp();
       const fresh = m.have !== app.hash;
-      await route.send({ t: 'app', sid: m.sid, ts: Date.now(), hash: app.hash, html: fresh ? app.html : undefined });
+      // `sig`: the release's signature of the page (main.js pageSig), which the client app checks before it runs it.
+      await route.send({ t: 'app', sid: m.sid, ts: Date.now(), hash: app.hash, html: fresh ? app.html : undefined, sig: app.sig || undefined });
       log((fresh ? '클라이언트 화면을 최신 버전으로 전송했습니다' : '클라이언트 화면이 이미 최신입니다') + (route.kind === 'device' ? ` (${route.name})` : ''));
     } catch (e) {
       // The loader says so and can be tried again. A session that is live has nothing to do with it.

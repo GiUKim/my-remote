@@ -2661,7 +2661,7 @@ setInterval(async () => {
     const pick = (o) => Object.fromEntries(viewed.map((i) => [i, o[i]]));
     send({ t: 'cs', s: {
       fps: pick(fps), res: pick(res), mbps: +mbps.toFixed(2), rtt: rtt != null ? Math.round(rtt * 1000) : null, buf: Math.round(buf), relay,
-      lost, recv, freezes, freezeDur: +freezeDur.toFixed(2), dropped, nack, pli, late, dec: decoder, mode, shell: !!shell,
+      lost, recv, freezes, freezeDur: +freezeDur.toFixed(2), dropped, nack, pli, late, dec: decoder, mode, shell: !!shell, signed: boot && typeof boot.signed === 'boolean' ? boot.signed : undefined,
       views: liveViews().map((v) => `${v.sel}/${v.fit}/${v.root.clientWidth}x${v.root.clientHeight}@${v.win.devicePixelRatio}${v.win.document.fullscreenElement ? '/fs' : ''}`),
       ...(Object.values(window.__rd.ptr).some(Boolean) ? { ptr: { ...window.__rd.ptr } } : {}),
       ...(Object.values(window.__rd.xfer).some(Boolean) ? { xfer: { ...window.__rd.xfer } } : {}),

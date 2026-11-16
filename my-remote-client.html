@@ -268,9 +268,14 @@ const msg = (s) => { $('msg').textContent = s; };
 let busy = false;
 let device = null; // { id, secret, server }: this PC's token for that host (the client app)
 
-function launch(html, key, updated) {
+async function launch(html, key, updated, sig) {
+  // In the client app (from 2026-11-16 on): whether a release signed this page (the host sends the signed
+  // statement with it). The app gives a page its powers (saving files, the clipboard, device tokens) only then.
+  const app = window.mrShell && typeof window.mrShell.pageCheck === 'function' ? window.mrShell : null;
+  let signed;
+  if (app) { try { signed = (await app.pageCheck({ statement: sig && sig.statement, sig: sig && sig.sig, sha256: await digest(html) })) === true; } catch { signed = false; } }
   // Replace this document with the client page. The window object is kept, so the page can read __mrBoot.
-  window.__mrBoot = { key: device ? '' : key, device: device || undefined, remember: false, preset, updated };
+  window.__mrBoot = { key: device ? '' : key, device: device || undefined, remember: false, preset, updated, signed };
   document.open();
   document.write(html);
   document.close();
@@ -312,17 +317,18 @@ async function go(fresh) {
         if (m.t !== 'app') return;
         done = true;
         chan.close();
+        const sig = m.sig && typeof m.sig === 'object' ? m.sig : null; // the release's signature of the page (the client app checks it)
         if (typeof m.html === 'string' && m.html.length > 1000) {
           store.set('mr_app_html', m.html);
           store.set('mr_app_hash', String(m.hash || ''));
-          launch(m.html, key, true);
+          launch(m.html, key, true, sig);
         } else if (cached && m.hash === have) {
           // Other local files opened in this browser can share this storage, so the stored copy may
           // not be the page it claims to be. It gets the key only when its own hash is the host's;
           // otherwise the page is fetched anew.
           let same = false;
           try { same = have.length >= 20 && (await digest(cached)).startsWith(have); } catch {}
-          if (same) launch(cached, key, false);
+          if (same) launch(cached, key, false, sig);
           else { fail(''); go(true); }
         } else {
           fail('호스트에서 클라이언트 화면을 받지 못했습니다. 다시 시도해 주세요.');

@@ -89,7 +89,7 @@ async function restoreClipboard(rec) {
 module.exports.keepTextClipboard = keepTextClipboard; // also for dragcheck.js
 module.exports.restoreClipboard = restoreClipboard;
 
-exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged }) => {
+exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged, pageKey, getClientApp }) => {
   const results = [];
   const check = (name, ok, detail) => { results.push(!!ok); console.log(`[selftest] ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  - ' + detail : ''}`); };
   const info = (text) => console.log(`[selftest] INFO  ${text}`);
@@ -1223,7 +1223,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         // The client app: one call to spread() must put one fullscreen window on every screen, in order.
         const shell = require('../client/shell');
         const sw = new BrowserWindow({ width: 1280, height: 720, webPreferences: { preload: shell.PRELOAD, backgroundThrottling: false, partition: 'shell-check' } });
-        const st = shell.attach(sw);
+        const st = shell.attach(sw, { trust: true }); // the page loaded as it is (no loader, nothing signed)
         const sjs = (code, gesture) => sw.webContents.executeJavaScript(code, !!gesture);
         await sw.loadFile(lf, { query: { app: '1' }, hash: `k=${cfg.key}&auto&ro` });
         let okc = false;
@@ -1244,6 +1244,28 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       }
     }
 
+    // The client app's check of a page (client/shell.js shell:pageCheck), in a window of this process: the
+    // first word counts, once per load (the loader's, before the page runs); a page that then runs cannot
+    // name another page's hash for its own code. The page this host serves passes with its key.
+    {
+      const shell = require('../client/shell');
+      shell.setTestPageKey(pageKey());
+      const pw = new BrowserWindow({ show: false, webPreferences: { preload: shell.PRELOAD, partition: 'page-check' } });
+      shell.attach(pw);
+      const ca = getClientApp(), good = { statement: ca.sig && ca.sig.statement, sig: ca.sig && ca.sig.sig, sha256: require('crypto').createHash('sha256').update(ca.html).digest('hex') };
+      const ask = (o) => pw.webContents.executeJavaScript(`window.mrShell.pageCheck(${JSON.stringify(o)})`);
+      await pw.loadURL('data:text/html,<p>page check</p>');
+      const first = await ask({ statement: 'x', sig: 'y', sha256: '0'.repeat(64) }), second = await ask(good);
+      await pw.loadURL('data:text/html,<p>page check, again</p>');
+      const fresh = await ask(good), forged = await ask({ ...good, sha256: '1'.repeat(64) });
+      await pw.loadURL('data:text/html,<p>page check, a third time</p>');
+      const other = await ask({ ...good, sha256: '1'.repeat(64) });
+      pw.destroy();
+      check('client app: a page is taken as signed only by the first check of its load, with its own hash',
+        !!ca.sig && first === false && second === false && fresh === true && forged === true && other === false,
+        JSON.stringify({ signedHere: !!ca.sig, first, secondWithAGoodOne: second, freshLoad: fresh, askedAgain: forged, otherPage: other }));
+    }
+
     if (CLIENT_APP_CHECK) {
       // The client app as a program of its own, on a loader that knows this test's relay and key (view-only).
       // It counts as working when its measurements (sent to the host every 2 s, kept in the diagnostics
@@ -1253,8 +1275,11 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       const from = fs.existsSync(diag) ? fs.statSync(diag).size : 0;
       const env = { ...process.env };
       delete env.ELECTRON_RUN_AS_NODE;
-      const args = [global.__mrApp ? '--client' : path.join(__dirname, '..', 'client'), '--loader=' + loader, ...process.argv.filter((a) => a === '--no-sandbox' || a === '--disable-gpu')]; // the installed app: one program, told which face
-      const child = require('child_process').spawn(process.execPath, args, { env, stdio: 'ignore' });
+      // The installed app: one program, told which face. --trust-page-key: this host signs its page with a key of
+      // its own (main.js pageSig), as a release does with the release key.
+      const args = [global.__mrApp ? '--client' : path.join(__dirname, '..', 'client'), '--loader=' + loader, '--trust-page-key=' + pageKey(), ...process.argv.filter((a) => a === '--no-sandbox' || a === '--disable-gpu')];
+      // This first one is not told the host's key: to it the page is one no release signed (see below).
+      const child = require('child_process').spawn(process.execPath, args.filter((a) => !a.startsWith('--trust-page-key=')), { env, stdio: 'ignore' });
       let seen = null;
       for (let i = 0; i < 60 && !seen; i++) {
         await sleep(1000);
@@ -1268,6 +1293,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       }
       check('client app (client/main.js, a program of its own) connects and shows the host\'s picture', !!seen,
         seen ? `fps ${JSON.stringify(seen.fps)}, decoder ${seen.dec}, windows ${JSON.stringify(seen.views)}` : 'no measurements from the app arrived');
+      check('client app: a page signed by no key it trusts runs as in a browser (without the app\'s powers)', !!seen && seen.signed === false, seen ? `signed: ${seen.signed}` : 'no measurements');
       await quitGently(child); // before its profile (inside `dir`) is removed
 
       // The same through the app's list of PCs (--list): a profile of its own, and this test's key handed
@@ -1294,6 +1320,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
           try { text = fs.readFileSync(path.join(ldir, 'client-app-profile', 'hosts.json'), 'utf8'); entry = JSON.parse(text).hosts[0] || null; } catch {}
         }
         const os0 = cfg.hostOs || {};
+        check('client app: the page its host signed (this test\'s key standing in for a release\'s) is taken as signed', !!seen2 && seen2.signed === true, seen2 ? `signed: ${seen2.signed}` : 'no measurements');
         check('client app: a PC of its list opens in a window of its own with the key from the app; the list notes when and what the host is',
           !!seen2 && !!entry && entry.lastAt > 0 && entry.os === os0.os && entry.osName === os0.name && entry.pc === os0.pc && typeof entry.keyEnc === 'string' && entry.keyEnc.length > 0 && !text.includes(cfg.key) && !fs.existsSync(imp),
           seen2 ? `fps ${JSON.stringify(seen2.fps)}; entry ${entry ? JSON.stringify({ name: entry.name, os: entry.os, osName: entry.osName, pc: !!entry.pc, lastAt: entry.lastAt > 0, monitors: entry.monitors }) : 'none'}; key as text in the file: ${text.includes(cfg.key)}` : 'no measurements from the app arrived');

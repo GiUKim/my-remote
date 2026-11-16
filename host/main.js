@@ -659,11 +659,31 @@ const buildLoaderHtml = (preset = '') => builder.buildLoader(cfg.server, preset)
 let clientApp = null;
 function getClientApp() {
   if (!clientApp) {
-    const html = buildClientHtml();
-    clientApp = { html, hash: crypto.createHash('sha256').update(html).digest('hex').slice(0, 20) };
+    const html = buildClientHtml(), sha = crypto.createHash('sha256').update(html).digest('hex');
+    clientApp = { html, hash: sha.slice(0, 20), sig: pageSig(sha) };
   }
   return clientApp;
 }
+// The release's signature of this page (release/build.js put host/page.json and page.sig into the bundle), when
+// it is that page: the client app gives a page its powers only so (client/pagecheck.js). A source folder or
+// another relay than the release's serves it unsigned. The isolated runs sign it with a key of their own,
+// which the client apps they start are told to trust (--trust-page-key=).
+let testPageKey = null;
+function pageSig(sha) {
+  if (ISOLATED) {
+    if (!testPageKey) testPageKey = crypto.generateKeyPairSync('ed25519');
+    const statement = JSON.stringify({ format: 1, app: 'my-remote', kind: 'page', version: 'test', server: cfg.server, sha256: sha }) + '\n';
+    return { statement, sig: crypto.sign(null, Buffer.from(statement, 'utf8'), testPageKey.privateKey).toString('base64') };
+  }
+  try {
+    const statement = fs.readFileSync(path.join(__dirname, 'page.json'), 'utf8');
+    const sig = fs.readFileSync(path.join(__dirname, 'page.sig'), 'utf8').trim();
+    if (JSON.parse(statement).sha256 === sha) return { statement, sig };
+    console.log('[host] the client page this host builds is not the one its release signed (another relay in the config?): client apps run it as a browser would');
+  } catch {}
+  return null;
+}
+const testPageKeyPub = () => (testPageKey ? testPageKey.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') : '');
 
 // A display's rectangle in physical pixels. Electron converts only on Windows; on X11 every display
 // has the same scale factor, and physical pixels are the X server's root window coordinates.
@@ -1360,7 +1380,7 @@ else {
       }
     }
     if (SHELL_SWAP_TRIAL) shellSetup(); // the test VM's end-to-end check of the swap (see SHELL_SWAP_TRIAL)
-    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged });
+    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged, pageKey: testPageKeyPub, getClientApp });
     if (BENCH) require('./bench').run({ cfg, bench: benchCfg, buildClientHtml, app });
     if (LOCALTEST) {
       const file = path.join(app.getPath('userData'), 'my-remote-localtest.html');
@@ -1372,7 +1392,7 @@ else {
         const env = { ...process.env };
         delete env.ELECTRON_RUN_AS_NODE;
         // (The installed app is one program with two faces: it is told which, not given a folder.)
-        require('child_process').spawn(process.execPath, [APP ? '--client' : path.join(__dirname, '..', 'client'), '--loader=' + file, ...process.argv.filter((a) => a === '--no-sandbox')],
+        require('child_process').spawn(process.execPath, [APP ? '--client' : path.join(__dirname, '..', 'client'), '--loader=' + file, '--trust-page-key=' + testPageKeyPub(), ...process.argv.filter((a) => a === '--no-sandbox')],
           { env, detached: true, stdio: 'ignore' }).unref();
       };
       // --no-client: a client elsewhere (a test harness on another machine) uses this trial instead; one
