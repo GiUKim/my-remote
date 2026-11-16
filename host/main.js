@@ -434,6 +434,7 @@ function releaseInput(id) {
 function pageGone() {
   clipWriting = 0; // input of the page that went away is not injected after the reset below
   inputWaiting = [];
+  if (sessionLive) { sessionLive = false; sessionEndedAt = Date.now(); } // its session is gone with it
   try { assist.stop(); } catch (e) { console.error('assist stop', e); } // before the reset: it lets go of input's sink
   try { input.reset(); } catch (e) { console.error('input reset', e); }
   try { setCursorsHidden(false); } catch (e) { console.error('cursor restore', e); }
@@ -525,8 +526,12 @@ async function loadConfig() {
       // Only where the mistake is: the parser's message can quote the file, and the file holds the key.
       const at = /position (\d+)/.exec(e.message), line = at ? body.slice(0, Number(at[1])).split('\n').length : 0;
       problem(`설정 파일이 올바른 JSON 형식이 아닙니다${line ? ` (${line}번째 줄 근처)` : ''}.`, `is not valid JSON${line ? ` (near line ${line})` : ''}`);
-      // The key alone can usually still be found, and remote access then goes on as before.
+      // The key alone can usually still be found, and remote access then goes on as before. So is what keeps
+      // new devices out: a file broken by accident (or on purpose, from a session) must not turn that off.
       keyEnc = keyEncIn(body);
+      if (/"confirmNew"\s*:\s*true/.test(body)) saved.confirmNew = true;
+      const otpEnc = (/"otpEnc"\s*:\s*"([A-Za-z0-9+/=]+)"/.exec(body) || [])[1];
+      if (otpEnc) saved.otpEnc = otpEnc;
     }
   }
   cfg = { ...DEFAULTS, ...saved };
@@ -552,7 +557,8 @@ async function loadConfig() {
     // A new install confirms new devices from the start, but lets the first client app in without asking
     // (the person sets the host up and then connects from elsewhere). One from before keeps going as it
     // did until the person turns it on: an update must never lock anybody out of a PC they reach remotely.
-    if (!ISOLATED) { Object.assign(savedCfg, { confirmNew: true, firstFree: true }); cfg.confirmNew = true; }
+    // (The free pass lasts a day: an install that is only ever reached from a browser must not keep it.)
+    if (!ISOLATED) { Object.assign(savedCfg, { confirmNew: true, firstFree: Date.now() + 24 * 3600e3 }); cfg.confirmNew = true; }
     try { const k = newKey(); await saveConfig(k); key = k; } catch (e) { problem(`새 접속 키를 저장하지 못했습니다 (${e.code || e.message}).`, `could not be written (${e.code || e.message})`); }
   }
   // Only a file that is fine otherwise is rewritten for that; the key stays the same.
@@ -780,6 +786,11 @@ const APP = global.__mrApp || null;
 // session has an entry to be shown by. Before any window; the shell set the host's own id.
 if (APP && process.platform === 'win32') { app.setAppUserModelId(appsync.APP_ID); console.log('[host] app id ' + appsync.APP_ID); }
 let sessionLive = false;
+// When the last session ended: what loosens the guard against new devices is refused for a few seconds more
+// (a review, 2026-11-16: a button held down from the client is let go by the session's end, and that click
+// would land just after it).
+let sessionEndedAt = 0;
+const remoteNow = () => sessionLive || Date.now() - sessionEndedAt < 3000;
 const appVersion = () => (APP ? APP.version : require('./package.json').version);
 const updateInfo = () => ({ version: appVersion(), installed: !!APP, rolledBack: APP ? APP.rolledBack : [], startScreen: canStartScreen(), ...(APP && APP.update ? APP.update.status() : { state: 'none' }) });
 // "나가기" in the host window (the user's wish, 2026-11-16): the start screen with its two big buttons, which is
@@ -1140,6 +1151,7 @@ else {
       timedAsync('clip-write', () => clipboard.writeText(text)).catch((e) => console.error('clip write', e.message)).finally(() => releaseInput(id));
     });
     ipcMain.on('session', (_e, live) => {
+      if (sessionLive && !live) sessionEndedAt = Date.now();
       sessionLive = !!live;
       setTray(!!live);
       if (!live) setTimeout(followNewer, 3000); // a version the client app installed meanwhile: now (the client may reconnect first)
@@ -1171,9 +1183,8 @@ else {
       APP.update.setCanRestart(() => { if (sessionLive) return false; quitting = true; return true; });
       APP.update.onChange(() => { if (win && !win.isDestroyed()) win.webContents.send('update-changed', updateInfo()); });
     }
-    // The key, or the authenticator app's recovery codes ('copy-secret'), onto this PC's clipboard: never
-    // passed on to a client (clip-read leaves that change out) and taken off again after a minute.
-    ipcMain.handle('copy-secret', (_e, text) => (typeof text === 'string' && text.length > 0 && text.length < 2000 ? copySecret(text) : false));
+    // The key onto this PC's clipboard: never passed on to a client (clip-read leaves that change out) and
+    // taken off again after a minute.
     ipcMain.handle('copy-key', () => copySecret(cfg.key));
     async function copySecret(text) {
       if (keyOnClip) clearTimeout(keyOnClip.timer);
@@ -1240,17 +1251,38 @@ else {
     // With `confirmNew` a connection with the access key waits in the page until the person here presses
     // 허용 (also from a registered device, which sees this window), or the client gives the code of the
     // authenticator app, which the person may turn on here (opt-in). Devices with a token are not asked.
-    // `firstFree` (a new install): the first client app is let in without asking. Turning confirmation off,
-    // and setting the app up or removing it, are refused during a remote session: whoever is connected must
-    // not be able to loosen what keeps others out (as with the assist service).
-    const gateInfo = () => ({ confirmNew: !!cfg.confirmNew, firstFree: !!savedCfg.firstFree, otp: !!savedCfg.otpEnc, recoveryLeft: (savedCfg.otpRecovery || []).length });
+    // `firstFree` (a new install, until when): the first connection with the key is let in without asking
+    // (cleared once one has come up, a device paired, or the person changed the setting). Turning confirmation
+    // off and setting the app up or removing it are refused while a session is on and for a few seconds after
+    // (remoteNow), and turning off asks in a dialog of its own: whoever is connected must not loosen what keeps
+    // others out (as with the assist service). A session has the whole PC in hand, so this keeps out a click,
+    // not a determined person at the keyboard (who could edit the config file).
+    const gateInfo = () => ({ confirmNew: !!cfg.confirmNew, firstFree: Number(savedCfg.firstFree) > Date.now(), otp: !!savedCfg.otpEnc, locked: Date.now() < otpLockUntil });
     const saveSettings = () => saveConfig(cfg.key);
+    // A change of settings kept only once it is in the file: when writing fails, it is taken back.
+    async function changeSettings(apply) {
+      const before = { ...savedCfg }, confirmBefore = cfg.confirmNew;
+      apply();
+      try { await saveSettings(); return { ok: true, ...gateInfo() }; } catch (e) {
+        savedCfg = before;
+        cfg.confirmNew = confirmBefore;
+        return { ok: false, why: e.message, ...gateInfo() };
+      }
+    }
+    const askHere = async (message, detail, yes) => {
+      if (SELFTEST) return true; // the self-test has no one to answer: it checks the rest
+      const r = await dialog.showMessageBox(win, { type: 'warning', buttons: ['취소', yes], defaultId: 0, cancelId: 0, noLink: true, message, detail });
+      return r.response === 1 && !remoteNow();
+    };
     ipcMain.handle('gate-info', gateInfo);
     ipcMain.handle('gate', (_e, info) => {
       if (!cfg.confirmNew) return { need: false, how: 'off' };
-      if (info && info.app && savedCfg.firstFree && devices.list().length === 0) return { need: false, how: 'first' };
-      return { need: true, otp: !!savedCfg.otpEnc };
+      if (info && info.app && Number(savedCfg.firstFree) > Date.now() && devices.list().length === 0) return { need: false, how: 'first' };
+      const locked = Date.now() < otpLockUntil;
+      return { need: true, otp: !!savedCfg.otpEnc && !locked, locked: !!savedCfg.otpEnc && locked };
     });
+    // The first connection a new install let in without asking came up: no other is let in so.
+    ipcMain.on('gate-first-used', () => { if (savedCfg.firstFree) changeSettings(() => { delete savedCfg.firstFree; }); });
     ipcMain.on('gate-alert', (_e, name) => {
       if (!win || win.isDestroyed()) return;
       showWindow();
@@ -1258,45 +1290,38 @@ else {
       if (!ISOLATED && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: `새 기기가 접속을 요청했습니다: ${String(name || '').slice(0, 60)}. 호스트 창에서 허용하거나 거부하세요.` }).show();
     });
     ipcMain.handle('gate-set', async (_e, on) => {
-      if (!on && sessionLive) return { ok: false, why: 'remote', ...gateInfo() };
-      cfg.confirmNew = savedCfg.confirmNew = !!on;
-      delete savedCfg.firstFree; // set by the person here: the first device is theirs to allow too
-      try { await saveSettings(); } catch (e) { return { ok: false, why: e.message, ...gateInfo() }; }
-      return { ok: true, ...gateInfo() };
+      if (!on && remoteNow()) return { ok: false, why: 'remote', ...gateInfo() };
+      if (!on && !(await askHere('새 기기 확인을 끌까요?', '끄면 접속 키만 있으면 어느 기기든 묻지 않고 접속합니다.', '끄기'))) return { ok: false, why: 'cancel', ...gateInfo() };
+      // Set by the person here: the first device is theirs to allow too.
+      return changeSettings(() => { cfg.confirmNew = savedCfg.confirmNew = !!on; delete savedCfg.firstFree; });
     });
     let otpPending = null; // a secret shown for setting the app up, kept only once its code was typed here
     let otpFails = 0, otpLocks = 0, otpLockUntil = 0;
     ipcMain.handle('otp-begin', () => {
-      if (sessionLive) return { ok: false, why: 'remote' };
+      if (remoteNow()) return { ok: false, why: 'remote' };
       otpPending = totp.newSecret();
       return { ok: true, secret: otpPending, uri: totp.uri({ secret: otpPending, label: (cfg.hostOs && cfg.hostOs.pc) || 'PC' }) };
     });
     ipcMain.handle('otp-confirm', async (_e, code) => {
-      if (sessionLive) return { ok: false, why: 'remote' };
+      if (remoteNow()) return { ok: false, why: 'remote' };
       if (!otpPending) return { ok: false, why: 'none' };
       const v = totp.verify(totp.unbase32(otpPending), code);
       if (!v.ok) return { ok: false, why: 'code' };
-      const recovery = totp.recoveryCodes();
-      try {
-        savedCfg.otpEnc = (await encryptKey(otpPending)).toString('base64');
-        savedCfg.otpRecovery = recovery.map(totp.hashRecovery);
-        savedCfg.otpLast = v.step;
-        await saveSettings();
-      } catch (e) { delete savedCfg.otpEnc; delete savedCfg.otpRecovery; delete savedCfg.otpLast; return { ok: false, why: e.message }; }
-      otpPending = null;
-      otpFails = otpLocks = otpLockUntil = 0;
-      return { ok: true, recovery, ...gateInfo() };
+      let enc;
+      try { enc = (await encryptKey(otpPending)).toString('base64'); } catch (e) { return { ok: false, why: e.message }; }
+      const r = await changeSettings(() => { savedCfg.otpEnc = enc; savedCfg.otpLast = v.step; delete savedCfg.otpRecovery; });
+      if (r.ok) { otpPending = null; otpFails = otpLocks = otpLockUntil = 0; }
+      return r;
     });
     ipcMain.handle('otp-off', async () => {
-      if (sessionLive) return { ok: false, why: 'remote' };
-      delete savedCfg.otpEnc; delete savedCfg.otpRecovery; delete savedCfg.otpLast;
+      if (remoteNow()) return { ok: false, why: 'remote' };
+      if (!(await askHere('휴대폰 인증 앱을 끌까요?', '끄면 새 기기는 이 PC의 호스트 창에서만 허용할 수 있습니다.', '끄기'))) return { ok: false, why: 'cancel' };
       otpPending = null;
-      try { await saveSettings(); } catch (e) { return { ok: false, why: e.message }; }
-      return { ok: true, ...gateInfo() };
+      return changeSettings(() => { delete savedCfg.otpEnc; delete savedCfg.otpRecovery; delete savedCfg.otpLast; });
     });
-    // A code a client gave for a new device: the app's code of now (each 30-s step once), or one of the
-    // recovery codes (each once). Five wrong ones lock it for 15 minutes, doubling with every lock (at most a
-    // day), until a right one: guessing one code in a million then takes years, not days.
+    // A code a client gave for a new device: the app's code of now (each 30-s step once). Five wrong ones lock
+    // it for 15 minutes, doubling with every lock (at most a day) until a right one: guessing one code in a
+    // million then takes years, not days. While locked nothing is compared (the request still waits for 허용).
     ipcMain.handle('otp-check', async (_e, code) => {
       const now = Date.now();
       if (now < otpLockUntil) return { ok: false, why: 'locked', left: 0 };
@@ -1305,12 +1330,11 @@ else {
       try { secret = totp.unbase32((await decryptKey(savedCfg.otpEnc)).text); } catch {}
       if (!secret || !secret.length) return { ok: false, why: 'off' };
       const v = totp.verify(secret, code, { lastStep: Number(savedCfg.otpLast) || -1 });
-      const rec = v.ok ? -1 : totp.matchRecovery(savedCfg.otpRecovery, code);
-      if (v.ok || rec >= 0) {
+      if (v.ok) {
         otpFails = otpLocks = 0;
-        if (v.ok) savedCfg.otpLast = v.step; else savedCfg.otpRecovery.splice(rec, 1);
-        await saveSettings().catch((e) => console.error('[host] saving the code used', e.message));
-        return { ok: true, how: v.ok ? 'otp' : 'recovery', left: (savedCfg.otpRecovery || []).length };
+        savedCfg.otpLast = v.step; // kept in memory even when the file cannot be written: the step is past in a minute anyway
+        await saveSettings().catch((e) => console.error('[host] saving the step used', e.message));
+        return { ok: true, how: 'otp' };
       }
       if (++otpFails < 5) return { ok: false, why: 'code', left: 5 - otpFails };
       otpFails = 0;

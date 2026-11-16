@@ -28,11 +28,10 @@
   #askCode { font: 600 22px Consolas, monospace; letter-spacing: .15em; color: #fff; }
   .sec { margin-top: 8px; padding-top: 8px; border-top: 1px solid #2c333d; }
   .sec > span { color: #c5ccd6; } .sec b.on { color: #7fe3a0; } .sec b.off { color: #8b94a1; }
-  #otpSetup, #otpDone { margin-top: 8px; padding: 10px; background: #14171c; border: 1px solid #2c333d; border-radius: 6px; }
+  #otpSetup { margin-top: 8px; padding: 10px; background: #14171c; border: 1px solid #2c333d; border-radius: 6px; }
   #otpQr svg { display: block; border-radius: 4px; }
   #otpSetup input { font: 16px Consolas, monospace; width: 7em; padding: 4px 6px; border-radius: 4px; border: 1px solid #3a4350; background: #0e1014; color: #fff; }
   #otpSetup ol { margin: 6px 0; padding-left: 20px; color: #c5ccd6; }
-  #otpRecovery { font: 15px/1.6 Consolas, monospace; color: #fff; margin: 6px 0; }
   #log { font: 12px/1.45 Consolas, monospace; white-space: pre-wrap; max-height: 230px; overflow: auto; color: #aab2bd; }
   small { color: #8b94a1; }
 </style>
@@ -99,11 +98,6 @@
           <small id="otpMsg"></small>
         </div>
       </div>
-    </div>
-    <div id="otpDone" style="display:none">
-      <b>복구 코드</b> <small>휴대폰을 잃어버렸을 때 OTP 대신 한 번씩 쓸 수 있습니다. 지금만 보여 드리니 인쇄하거나 비밀번호 관리자에 보관하세요.</small>
-      <div id="otpRecovery"></div>
-      <div class="row"><button id="otpCopy" class="sub">복사</button><button id="otpClose">다 적었습니다</button></div>
     </div>
     <div id="accessList" style="display:none"></div>
   </div>

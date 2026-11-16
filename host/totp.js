@@ -1,8 +1,13 @@
 // One-time codes from an authenticator app (RFC 6238: HMAC-SHA1, 6 digits, 30-s steps), for a host whose
 // person turned them on (opt-in, the user's wish 2026-11-16): a new device can then be let in from afar
-// with the code on the person's phone when nobody is at the host. And recovery codes for a lost phone.
-// Nothing here talks to any server: the phone and the host each compute the code from the shared secret
-// and the time.
+// with the code on the person's phone when nobody is at the host. Nothing here talks to any server: the
+// phone and the host each compute the code from the shared secret and the time.
+//
+// No recovery codes (a review, 2026-11-16): a code typed at a client goes over the relay encrypted with the
+// access key, so whoever holds the key reads it, and could even ask for it while posing as the host. A code
+// of now is worth nothing a minute later; a recovery code would be worth as much a month later. A person
+// who lost their phone allows the new device from a registered one (it sees the host's window), or at the
+// host, and sets the app up again there.
 //
 // Electron-free (release/test-totp.js runs it under plain Node).
 'use strict';
@@ -62,31 +67,14 @@ function verify(secret, typed, { now = Date.now(), lastStep = -1, window = 1 } =
 
 // A new secret: 20 random bytes (160 bits, as RFC 4226 recommends), base32 as authenticator apps take it.
 const newSecret = () => base32(crypto.randomBytes(20));
-// The address an authenticator app scans (Google's otpauth:// form, which they all read).
+// The address an authenticator app scans (Google's otpauth:// form, which they all read). The label (the
+// computer's name) is cut so that the address fits a QR code (host/qr.js: 213 bytes; a long Korean name
+// takes 9 bytes a letter once escaped).
 function uri({ secret, label, issuer = 'MyRemote' }) {
   const enc = (s) => encodeURIComponent(String(s));
-  return `otpauth://totp/${enc(issuer)}:${enc(label || 'PC')}?secret=${secret}&issuer=${enc(issuer)}&algorithm=SHA1&digits=${DIGITS}&period=${STEP}`;
+  let name = Array.from(String(label || 'PC'));
+  while (name.length > 1 && enc(name.join('')).length > 60) name = name.slice(0, -1);
+  return `otpauth://totp/${enc(issuer)}:${enc(name.join('') || 'PC')}?secret=${secret}&issuer=${enc(issuer)}&algorithm=SHA1&digits=${DIGITS}&period=${STEP}`;
 }
 
-// Recovery codes: ten of 10 characters (about 50 bits each), each good once. Kept only as SHA-256 hashes.
-const RC = '23456789abcdefghjkmnpqrstuvwxyz'; // no 0/o, 1/l/i
-function recoveryCodes(n = 10) {
-  const codes = [];
-  for (let i = 0; i < n; i++) {
-    let s = '';
-    for (const b of crypto.randomBytes(10)) s += RC[b % RC.length];
-    codes.push(s.slice(0, 5) + '-' + s.slice(5));
-  }
-  return codes;
-}
-const normRecovery = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-const hashRecovery = (s) => crypto.createHash('sha256').update('my-remote recovery\n' + normRecovery(s)).digest('hex');
-// -> the index of the hash it matches in `hashes`, or -1.
-function matchRecovery(hashes, typed) {
-  const n = normRecovery(typed);
-  if (n.length !== 10) return -1;
-  const h = hashRecovery(n);
-  return (hashes || []).findIndex((x) => typeof x === 'string' && x.length === h.length && crypto.timingSafeEqual(Buffer.from(x), Buffer.from(h)));
-}
-
-module.exports = { base32, unbase32, code, codeAt, verify, newSecret, uri, recoveryCodes, hashRecovery, matchRecovery, STEP, DIGITS };
+module.exports = { base32, unbase32, code, codeAt, verify, newSecret, uri, STEP, DIGITS };

@@ -32,7 +32,6 @@ contextBridge.exposeInMainWorld('hostApi', {
   hostLocked: () => ipcRenderer.invoke('host-locked'),
   onDisplaysChanged: (fn) => ipcRenderer.on('displays-changed', () => fn()),
   copyKey: () => ipcRenderer.invoke('copy-key'),
-  copySecret: (text) => ipcRenderer.invoke('copy-secret', text), // never passed on to a client, cleared after a minute
   regenKey: () => ipcRenderer.invoke('regen-key'),
   // Client apps with a token of their own (host/devices.js) and what came to this host (host/accesslog.js).
   devices: {
@@ -52,11 +51,12 @@ contextBridge.exposeInMainWorld('hostApi', {
     info: () => ipcRenderer.invoke('gate-info'), // { confirmNew, firstFree, otp, recoveryLeft }
     decide: (info) => ipcRenderer.invoke('gate', info), // -> { need: false, how } | { need: true, otp }
     alert: (name) => ipcRenderer.send('gate-alert', name),
+    firstUsed: () => ipcRenderer.send('gate-first-used'), // a new install's free first connection came up
     set: (on) => ipcRenderer.invoke('gate-set', !!on),
   },
   otp: {
     begin: () => ipcRenderer.invoke('otp-begin'), // -> { ok, secret, uri }
-    confirm: (code) => ipcRenderer.invoke('otp-confirm', String(code || '')), // -> { ok, recovery }
+    confirm: (code) => ipcRenderer.invoke('otp-confirm', String(code || '')), // -> { ok }
     off: () => ipcRenderer.invoke('otp-off'),
     check: (code) => ipcRenderer.invoke('otp-check', String(code || '')), // a client's code -> { ok, how, why, left }
   },

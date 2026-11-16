@@ -677,7 +677,7 @@ async function startSession(hello, route) {
   const s = (session = {
     sid: hello.sid, started: performance.now(), streams: [], timers: [], dropTimer: 0, videoSenders: [], clip: null, native: null,
     mode: hello.mode === 'smooth' ? 'smooth' : 'sharp', encQueue: Promise.resolve(),
-    route, pair: pairWish(hello, route), filesIn: 0, filesOut: 0, connectedAt: 0, bind: hello.bind || null,
+    route, pair: pairWish(hello, route), filesIn: 0, filesOut: 0, connectedAt: 0, bind: hello.bind || null, allowed: hello.allowed || '',
   });
   s.who = whoOf(route, s.pair);
   log(`접속 요청 수신 (${s.who}) — 화면 캡처 시작`);
@@ -761,7 +761,11 @@ async function startSession(hello, route) {
       status('원격 접속 중 (화면 전송 중)', 'live');
       api.session(true);
       applyEncoding(s);
-      if (!s.connectedAt) { s.connectedAt = Date.now(); noteConnected(s); }
+      if (!s.connectedAt) {
+        s.connectedAt = Date.now();
+        if (s.allowed === 'first') api.gate.firstUsed(); // a new install's free first connection is up: no other gets one
+        noteConnected(s);
+      }
     } else if (st === 'failed' || st === 'closed') teardown('연결 ' + st);
     else if (st === 'disconnected') { clearTimeout(s.dropTimer); s.dropTimer = setTimeout(() => teardown('연결 끊김'), 15000); }
   };
@@ -913,15 +917,24 @@ async function subscribe() {
 // ---- new devices confirmed at this PC (main.js 'gate'; the user's go-ahead 2026-11-16) -----------------
 // While confirmation is on, a hello with the key waits here until the person at this PC presses 허용 (also
 // from a registered device: it sees this window), or the client gives the code of their authenticator app
-// (opt-in). The hello carries the client page's own public key (`pk`); the answer and any code must be
-// signed with it, so that nobody else holding the key, reading the relay, can take the session the person
-// allowed. One request waits at a time (the same page asking again replaces its own), at most 6 in 10
-// minutes, each for 2 minutes. A page allowed once may come again for 12 hours without asking (a reconnect).
+// (opt-in). The hello carries the client page's own public key (`pk`) and is signed with it (`hsig`); the
+// answer, a code and a cancel must be signed with it too, so that nobody else holding the key, reading the
+// relay, can take the session the person allowed, replace their request or come back in its name. One
+// request waits at a time (the same page asking again replaces its own), at most 6 in 10 minutes, each for 2
+// minutes. A page allowed once may come again for 12 hours without asking (a reconnect).
 const GATE_WAIT = 120e3, ASK_LIMIT = 6, ASK_WINDOW = 600e3, ALLOWED_FOR = 12 * 3600e3;
-const GATE_HOW = { host: '이 PC에서 허용', otp: '인증 앱 코드', recovery: '복구 코드', first: '첫 기기', again: '방금 허용한 기기', off: '' };
+const GATE_HOW = { host: '이 PC에서 허용', otp: '인증 앱 코드', first: '첫 기기', again: '방금 허용한 기기', off: '' };
 let pending = null;
 const askTimes = [];
 const allowedPks = new Map(); // a client page's pk -> until when it may come again without asking
+// 'busy' is answered at most every 10 s and logged at most once a minute (with how many): someone holding the
+// key who keeps asking must not use up what this host may send to the relay, nor push the log out.
+const busy = { said: -1e12, logged: -1e12, n: 0 };
+const helloText = (m) => `hello\n${m.sid}\n${m.ts}\n${m.pk}`;
+const allowPk = (pk) => {
+  for (const [k, until] of allowedPks) if (until < performance.now()) allowedPks.delete(k);
+  if (pk && allowedPks.size < 50) allowedPks.set(pk, performance.now() + ALLOWED_FOR);
+};
 const unb64 = (s) => { try { return Uint8Array.from(atob(String(s)), (c) => c.charCodeAt(0)); } catch { return null; } };
 async function importPk(s) {
   const raw = typeof s === 'string' && s.length < 200 ? unb64(s) : null;
@@ -935,20 +948,33 @@ async function verifySig(pk, text, sig) {
 }
 function ask(m, route, g) {
   const name = m.pair && typeof m.pair.pc === 'string' && m.pair.pc ? m.pair.pc.slice(0, 60) + ' (앱)' : '브라우저';
-  if (!m.bind) { route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: 'old' }).catch(() => {}); return; }
-  if (pending && pending.m.pk === m.pk) endAsk(); // the same page asking again
+  if (!m.bind) {
+    // A page from before this host's update (no key of its own): told the host's page is newer, it reloads
+    // and comes back with the new one (an offer with only the page's hash: the old page looks at that first).
+    // A key that came without a valid signature is refused.
+    if (!m.pk) api.getClientHash().then((app) => route.send({ t: 'offer', sid: m.sid, ts: Date.now(), app })).catch(() => {});
+    else route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: 'old' }).catch(() => {});
+    return;
+  }
+  if (pending && pending.m.pk === m.pk) endAsk(); // the same page asking again (only it can sign with its key)
   const now = performance.now();
   while (askTimes.length && now - askTimes[0] > ASK_WINDOW) askTimes.shift();
   if (pending || askTimes.length >= ASK_LIMIT) {
-    route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: 'busy' }).catch(() => {});
-    api.access({ ev: 'denied', via: 'key', name, why: 'busy' });
+    busy.n++;
+    if (now - busy.said >= 10000) { busy.said = now; route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: 'busy' }).catch(() => {}); }
+    if (now - busy.logged >= 60000) {
+      busy.logged = now;
+      api.access({ ev: 'denied', via: 'key', name, why: 'busy' });
+      log(`새 기기 요청이 겹치거나 너무 잦아 받지 않았습니다${busy.n > 1 ? ` (지난 1분 ${busy.n}번)` : ''}. 모르는 요청이 계속되면 키가 샌 것일 수 있습니다: 새 키 발급(등록된 기기도 모두 삭제)`);
+      busy.n = 0;
+    }
     return;
   }
   askTimes.push(now);
   const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 10000).padStart(4, '0');
-  const p = (pending = { m, route, name, code, otp: !!g.otp, since: now, tried: new Set() });
+  const p = (pending = { m, route, name, code, otp: !!g.otp, since: now, tried: new Map() });
   p.timer = setTimeout(() => { if (pending === p) refuse('timeout'); }, GATE_WAIT);
-  route.send({ t: 'confirm', sid: m.sid, ts: Date.now(), code, otp: p.otp, wait: GATE_WAIT }).catch(() => {});
+  route.send({ t: 'confirm', sid: m.sid, ts: Date.now(), code, otp: p.otp, locked: !!g.locked, wait: GATE_WAIT }).catch(() => {});
   showAsk(p);
   api.gate.alert(name);
   log(`새 기기가 접속을 요청했습니다: ${name} · 확인 숫자 ${code} — 이 창에서 허용하거나 거부하세요`);
@@ -966,13 +992,12 @@ function refuse(why) {
   if (!p) return;
   p.route.send({ t: 'denied', sid: p.m.sid, ts: Date.now(), why }).catch(() => {});
   api.access({ ev: 'denied', via: 'key', name: p.name, why });
-  log(`${p.name}: ${why === 'refused' ? '거부했습니다' : why === 'timeout' ? '2분 안에 허용하지 않아 끝냈습니다' : why === 'locked' ? '코드를 여러 번 틀려 막았습니다' : '막았습니다'}`);
+  log(`${p.name}: ${why === 'refused' ? '거부했습니다. 내가 보낸 요청이 아니라면 키가 샌 것일 수 있습니다: 새 키 발급(등록된 기기도 모두 삭제)' : why === 'timeout' ? '2분 안에 허용하지 않아 끝냈습니다' : '막았습니다'}`);
 }
 async function allow(how) {
   const p = endAsk();
   if (!p) return;
-  for (const [k, until] of allowedPks) if (until < performance.now()) allowedPks.delete(k);
-  if (allowedPks.size < 50) allowedPks.set(p.m.pk, performance.now() + ALLOWED_FOR);
+  allowPk(p.m.pk);
   api.access({ ev: 'approved', via: 'key', name: p.name, how });
   log(`${p.name}: 허용했습니다 (${GATE_HOW[how] || how})`);
   try { await startSession(p.m, p.route); } catch (e) {
@@ -1041,8 +1066,10 @@ async function onMessage(m, route) {
     }
   } else if (m.t === 'hello') {
     if (!firstTime(m)) return; // replay
-    // The page's own key: the answer must be signed with it (see 'answer').
+    // The page's own key, taken only with the hello's signature by it: the answer must be signed with it (see
+    // 'answer'), and nobody but that page can come back in its name or replace its request.
     m.bind = await importPk(m.pk);
+    if (m.bind && !(await verifySig(m.bind, helloText(m), m.hsig))) m.bind = null;
     if (route.kind === 'key') {
       // New devices confirmed here (see ask): a page allowed a moment ago may come again without asking.
       if (m.bind && (allowedPks.get(m.pk) || 0) > performance.now()) m.allowed = 'again';
@@ -1050,7 +1077,12 @@ async function onMessage(m, route) {
         const g = await api.gate.decide({ app: !!(m.pair && typeof m.pair === 'object') }).catch(() => ({ need: true, otp: false }));
         if (g.need) { ask(m, route, g); return; }
         m.allowed = g.how;
-        if (g.how === 'first') api.access({ ev: 'approved', via: 'key', name: (m.pair && m.pair.pc) || '', how: 'first' });
+        if (g.how === 'first') {
+          // The first connection of a new install: its reconnects come back without asking, and once it is up
+          // no other is let in so (gate.firstUsed, see noteConnected).
+          allowPk(m.bind ? m.pk : '');
+          api.access({ ev: 'approved', via: 'key', name: (m.pair && m.pair.pc) || '', how: 'first' });
+        }
       }
     }
     try { await startSession(m, route); } catch (e) {
@@ -1061,16 +1093,27 @@ async function onMessage(m, route) {
       if (session && session.sid === m.sid) teardown('오류', true);
     }
   } else if (m.t === 'otp' && pending && m.sid === pending.m.sid && route.key === pending.route.key) {
-    // The code of the client's authenticator app (or a recovery code), signed with that page's own key.
+    // The code of the client's authenticator app, signed with that page's own key. A code already checked
+    // (heard twice, typed twice) gets the same answer again and is not checked twice.
     const p = pending, code = String(m.code || '').slice(0, 20);
-    if (p.tried.has(code)) return; // heard twice (two subscriptions), or played back
+    const again = p.tried.get(code);
+    if (again) { if (again !== 'checking') p.route.send(again).catch(() => {}); return; }
     if (!(await verifySig(p.m.bind, `otp\n${m.sid}\n${code}`, m.sig)) || pending !== p || p.tried.has(code)) return;
-    p.tried.add(code);
+    p.tried.set(code, 'checking');
     const r = await api.otp.check(code).catch(() => ({ ok: false, why: 'error' }));
     if (pending !== p) return;
-    if (r.ok) allow(r.how);
-    else if (r.why === 'locked') refuse('locked');
-    else p.route.send({ t: 'otp', sid: m.sid, ts: Date.now(), ok: false, why: r.why, left: r.left }).catch(() => {});
+    if (r.ok) { allow(r.how); return; }
+    // Wrong, or the check is locked (too many wrong codes): the request still waits for 허용 here.
+    const reply = { t: 'otp', sid: m.sid, ts: Date.now(), ok: false, why: r.why, left: r.left };
+    p.tried.set(code, reply);
+    p.route.send(reply).catch(() => {});
+    if (r.why === 'locked') log(`${p.name}: 인증 앱 코드를 여러 번 틀려 코드 확인을 잠시 막았습니다. 이 창의 허용은 그대로 됩니다`);
+  } else if (m.t === 'cancel' && pending && m.sid === pending.m.sid && route.key === pending.route.key) {
+    // The client gave up waiting (its 취소), signed like its code: the next request need not wait for this one.
+    const p = pending;
+    if (!(await verifySig(p.m.bind, `cancel\n${m.sid}`, m.sig)) || pending !== p) return;
+    endAsk();
+    log(`${p.name}: 요청을 취소했습니다`);
   } else if (m.t === 'answer' && session && m.sid === session.sid && session.route.key === route.key && session.pc && session.pc.signalingState === 'have-local-offer' && !session.answered) {
     const s = session;
     // From the page that said hello (signed with its key), so that nobody else who holds the key and reads
@@ -1294,14 +1337,13 @@ async function showAccess() {
 
 // ---- the settings: new devices confirmed, and the authenticator app (main.js 'gate', 'otp-*') ------------
 const GATE_WHY = { remote: '원격 접속 중에는 할 수 없습니다. 이 PC 앞에서 하세요(접속한 사람이 보안 설정을 풀 수 없게 막아 둔 것입니다)', none: '다시 시도하세요' };
-let otpCodes = null; // the recovery codes, while they are shown
 async function showGate(info) {
   info = info && 'confirmNew' in info ? info : await api.gate.info().catch(() => null);
   if (!info) return;
   $('gateState').textContent = info.confirmNew ? '켜짐' : '꺼짐';
   $('gateState').className = info.confirmNew ? 'on' : 'off';
   $('gateBtn').textContent = info.confirmNew ? '끄기' : '켜기';
-  $('otpState').textContent = info.otp ? `켜짐 (복구 코드 ${info.recoveryLeft}개 남음)` : '꺼짐';
+  $('otpState').textContent = info.otp ? (info.locked ? '켜짐 (코드를 여러 번 틀려 잠시 막힘)' : '켜짐') : '꺼짐';
   $('otpState').className = info.otp ? 'on' : 'off';
   $('otpBtn').textContent = info.otp ? '끄기' : '설정';
   $('gateNote').textContent = !info.confirmNew
@@ -1330,7 +1372,7 @@ $('otpBtn').onclick = async () => {
   }
   const r = await api.otp.begin();
   if (!r.ok) { log('휴대폰 인증 앱: ' + (GATE_WHY[r.why] || r.why)); return; }
-  $('otpQr').innerHTML = QR.svg(r.uri, { scale: 4 }); // our own markup: numbers only
+  try { $('otpQr').innerHTML = QR.svg(r.uri, { scale: 4 }); } catch (e) { $('otpQr').textContent = ''; log('QR 코드를 만들지 못했습니다: 아래 키를 인증 앱에 직접 넣으세요'); } // our own markup: numbers only
   $('otpSecret').textContent = r.secret.replace(/(.{4})/g, '$1 ').trim();
   $('otpMsg').textContent = '';
   otpForm(true);
@@ -1340,16 +1382,11 @@ $('otpOk').onclick = async () => {
   const r = await api.otp.confirm($('otpCode').value.trim());
   if (!r.ok) { $('otpMsg').textContent = r.why === 'code' ? '코드가 맞지 않습니다. 앱에 지금 보이는 6자리를 넣으세요.' : '설정하지 못했습니다: ' + (GATE_WHY[r.why] || r.why); return; }
   otpForm(false);
-  otpCodes = r.recovery;
-  $('otpRecovery').textContent = r.recovery.join('   ');
-  $('otpDone').style.display = '';
-  log('휴대폰 인증 앱을 설정했습니다');
+  log('휴대폰 인증 앱을 설정했습니다. 휴대폰을 잃어버리면 등록한 다른 기기로 접속해 이 창에서 허용하거나, 이 PC 앞에서 다시 설정하세요');
   showGate(r);
 };
 $('otpCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('otpOk').click(); });
 $('otpCancel').onclick = () => otpForm(false);
-$('otpCopy').onclick = () => { if (otpCodes) api.copySecret(otpCodes.join('\n')).then(() => log('복구 코드를 복사했습니다 (1분 뒤 클립보드에서 지웁니다)'), () => {}); };
-$('otpClose').onclick = () => { otpCodes = null; $('otpRecovery').textContent = ''; $('otpDone').style.display = 'none'; };
 
 (async () => {
   cfg = await api.getConfig();

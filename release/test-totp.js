@@ -30,11 +30,12 @@ check('what is not six digits is refused', ['', '12345', '1234567', 'abcdef', nu
 
 const u = T.uri({ secret, label: '김기우 PC' });
 check('the address an authenticator app scans', u.startsWith('otpauth://totp/MyRemote:%EA%B9%80') && u.includes('secret=' + secret) && u.includes('&issuer=MyRemote') && u.includes('period=30') && !/\s/.test(u));
-
-const rc = T.recoveryCodes();
-const hashes = rc.map(T.hashRecovery);
-check('ten recovery codes, all different, shown as xxxxx-xxxxx', rc.length === 10 && new Set(rc).size === 10 && rc.every((x) => /^[2-9a-hjkmnp-z]{5}-[2-9a-hjkmnp-z]{5}$/.test(x)));
-check('a recovery code is matched by its hash, typed with or without the dash, in any case', T.matchRecovery(hashes, rc[3]) === 3 && T.matchRecovery(hashes, rc[3].replace('-', '').toUpperCase()) === 3 && T.matchRecovery(hashes, 'aaaaa-aaaaa') === -1 && T.matchRecovery(hashes, '') === -1);
+const QR = require('../host/qr');
+const long = T.uri({ secret, label: '가'.repeat(40) });
+let fits = true;
+try { QR.encode(long); } catch { fits = false; }
+check('a long name (Korean, 40 letters) is cut so that the address still fits a QR code', fits && long.includes('secret=' + secret) && Buffer.byteLength(long) <= 213, `${Buffer.byteLength(long)} bytes`);
+check('no recovery codes: a code typed at a client is worth nothing a minute later', !('recoveryCodes' in T) && !('matchRecovery' in T));
 
 console.log(failed ? `\n${failed} FAILED (of ${n})` : `\nALL PASS (${n})`);
 process.exit(failed ? 1 : 0);

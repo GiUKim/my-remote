@@ -47,7 +47,7 @@ the client app instead).
 
 - **Never read, print, log, or commit the access key.** It lives DPAPI-encrypted in
   `%APPDATA%\my-remote-host\config.json` (`keyEnc`; the authenticator app's secret `otpEnc` too, when the
-  person turned it on); on Linux in `~/.config/my-remote-host/config.json`,
+  person turned it on: never read either); on Linux in `~/.config/my-remote-host/config.json`,
   encrypted with the desktop's keyring or, without one, only obscured (reading that file is reading
   the key). The copies `config.json.bad-<time>` that the host keeps of a broken file next to it hold
   the key just the same: never read them either. Do not decrypt it, do not ask the user to paste it
@@ -438,28 +438,43 @@ the client app instead).
     The README says so. A review found this (2026-11-16); nothing short of the person comparing something
     on both screens tells the real host from a key holder.
   - **New devices confirmed** (`confirmNew`; the user's go-ahead the same day: "새 기기만 처음 한 번 확인",
-    the authenticator app only for those who want it). A new install turns it on and lets its first client
-    app in without asking (`firstFree`, gone once a device paired or the person changed the setting); one
-    from before keeps going as it did until the person turns it on (an update must not lock anybody out of
-    a PC they reach only remotely). While on, a hello with the key (`main.js` 'gate') waits in the host page
-    (`ask` in host.js) until the person presses 허용 on the card at the top of the host window (a registered
-    device connected from afar sees that window and can press it; main brings the window forward and
+    the authenticator app only for those who want it). A new install turns it on and lets its first
+    connection with the key in without asking when it says it is an app (`firstFree`: until a day after the
+    install, gone once that connection came up, a device paired or the person changed the setting; its page
+    may come back for 12 hours like an allowed one); one from before keeps going as it did until the person
+    turns it on (an update must not lock anybody out of a PC they reach only remotely). While on, a hello
+    with the key (`main.js` 'gate') waits in the host page (`ask` in host.js) until the person presses 허용
+    on the card at the top of the host window (a registered device connected from afar sees that window and
+    can press it, which ends its own session: one session at a time; main brings the window forward and
     notifies), or the client gives the code of the authenticator app. Both screens show the same 4-digit
     number. One request waits at a time (the same page asking again replaces it), at most 6 in 10 minutes,
-    each 2 minutes; refused, timed out, busy or locked: `denied` with that `why`. A page allowed may come
-    back for 12 hours without asking (`allowedPks`: a reconnect, a renew). Devices with a token are never
-    asked; a browser is asked every time it opens.
+    each 2 minutes; refused, timed out or busy: `denied` with that `why` (busy answered at most every 10 s
+    and logged at most once a minute: someone holding the key who keeps asking must not use up what the host
+    may send to the relay). A page allowed may come back for 12 hours without asking (`allowedPks`). Devices
+    with a token are never asked; a browser is asked every time it opens. A page from before the update (no
+    `pk`) is sent an offer with only the new page's hash, which makes it reload into the new page.
   - The client page makes one ECDSA P-256 key per page (`myKey`, the private half not extractable) and puts
-    its public half in every hello (`pk`); its answer (`sig` over `answer\n<sid>\n<sdp>`) and a code it
-    sends (`otp\n<sid>\n<code>`) are signed with it, and the host takes them only so (`verifySig`): nobody
-    else holding the key and reading the relay can answer in place of the client the person allowed.
+    its public half in every hello (`pk`), signed with it (`hsig` over `hello\n<sid>\n<ts>\n<pk>`); its answer
+    (`sig` over `answer\n<sid>\n<sdp>`), a code (`otp\n<sid>\n<code>`) and its 취소 (`cancel\n<sid>`) are
+    signed too, and the host takes them only so (`verifySig`): nobody else holding the key and reading the
+    relay can answer in place of the client the person allowed, replace its request, cancel it, or come back
+    in its name (a hello that carries an allowed page's key without its signature gets nothing).
   - The authenticator app (opt-in, "휴대폰 인증 앱 설정" in the devices card): `host/totp.js` (RFC 6238: SHA-1,
     6 digits, 30-s steps, the step before and after taken too, each step once: `otpLast`) and `host/qr.js`
-    (the setup address as a QR code). The secret is shown once, kept only after its code was typed at the
-    host, encrypted with safeStorage like the key (`otpEnc` in config.json), with ten recovery codes kept as
-    hashes (each once). Five wrong codes lock it for 15 minutes, doubling with each lock up to a day.
-    Turning confirmation off, setting the app up or removing it are refused during a remote session.
-    Recovery codes are copied through main (`copy-secret`: never passed on to a client, cleared after a minute).
+    (the setup address as a QR code; a long computer name is cut to fit). The secret is shown once, kept
+    only after its code was typed at the host, encrypted with safeStorage like the key (`otpEnc` in
+    config.json). Five wrong codes lock the check for 15 minutes, doubling with each lock up to a day;
+    while locked nothing is compared, the page is told, and the request still waits for 허용. No recovery
+    codes (removed after a review): a code typed at a client goes over the relay readable by every key
+    holder (who may even ask for one while posing as the host); a code of now is worthless a minute later, a
+    recovery code would not be. A person who lost the phone allows from a registered device or at the host.
+  - Loosening (confirmation off, the app set up or removed) is refused while a session is on and for 3 s
+    after (`remoteNow`: a button held down from the client is let go by the session's end, and that click
+    lands just after; a crashed page counts as an end), and turning something off asks in a dialog of its
+    own. A session has the whole PC in hand (it could edit config.json), so this stops a click, not a
+    determined person; a config.json that cannot be parsed keeps `confirmNew` and `otpEnc` (read from its
+    text like the key), so breaking it does not turn the guard off. A setting that cannot be written is
+    taken back (`changeSettings`).
   - **The page a host serves, signed** (the user's go-ahead the same day: "서명이 없으면 파일 저장 같은 앱 기능을
     주지 않습니다"). `release/build.js` builds the client page a host of the release builds for the default
     relay and signs `{kind:'page', app, version, server, sha256}` with the release key (`host/page.json`,
@@ -482,9 +497,13 @@ the client app instead).
     a real phone), the self-test (allowed at the host with the same number on both; back without asking;
     refused; a wrong code and a recovery code; loosening refused during a session) and its
     `--client-app-check` (paired; the token read back from devices.json; the key let go; started again with
-    the token alone, logged as the device; blocked: cut off and turned away; removed: not heard), an
-    independent review of the first version (its findings are fixed above), the cards in pictures with
-    made-up devices. Bit while fixing: the once-a-minute limit started at 0 and the host page (reloaded by
+    the token alone, logged as the device; blocked: cut off and turned away; removed: not heard), the gate's
+    checks (allowed with the same number on both screens; back without asking; refused; a wrong code, the
+    right code unsigned by the page not taken, then signed and taken; a hello in an allowed page's name
+    without its signature getting nothing; loosening refused during a session and for a moment after),
+    independent reviews of the tokens and of the gate (their findings are fixed above), the cards in
+    pictures with made-up devices. Not covered by a check: a new install's first-device pass (the
+    isolated runs never get it). Bit while fixing: the once-a-minute limit started at 0 and the host page (reloaded by
     the self-test a minute earlier) answered nobody. Not tried: the real ntfy.sh with a real host and
     several tokens, a Linux client app, a browser whose key a real old loader had kept.
 - **The self-test keeps every display's picture moving.** The native capturer sends nothing while a
@@ -1293,8 +1312,8 @@ lost and the sender retries. Checked with Node tests against a fake EventSource 
 
 Signaling (through the relay, each message deflated, encrypted, chunked to 3000 chars):
 
-1. client -> host topic: `{t:'hello', sid, ts, mode, codec, pk, pair?}` (`codec` optional: `H264`, `H264HQ`, `VP9`, `AV1`; `pk`: the page's own ECDSA P-256 public key, SPKI base64; `pair`: a client app connected with the key asks for a device token, `{ pc, os, osName, app }`)
-   - with new devices confirmed: host -> client `{t:'confirm', sid, ts, code, otp, wait}` (the number both screens show; `otp`: a code may be given), client -> host `{t:'otp', sid, ts, code, sig}`, host -> client `{t:'otp', sid, ok: false, why, left}`; allowed: the offer follows; else `{t:'denied', sid, why}` (`refused`, `timeout`, `busy`, `locked`, `old`, `blocked`)
+1. client -> host topic: `{t:'hello', sid, ts, mode, codec, pk, hsig, pair?}` (`codec` optional: `H264`, `H264HQ`, `VP9`, `AV1`; `pk`: the page's own ECDSA P-256 public key, SPKI base64, `hsig` its signature of `hello\n<sid>\n<ts>\n<pk>`; `pair`: a client app connected with the key asks for a device token, `{ pc, os, osName, app }`)
+   - with new devices confirmed: host -> client `{t:'confirm', sid, ts, code, otp, locked, wait}` (the number both screens show; `otp`: a code may be given; `locked`: the code check is locked for now), client -> host `{t:'otp', sid, ts, code, sig}` and `{t:'cancel', sid, ts, sig}`, host -> client `{t:'otp', sid, ok: false, why: 'code' | 'locked', left}`; allowed: the offer follows; else `{t:'denied', sid, why}` (`refused`, `timeout`, `busy`, `old`, `blocked`)
 2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, codec, cursorHidden, app, os, monitors:[{idx, mid, x, y, width, height, primary, hdr?}]}`
    (`os`: `{os: 'windows'|'linux'|'mac', name, pc}`, what the host runs, e.g. `Windows 10` or `Ubuntu 22.04.5 LTS`, and from 0.4.0 the computer's name (`os.hostname()`); the arrangement panel shows them with a logo, the client app's list keeps them)
    (`x`,`y`,`width`,`height` are the monitor's rectangle on the host's virtual desktop, physical pixels)

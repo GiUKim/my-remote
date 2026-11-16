@@ -1196,27 +1196,39 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         // The authenticator app, set up at the host (its code typed there), then a wrong code and a recovery code from a client.
         const T = require('./totp');
         await idle();
+        await sleep(3500); // settings are refused for 3 s after a session ended (main.js remoteNow)
         const setup = await hjs('hostApi.otp.begin()');
-        const conf = setup && setup.ok ? await hjs(`hostApi.otp.confirm(${JSON.stringify(T.code(T.unbase32(setup.secret)))})`) : null;
+        const secret = setup && setup.ok ? T.unbase32(setup.secret) : null;
+        const conf = secret ? await hjs(`hostApi.otp.confirm(${JSON.stringify(T.code(secret))})`) : null;
         const p3 = await page();
         let [asked3, a3] = await p3.guntil((x) => x.asked && x.asked.otp, 20);
         await p3.g(`document.getElementById('askIn').value = '000000'; document.getElementById('askGo').click()`);
         let [wrong3, w3] = await p3.guntil((x) => /맞지 않습니다/.test(x.askMsg), 15);
-        const rec = conf && conf.recovery ? conf.recovery[0] : '';
-        await p3.g(`document.getElementById('askIn').value = ${JSON.stringify(rec.toUpperCase())}; document.getElementById('askGo').click()`);
+        // The code of the next 30-s step (the setup used this one's; the host takes the step after too). First
+        // sent by someone else who holds the key but not the page's own key: not taken, and not used up.
+        const next = secret ? T.codeAt(secret, Math.floor(Date.now() / 30000) + 1) : '';
+        const forged = await hjs(`(async () => { const p = pending; if (!p) return 'no request'; await onMessage({ t: 'otp', sid: p.m.sid, ts: Date.now(), code: ${JSON.stringify(next)}, sig: btoa('x'.repeat(64)) }, master); return pending === p ? 'still waiting' : 'taken'; })()`);
+        await p3.g(`document.getElementById('askIn').value = ${JSON.stringify(next)}; document.getElementById('askGo').click()`);
         let [in3, b3] = await p3.guntil((x) => x.state === 'connected' && x.frames > 10, 30);
-        const info3 = await hjs('hostApi.gate.info()');
-        check('new devices confirmed: with the authenticator app set up, a wrong code is refused and a recovery code lets the client in (once)',
-          !!conf && conf.ok && conf.recovery.length === 10 && asked3 && a3.asked.otp && wrong3 && in3 && info3.otp && info3.recoveryLeft === 9,
-          `setup ${!!(conf && conf.ok)}, asked with code ${!!(a3 && a3.asked && a3.asked.otp)}, wrong refused ${wrong3} (${w3 && w3.askMsg}), in ${in3}, recovery codes left ${info3 && info3.recoveryLeft}`);
+        check('new devices confirmed: with the authenticator app set up, a wrong code is refused, the right one unsigned by the page is not taken, and signed it lets the client in',
+          !!conf && conf.ok && asked3 && a3.asked.otp && wrong3 && forged === 'still waiting' && in3,
+          `setup ${!!(conf && conf.ok)}, asked with code ${!!(a3 && a3.asked && a3.asked.otp)}, wrong refused ${wrong3} (${w3 && w3.askMsg}), forged: ${forged}, in ${in3}`);
+        // A hello with the key of a page allowed before but not signed by it (someone else who read that key on
+        // the relay): neither let in as that page nor asked about; the session on stays as it is.
+        const pkSeen = await p3.g('pageKey.pub');
+        const forgedHello = await hjs(`(async () => { const s = session; await onMessage({ t: 'hello', sid: RD.rand(16), ts: Date.now(), mode: 'sharp', pk: ${JSON.stringify(pkSeen)}, hsig: btoa('x'.repeat(64)) }, master); await new Promise((r) => setTimeout(r, 1500)); return { same: session === s, asking: !!pending }; })()`);
+        check('new devices confirmed: a hello in an allowed page\'s name but not signed by it gets nothing', forgedHello.same && !forgedHello.asking, JSON.stringify(forgedHello));
         // Loosening it is refused while someone is connected; done once nobody is.
         const offLive = await hjs('hostApi.gate.set(false)');
         await p3.close();
         await idle();
+        const offJustAfter = await hjs('hostApi.gate.set(false)'); // a click a session's end lets go of lands here
+        await sleep(3500);
         const off = await hjs('hostApi.gate.set(false)');
         const otpOff = await hjs('hostApi.otp.off()');
-        check('new devices confirmed: turning it off is refused during a remote session, and works without one',
-          offLive && !offLive.ok && offLive.why === 'remote' && off && off.ok && !off.confirmNew && otpOff && otpOff.ok, JSON.stringify({ offLive, off: off && off.ok, otpOff: otpOff && otpOff.ok }));
+        check('new devices confirmed: turning it off is refused during a remote session and for a moment after, and works then',
+          offLive && !offLive.ok && offLive.why === 'remote' && offJustAfter && !offJustAfter.ok && off && off.ok && !off.confirmNew && otpOff && otpOff.ok,
+          JSON.stringify({ offLive: offLive && offLive.why, offJustAfter: offJustAfter && (offJustAfter.ok || offJustAfter.why), off: off && off.ok, otpOff: otpOff && otpOff.ok }));
       }
 
       if (SHELL_CHECK) {
