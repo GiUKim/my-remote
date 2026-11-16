@@ -423,7 +423,9 @@ async function sweep(appDir, root) {
   for (const [p, keepMs] of [[appDir + '.old', 0], [appDir + '.failed', 7 * 86400e3]]) {
     try {
       if (Date.now() - fs.statSync(p).mtimeMs < keepMs) continue;
-      await fs.promises.rm(p, { recursive: true, force: true });
+      // Tried again for a moment: on Windows a virus scanner or the indexer may hold a folder just made or
+      // just moved (seen once on GitHub's runner: the old shell not removed at all by two sweeps).
+      await fs.promises.rm(p, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
       gone.push(path.basename(p));
     } catch {}
   }
