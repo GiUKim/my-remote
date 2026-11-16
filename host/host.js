@@ -8,6 +8,7 @@ let session = null;
 // token alone, so it reaches this host without the key, and nobody without the token can read or forge
 // what goes to it). routes: the topic this host listens on -> its route. See subscribe().
 let master = null, routes = new Map(), subSeq = 0;
+const openChans = new Set(); // relay subscriptions not let go yet (see subscribe)
 
 function log(s) {
   const line = `${new Date().toLocaleTimeString()}  ${s}`;
@@ -204,6 +205,8 @@ function teardown(reason, silent) {
   status('대기 중 — 접속을 기다리는 중', 'ok');
   log('세션 종료: ' + reason);
   if (s.connectedAt) {
+    // Its 'connect' first, when the address had not come yet (noteConnected then writes nothing).
+    if (!s.connectLogged) { s.connectLogged = true; api.access({ ev: 'connect', via: s.route.kind, dev: s.route.id, name: s.who }); }
     api.access({ ev: 'end', via: s.route.kind, dev: s.route.id, name: s.who, ip: s.ip, dur: (Date.now() - s.connectedAt) / 1000, in: s.filesIn, out: s.filesOut, why: reason });
     showDevices(); // no longer "접속 중"
   }
@@ -399,6 +402,9 @@ function onClientMessage(s, dc, data) {
     if (api.assist) api.assist.sas(); // Ctrl+Alt+Del for a lock screen that asks for it (the helper refuses it elsewhere)
   } else if (m.t === 'clipget') {
     clipGet(s, Number(m.seq));
+  } else if (m.t === 'pair') {
+    // The app's own name for its token (see pairDevice); once per session.
+    if (s.pairInstall === undefined && typeof m.install === 'string') { s.pairInstall = m.install.slice(0, 64); if (s.pairWait) s.pairWait(); }
   } else if (m.t === 'cs') {
     // Client-side measurements: keep them with ours in the local diagnostics log.
     if (data.length < 6000 && m.s && typeof m.s === 'object') api.diag({ client: m.s, host: s.lastHs || null });
@@ -613,6 +619,11 @@ async function clipGet(s, seq) {
 async function pairDevice(s) {
   const p = s.pair;
   s.pair = null;
+  // The app's own name comes over this connection ('pair'), right after it opened.
+  if (s.pairInstall === undefined) await new Promise((r) => { s.pairWait = r; setTimeout(r, 3000); });
+  s.pairWait = null;
+  if (session !== s) return;
+  p.install = typeof s.pairInstall === 'string' ? s.pairInstall : '';
   const r = await api.devices.pair(p).catch(() => null);
   if (session !== s) return;
   if (!r || !r.ok) {
@@ -644,6 +655,8 @@ async function remoteAddress(pc) {
 }
 async function noteConnected(s) {
   const a = await remoteAddress(s.pc);
+  if (s.connectLogged) return; // the session ended meanwhile, and its end wrote the entry (teardown)
+  s.connectLogged = true;
   s.ip = a.ip;
   const r = s.route;
   api.access({ ev: 'connect', via: r.kind, dev: r.id, name: s.who, ip: a.ip, kind: a.kind });
@@ -654,7 +667,7 @@ function pairWish(hello, route) {
   const p = route.kind === 'key' && hello.pair && typeof hello.pair === 'object' ? hello.pair : null;
   if (!p) return null;
   const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
-  return { pc: str(p.pc, 60), os: str(p.os, 10), osName: str(p.osName, 60), app: str(p.app, 20), install: str(p.install, 64) };
+  return { pc: str(p.pc, 60), os: str(p.os, 10), osName: str(p.osName, 60), app: str(p.app, 20) };
 }
 async function startSession(hello, route) {
   teardown('새 접속 요청');
@@ -876,7 +889,6 @@ async function subscribe() {
   }
   if (my !== subSeq) return; // a newer list is on its way
   routes = next;
-  const old = chan;
   const c = RD.channel({
     server: cfg.server, subTopic: [...next.keys()].join(','), pubTopic: keys.topicClient, txKey: keys.h2c,
     rxKey: (t) => { const r = t ? next.get(t) : master; return r ? r.keys.c2h : null; },
@@ -884,7 +896,13 @@ async function subscribe() {
     onState: (st) => { if (c === chan && !session) status(st === 'open' ? '대기 중 — 접속을 기다리는 중' : '시그널링 서버 재연결 중…', st === 'open' ? 'ok' : 'wait'); },
   });
   chan = c;
-  if (old) Promise.race([c.ready, new Promise((r) => setTimeout(r, 8000))]).then(() => old.close());
+  // The subscriptions before this one go once it is open (a minute at most, should it never open): until
+  // then the host still hears what comes on the topics it had.
+  const before = [...openChans];
+  openChans.add(c);
+  const drop = () => { for (const x of before) { x.close(); openChans.delete(x); } };
+  c.ready.then(drop);
+  setTimeout(drop, 60000);
   // A device blocked or removed while its session is on: that session ends, and its client is told not to come back.
   const s = session;
   if (s && s.route.kind === 'device') {
@@ -892,18 +910,31 @@ async function subscribe() {
     if (!now || now.blocked) teardown(now ? '기기 차단' : '기기 삭제');
   }
 }
-// Who is on the other end, for the log and the access log.
-const whoOf = (route, pair) => (route.kind === 'device' ? route.name : pair && pair.pc ? pair.pc + ' (키)' : '키로 접속');
+// Who is on the other end, for the log and the access log. A device's name as the host window has it now
+// (a rename does not make a new subscription: devNames, filled by showDevices).
+const devNames = new Map();
+const refused = new Map(); // a blocked device -> when it was last answered, and how often it asked since
+const deviceName = (route) => devNames.get(route.id) || route.name;
+const whoOf = (route, pair) => (route.kind === 'device' ? deviceName(route) : pair && pair.pc ? pair.pc + ' (키)' : '키로 접속');
 
 async function onMessage(m, route) {
   if (!m || typeof m.sid !== 'string' || !(Math.abs(Date.now() - m.ts) <= MAX_AGE)) return; // also without a ts
   if (m.sid.length > 64) return; // a sid is 22 characters; a long one would only fill `seen`
   if (route.kind === 'device' && route.blocked) {
-    // A blocked device is told so (it would otherwise wait and try again) and nothing else happens.
+    // A blocked device is told so (it would otherwise wait and try again) and nothing else happens. Its
+    // token is in someone's hands, who may send one request after another: answered and logged at most
+    // once a minute (the relay limits what this host may send, and the log must not fill up).
     if ((m.t === 'ver' || m.t === 'hello') && firstTime(m)) {
+      const r = refused.get(route.id) || { at: -Infinity, n: 0 }; // the first is always answered (the page may be young)
+      refused.set(route.id, r);
+      r.n++;
+      if (performance.now() - r.at < 60000) return;
+      r.at = performance.now();
       route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: 'blocked' }).catch(() => {});
-      log(`차단한 기기의 접속을 거부했습니다: ${route.name}`);
-      api.access({ ev: 'denied', via: 'device', dev: route.id, name: route.name, why: 'blocked' });
+      const name = deviceName(route);
+      log(`차단한 기기의 접속을 거부했습니다: ${name}${r.n > 1 ? ` (지난 1분 ${r.n}번)` : ''}`);
+      api.access({ ev: 'denied', via: 'device', dev: route.id, name, why: 'blocked' });
+      r.n = 0;
     }
     return;
   }
@@ -929,8 +960,11 @@ async function onMessage(m, route) {
       // that would tell the client not to try again.
       if (session && session.sid === m.sid) teardown('오류', true);
     }
-  } else if (m.t === 'answer' && session && m.sid === session.sid && session.route.key === route.key && session.pc && session.pc.signalingState === 'have-local-offer') {
+  } else if (m.t === 'answer' && session && m.sid === session.sid && session.route.key === route.key && session.pc && session.pc.signalingState === 'have-local-offer' && !session.answered) {
     const s = session;
+    // Taken once: while subscriptions overlap (see subscribe) the same answer can arrive twice, and a
+    // second one applied while the first is still being applied would fail and end the session.
+    s.answered = true;
     try {
       await s.pc.setRemoteDescription({ type: 'answer', sdp: hintBitrate(m.sdp, Math.round(cfg.startBitrateMbps * 1000), Math.round(cfg.minBitrateMbps * 1000), Math.round(cfg.maxTotalMbps * 1000)) });
       log('answer 수신 — 연결 수립 중');
@@ -1064,6 +1098,8 @@ async function showDevices() {
   const my = ++devShowSeq;
   const r = await api.devices.list().catch(() => null);
   if (my !== devShowSeq || !r) return;
+  devNames.clear();
+  for (const d of r.list) devNames.set(d.id, d.name || '이름 없는 기기');
   const box = $('devList');
   box.textContent = '';
   $('devsNote').textContent = (r.list.length ? `— ${r.list.length}대` : '') + (r.note ? ' · 기기 목록 파일을 읽지 못했습니다 (원래 파일은 사본으로 남겨 두었습니다)' : '');

@@ -42,9 +42,10 @@ contextBridge.exposeInMainWorld('mrShell', {
     hostInfo: (info) => ipcRenderer.invoke('shell:hostInfo', info),
     home: () => ipcRenderer.invoke('shell:home'),
     // This PC as a device of that host (from 2026-11-16 on; the page and the loader must not rely on them):
-    // bootDevice -> { id, secret, server } | null, the token the loader connects with instead of the key;
-    // deviceHello -> what the host is told about this PC when it gives it a token; devicePaired(dev) keeps
-    // the token the host gave; deviceVerified(id): it worked, so the app lets go of the key.
+    // bootDevice -> { id, secret } | null, the token the loader connects with instead of the key (once the
+    // key is let go); deviceHello -> what the host is told about this PC when it gives it a token;
+    // devicePaired({ id, secret }) keeps the token the host gave; deviceVerified(fp): the token with that
+    // hash worked, so the app lets go of the key.
     bootDevice: () => ipcRenderer.invoke('shell:bootDevice'),
     deviceHello: () => ipcRenderer.invoke('shell:deviceHello'),
     devicePaired: (dev) => ipcRenderer.invoke('shell:devicePaired', dev),

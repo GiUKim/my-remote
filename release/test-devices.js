@@ -71,6 +71,22 @@ const install = () => crypto.randomBytes(16).toString('base64url');
   check(`at most ${Devices.MAX} devices (each is one more topic on the relay)`, !over.ok && over.why === 'full' && full.list().length === Devices.MAX);
   check('all removed at once (a new key, because the old one leaked)', full.clear() === Devices.MAX && full.list().length === 0 && (await full.secrets()).length === 0);
 
+  // A file that cannot be read (here: a folder in its place) is never written over: the apps whose tokens
+  // are in it have let go of their keys.
+  {
+    const keep = fs.readFileSync(file, 'utf8');
+    fs.renameSync(file, file + '.away');
+    fs.mkdirSync(file);
+    const u = mk();
+    const r = await u.add({ pc: 'new one' });
+    check('devices.json that cannot be read is not written over: no token is given, nothing changes, the page listens on none',
+      !r.ok && r.why === 'unreadable' && u.note() === 'unreadable' && fs.statSync(file).isDirectory() && (await u.secrets()).length === 0 && !u.block(b.id, true));
+    fs.rmdirSync(file);
+    fs.renameSync(file + '.away', file);
+    clock += 11000;
+    check('... and is read again a little later', u.note() === '' && (await u.secrets()).length === 3 && fs.readFileSync(file, 'utf8') === keep);
+  }
+
   fs.writeFileSync(file, '{ not json');
   const broken = mk();
   check('a file that is not ours is kept under another name and not written over',

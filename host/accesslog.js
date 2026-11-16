@@ -37,13 +37,16 @@ function create({ file, now = () => Date.now(), keepDays = 90, maxBytes = 2 * 10
     }
     return out;
   }
-  return {
+  let added = 0;
+  const api = {
     add(e) {
       const o = entry(e, now());
       if (!o) return false;
       try {
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.appendFileSync(file, JSON.stringify(o) + '\n', { mode: 0o600 });
+        // Kept under its size while the host runs too (someone with a blocked token may keep trying).
+        if (++added % 50 === 0 && fs.statSync(file).size > maxBytes) api.prune();
         return true;
       } catch { return false; }
     },
@@ -63,6 +66,7 @@ function create({ file, now = () => Date.now(), keepDays = 90, maxBytes = 2 * 10
       return all.length - keep.length;
     },
   };
+  return api;
 }
 
 module.exports = { create, entry };

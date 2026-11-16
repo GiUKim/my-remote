@@ -89,7 +89,7 @@ async function restoreClipboard(rec) {
 module.exports.keepTextClipboard = keepTextClipboard; // also for dragcheck.js
 module.exports.restoreClipboard = restoreClipboard;
 
-exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, accessLog, devicesChanged }) => {
+exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged }) => {
   const results = [];
   const check = (name, ok, detail) => { results.push(!!ok); console.log(`[selftest] ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  - ' + detail : ''}`); };
   const info = (text) => console.log(`[selftest] INFO  ${text}`);
@@ -1225,7 +1225,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         }
         const os0 = cfg.hostOs || {};
         check('client app: a PC of its list opens in a window of its own with the key from the app; the list notes when and what the host is',
-          !!seen2 && !!entry && entry.lastAt > 0 && entry.os === os0.os && entry.osName === os0.name && entry.pc === os0.pc && !!(entry.keyEnc || entry.dev) && !text.includes(cfg.key) && !fs.existsSync(imp),
+          !!seen2 && !!entry && entry.lastAt > 0 && entry.os === os0.os && entry.osName === os0.name && entry.pc === os0.pc && typeof entry.keyEnc === 'string' && entry.keyEnc.length > 0 && !text.includes(cfg.key) && !fs.existsSync(imp),
           seen2 ? `fps ${JSON.stringify(seen2.fps)}; entry ${entry ? JSON.stringify({ name: entry.name, os: entry.os, osName: entry.osName, pc: !!entry.pc, lastAt: entry.lastAt > 0, monitors: entry.monitors }) : 'none'}; key as text in the file: ${text.includes(cfg.key)}` : 'no measurements from the app arrived');
 
         // Devices (host/devices.js): connected with the key, the app was given a token of its own over that
@@ -1244,9 +1244,13 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         for (let i = 0; i < 45 && !(got.e && got.d && got.e.keyEnc === 'none'); i++) { await sleep(1000); got = readEntry(); }
         const devList = devices.list(), secrets = await devices.secrets();
         const dev0 = devList[0], tok = secrets[0] ? secrets[0].secret : '';
+        // The same token read back from devices.json by a store of its own (as the next start of the host
+        // does), and the app's record of which token it keeps (its hash).
+        const again = tok ? (await deviceStore().secrets())[0] : null;
+        const fp = tok ? require('crypto').createHash('sha256').update('my-remote token\n' + tok).digest('hex').slice(0, 16) : '';
         check('devices: the app connected with the key is given a token of its own, keeps it encrypted, and lets go of the key once the token works',
-          devList.length === 1 && !!got.e && !!got.d && got.d.id === dev0.id && got.e.keyEnc === 'none' && !!tok && !got.text.includes(tok) && !got.text.includes(cfg.key) && dev0.pc === os.hostname().slice(0, 60),
-          `host lists ${devList.length} device(s)${dev0 ? ` (${JSON.stringify({ pc: dev0.pc === os.hostname().slice(0, 60), osName: dev0.osName, app: dev0.app })})` : ''}; app entry ${got.e ? JSON.stringify({ token: !!got.d, sameId: !!(got.d && dev0 && got.d.id === dev0.id), keyKept: got.e.keyEnc !== 'none' }) : 'none'}; token or key as text in the files: ${!!tok && got.text.includes(tok)}/${got.text.includes(cfg.key)}`);
+          devList.length === 1 && !!got.e && !!got.d && got.d.id === dev0.id && got.d.fp === fp && got.e.keyEnc === 'none' && !!tok && !got.text.includes(tok) && !got.text.includes(cfg.key) && dev0.pc === os.hostname().slice(0, 60) && !!again && again.secret === tok,
+          `host lists ${devList.length} device(s)${dev0 ? ` (${JSON.stringify({ pc: dev0.pc === os.hostname().slice(0, 60), osName: dev0.osName, app: dev0.app })})` : ''}; read back from devices.json: ${!!again && again.secret === tok}; app entry ${got.e ? JSON.stringify({ token: !!got.d, sameId: !!(got.d && dev0 && got.d.id === dev0.id), sameToken: !!(got.d && got.d.fp === fp), keyKept: got.e.keyEnc !== 'none' }) : 'none'}; token or key as text in the files: ${!!tok && got.text.includes(tok)}/${got.text.includes(cfg.key)}`);
         await quitGently(child2); // so that what it stored can be read by the next start (see quitGently)
 
         // Started again, the PC opens with its token: no key anywhere (the loader gets the token from the
@@ -1281,9 +1285,21 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         let denied = [];
         for (let i = 0; i < 40 && !denied.length; i++) { await sleep(1000); denied = accessSince(t5, (e) => e.ev === 'denied' && e.why === 'blocked'); }
         check('devices: a device blocked at the host is cut off at once and turned away when it comes again; the key was never needed for it',
-          ended.length >= 1 && denied.length >= 1 && accessSince(t5, (e) => e.ev === 'connect').length === 0,
+          ended.length >= 1 && ended[0].why === '기기 차단' && denied.length >= 1 && accessSince(t5, (e) => e.ev === 'connect').length === 0,
           `session ended: ${ended.length ? ended[0].why : 'no'}; turned away: ${denied.length}; connected anyway: ${accessSince(t5, (e) => e.ev === 'connect').length}`);
         await quitGently(child4);
+
+        // Removed at the host: its topic is not listened to any more, so the app hears nothing (and, with its
+        // key let go, has nothing else to try: the person gives the key again to pair anew).
+        devices.remove(dev0 ? dev0.id : '');
+        devicesChanged(true);
+        await sleep(1500);
+        const t6 = Date.now();
+        const child5 = startList();
+        await sleep(20000); // the loader gives up after 15 s
+        const heard = accessSince(t6, () => true);
+        check('devices: a device removed at the host is not heard any more (no session, no answer)', devices.list().length === 0 && heard.length === 0, `access log since: ${JSON.stringify(heard.map((e) => e.ev))}`);
+        await quitGently(child5);
       }
     }
   } catch (e) {

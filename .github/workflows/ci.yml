@@ -38,6 +38,8 @@ jobs:
         run: node release/ci-run.js node release/test-hosts.js
       - name: The host's device tokens and access log
         run: node release/ci-run.js node release/test-devices.js
+      - name: QR codes and one-time codes (for the opt-in authenticator app)
+        run: node release/ci-run.js node release/test-qr.js && node release/ci-run.js node release/test-totp.js
       - name: Host and client kept one app (updates followed, the one entry)
         run: node release/ci-run.js node release/test-appsync.js
       - name: The shell replaced by a newer package (signed list, staging, the sh swap script on fake folders)
@@ -82,9 +84,9 @@ jobs:
         run: node release/ci-run.js node release/test-shellswap.js
       - name: The host started again after a crash (the watchdog)
         run: node release/ci-run.js node release/test-watchdog.js
-      - name: Self-test
+      - name: Self-test (with the client app, its list of PCs and device tokens)
         working-directory: host
-        run: node ../release/ci-run.js node_modules/electron/dist/electron.exe . --selftest
+        run: node ../release/ci-run.js node_modules/electron/dist/electron.exe . --selftest --client-app-check
       - name: Packaged app through the update shell
         run: node release/ci-run.js node release/test-app.js --packaged
 

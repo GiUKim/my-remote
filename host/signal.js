@@ -163,7 +163,10 @@ const RD = (() => {
           // the client page the host sends in one 'app' reply has to stay within that.
           if (!(n >= 1 && n <= 40 && i >= 0 && i < n)) return;
           if (!parts.has(id)) {
-            if (parts.size > 30) parts.clear();
+            // At most 30 messages being put together per topic: junk sent on one topic (by whoever holds a
+            // blocked device's token) never pushes out what is coming on another.
+            const mine = [...parts.keys()].filter((k) => k.startsWith(topic + '/'));
+            if (mine.length > 30) for (const k of mine) parts.delete(k);
             parts.set(id, new Array(n).fill(null));
           }
           const arr = parts.get(id);

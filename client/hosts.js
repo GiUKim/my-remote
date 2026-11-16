@@ -30,27 +30,45 @@ const fingerprint = (key) => crypto.createHash('sha256').update('my-remote host\
 const clean = (s, max) => Array.from(String(s == null ? '' : s), (c) => { const n = c.codePointAt(0); return n < 32 || n === 127 || n === 0x2028 || n === 0x2029 ? ' ' : c; }).join('').trim().slice(0, max);
 const OSES = new Set(['windows', 'linux', 'mac']);
 const validDevId = (id) => typeof id === 'string' && /^[0-9a-f]{16}$/.test(id);
-const validServer = (s) => typeof s === 'string' && s.length <= 200 && /^https?:\/\/[^\s"'<>]+$/.test(s);
+// A token is known by this hash of it (the page says which token worked, see dropKey): 64 bits of a hash of
+// 256 random bits say nothing about it.
+const tokenFp = (secret) => crypto.createHash('sha256').update('my-remote token\n' + secret).digest('hex').slice(0, 16);
+// A read refused for a moment (a virus scanner holding the file) is tried again a few times. A file that
+// still cannot be read is never written over (the keys and tokens in it would be gone): what is asked of
+// it is refused until it can be read again (tried every 10 s).
+const BUSY = new Set(['EBUSY', 'EPERM', 'EACCES', 'EAGAIN']);
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function readJson(f) {
+  for (let i = 0; ; i++) {
+    let t;
+    try { t = fs.readFileSync(f, 'utf8'); } catch (e) {
+      if (e.code === 'ENOENT') return undefined;
+      if (i < 4 && BUSY.has(e.code)) { pause(100); continue; }
+      throw e; // has a code: unreadable
+    }
+    return JSON.parse(t.charCodeAt(0) === 0xfeff ? t.slice(1) : t); // no code: not what this program wrote
+  }
+}
 
 function create({ file, crypt, now = () => Date.now() }) {
   const tokFile = path.join(path.dirname(file), 'tokens.json');
   let hosts = []; // { id, name, fp, keyEnc, addedAt, lastAt, os, osName, pc, monitors }
-  let tokens = {}; // entry id -> { id, secretEnc, server }: that host's token for this app
+  let tokens = {}; // entry id -> { id, secretEnc, fp }: that host's token for this app
   let install = ''; // this app's own name for the hosts (see above)
-  let loaded = false, note = '';
+  let loaded = false, note = '', tokNote = '', unreadableAt = 0;
   // A file that is not what this program wrote holds keys or tokens: it is kept under another name, once,
   // and not written over until something changes.
   const keepBroken = (f) => { try { fs.copyFileSync(f, f + '.bad-' + now(), fs.constants.COPYFILE_EXCL); } catch {} };
-  const readJson = (f) => { const t = fs.readFileSync(f, 'utf8'); return JSON.parse(t.charCodeAt(0) === 0xfeff ? t.slice(1) : t); };
 
   function load() {
     loaded = true;
     hosts = [];
     tokens = {};
-    let j = null;
-    try { j = readJson(file); if (!j || !Array.isArray(j.hosts)) throw new Error('no list'); } catch (e) {
-      if (e.code === 'ENOENT') j = null; else if (e.code) note = 'unreadable'; else { note = 'broken'; keepBroken(file); }
-      j = null;
+    note = tokNote = '';
+    let j;
+    try { j = readJson(file); if (j !== undefined && (!j || !Array.isArray(j.hosts))) throw new Error('no list'); } catch (e) {
+      if (e.code) { note = 'unreadable'; unreadableAt = now(); } else { note = 'broken'; keepBroken(file); }
+      j = undefined;
     }
     for (const h of (j && j.hosts) || []) {
       if (!h || typeof h.id !== 'string' || !/^[0-9a-f]{12}$/.test(h.id) || typeof h.keyEnc !== 'string' || !h.keyEnc) continue;
@@ -61,12 +79,17 @@ function create({ file, crypt, now = () => Date.now() }) {
         os: OSES.has(h.os) ? h.os : '', osName: clean(h.osName, 60), pc: clean(h.pc, 60), monitors: Math.max(0, Math.min(64, Number(h.monitors) | 0)),
       });
     }
-    let t = null;
-    try { t = readJson(tokFile); if (!t || typeof t !== 'object') throw new Error('not ours'); } catch (e) { if (e.code !== 'ENOENT' && !e.code) keepBroken(tokFile); t = null; }
+    let t;
+    try { t = readJson(tokFile); if (t !== undefined && (!t || typeof t !== 'object')) throw new Error('not ours'); } catch (e) {
+      if (e.code) { tokNote = 'unreadable'; unreadableAt = now(); } else { tokNote = 'broken'; keepBroken(tokFile); }
+      t = undefined;
+    }
     if (t && typeof t.install === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(t.install)) install = t.install;
     for (const [hid, d] of Object.entries((t && t.tokens) || {})) {
-      // Only for an entry that is there (an older version may have removed it meanwhile).
-      if (hosts.some((h) => h.id === hid) && d && validDevId(d.id) && typeof d.secretEnc === 'string' && d.secretEnc && validServer(d.server)) tokens[hid] = { id: d.id, secretEnc: d.secretEnc, server: d.server };
+      // A token of an entry that is not there stays only while hosts.json could not be read (an older version
+      // may have removed the entry; a list that could not be read must not take every token with it).
+      if (!/^[0-9a-f]{12}$/.test(hid) || !d || !validDevId(d.id) || typeof d.secretEnc !== 'string' || !d.secretEnc) continue;
+      if (note || hosts.some((h) => h.id === hid)) tokens[hid] = { id: d.id, secretEnc: d.secretEnc, fp: typeof d.fp === 'string' ? d.fp.slice(0, 16) : '' };
     }
   }
   const write = (f, obj) => {
@@ -75,9 +98,13 @@ function create({ file, crypt, now = () => Date.now() }) {
     fs.writeFileSync(tmp, JSON.stringify(obj, null, 1) + '\n', { mode: 0o600 });
     fs.renameSync(tmp, f);
   };
-  const save = () => write(file, { v: 1, hosts });
-  const saveTokens = () => write(tokFile, { v: 1, install: install || undefined, tokens });
-  const find = (id) => { if (!loaded) load(); return hosts.find((h) => h.id === id) || null; };
+  // Read when first asked, and again while a file could not be read (at most every 10 s).
+  const ensure = () => { if (!loaded || ((note === 'unreadable' || tokNote === 'unreadable') && now() - unreadableAt > 10000)) load(); };
+  const canWrite = () => { ensure(); return note !== 'unreadable'; };
+  const canWriteTokens = () => { ensure(); return tokNote !== 'unreadable' && note !== 'unreadable'; };
+  const save = () => { if (note === 'unreadable') throw new Error('unreadable'); write(file, { v: 1, hosts }); };
+  const saveTokens = () => { if (tokNote === 'unreadable' || note === 'unreadable') throw new Error('unreadable'); write(tokFile, { v: 1, install: install || undefined, tokens }); };
+  const find = (id) => { ensure(); return hosts.find((h) => h.id === id) || null; };
   const hasKey = (h) => !!h.keyEnc && h.keyEnc !== NO_KEY;
   // What a page may know of an entry: everything but the key and the token. `paired`: it connects with a
   // token of its own; `hasKey`: the key is still kept (until the token has been seen to work).
@@ -93,18 +120,19 @@ function create({ file, crypt, now = () => Date.now() }) {
   return {
     validKey,
     // 'broken' / 'unreadable' when the file could not be used (it is kept, see load), else ''.
-    note() { if (!loaded) load(); return note; },
-    list() { if (!loaded) load(); return hosts.map(pub); },
+    note() { ensure(); return note || (tokNote === 'unreadable' ? 'unreadable' : ''); },
+    list() { ensure(); return hosts.map(pub); },
     get(id) { const h = find(id); return h ? pub(h) : null; },
     // -> { ok: true, id } | { ok: false, why: 'badkey' | 'exists' (with id) | 'nostore' }
     async add({ key, name }) {
-      if (!loaded) load();
+      if (!canWrite()) return { ok: false, why: 'nostore' };
       key = String(key || '').trim();
       if (!validKey(key)) return { ok: false, why: 'badkey' };
       const fp = fingerprint(key), same = hosts.find((h) => h.fp === fp);
       if (same) return { ok: false, why: 'exists', id: same.id };
       let keyEnc;
       try { keyEnc = await seal(key); } catch { return { ok: false, why: 'nostore' }; }
+      if (!canWrite()) return { ok: false, why: 'nostore' };
       let id;
       do { id = crypto.randomBytes(6).toString('hex'); } while (hosts.some((h) => h.id === id));
       hosts.push({ id, name: clean(name, 40), fp, keyEnc, addedAt: now(), lastAt: 0, os: '', osName: '', pc: '', monitors: 0 });
@@ -113,7 +141,7 @@ function create({ file, crypt, now = () => Date.now() }) {
     },
     rename(id, name) {
       const h = find(id);
-      if (!h) return false;
+      if (!h || !canWrite()) return false;
       h.name = clean(name, 40);
       save();
       return true;
@@ -123,55 +151,66 @@ function create({ file, crypt, now = () => Date.now() }) {
     async setKey(id, key) {
       const h = find(id);
       if (!h) return { ok: false, why: 'gone' };
+      if (!canWrite()) return { ok: false, why: 'nostore' };
       key = String(key || '').trim();
       if (!validKey(key)) return { ok: false, why: 'badkey' };
       const fp = fingerprint(key), same = hosts.find((x) => x.fp === fp && x !== h);
       if (same) return { ok: false, why: 'exists', id: same.id };
-      try { h.keyEnc = await seal(key); } catch { return { ok: false, why: 'nostore' }; }
+      let keyEnc;
+      try { keyEnc = await seal(key); } catch { return { ok: false, why: 'nostore' }; }
+      if (!hosts.includes(h) || !canWrite()) return { ok: false, why: 'nostore' };
+      h.keyEnc = keyEnc;
       h.fp = fp;
       save();
-      if (tokens[id]) { delete tokens[id]; saveTokens(); }
+      // Its token goes (with a key kept, the window connects with the key anyway, and pairs anew).
+      if (tokens[id] && canWriteTokens()) { delete tokens[id]; saveTokens(); }
       return { ok: true, id };
     },
-    // This app's own name for the hosts, made once.
+    // This app's own name for the hosts, made once (kept only where tokens.json can be written).
     install() {
-      if (!loaded) load();
-      if (!install) { install = crypto.randomBytes(16).toString('base64url'); saveTokens(); }
+      ensure();
+      if (!install) { install = crypto.randomBytes(16).toString('base64url'); if (canWriteTokens()) saveTokens(); }
       return install;
     },
-    // The host gave this app a token of its own: kept like the key, and used from now on.
+    // The host gave this app a token of its own: kept like the key (tokens.json), and used once the key is
+    // let go (see dropKey and keyKept).
     async setDevice(id, dev) {
       const h = find(id);
-      if (!h || !dev || !validDevId(dev.id) || !validKey(dev.secret) || !validServer(dev.server)) return false;
+      if (!h || !dev || !validDevId(dev.id) || !validKey(dev.secret) || !canWriteTokens()) return false;
       let secretEnc;
       try { secretEnc = await seal(dev.secret); } catch { return false; }
-      if (!hosts.includes(h)) return false; // removed meanwhile
-      tokens[id] = { id: dev.id, secretEnc, server: dev.server };
+      if (!hosts.includes(h) || !canWriteTokens()) return false; // removed meanwhile
+      tokens[id] = { id: dev.id, secretEnc, fp: tokenFp(dev.secret) };
       saveTokens();
       return true;
     },
     hasDevice(id) { return !!(find(id) && tokens[id]); },
+    // Whether the key is still kept: then it is what the window connects with (a token not yet seen to work
+    // is never relied on).
+    keyKept(id) { const h = find(id); return !!h && hasKey(h); },
     // The token, for the window that connects to that PC. null when there is none or it cannot be read here.
     async device(id) {
       const h = find(id), d = h && tokens[id];
       if (!d) return null;
-      try { const s = await crypt.decrypt(d.secretEnc); return validKey(s) ? { id: d.id, secret: s, server: d.server } : null; } catch { return null; }
+      try { const s = await crypt.decrypt(d.secretEnc); return validKey(s) ? { id: d.id, secret: s } : null; } catch { return null; }
     },
     // The token worked: the key is not needed any more and is let go (a lost PC then holds only its token,
-    // which the host can block). `devId`: only for that token (a newer pairing may have replaced it).
-    dropKey(id, devId) {
+    // which the host can block). `fp`: the hash of the token that worked (tokenFp), so that a token stored
+    // meanwhile by a newer pairing (the same device id) is not taken for it.
+    dropKey(id, fp) {
       const h = find(id), d = h && tokens[id];
-      if (!d || !hasKey(h) || (devId && d.id !== devId)) return false;
+      if (!d || !hasKey(h) || !fp || d.fp !== fp || !canWrite()) return false;
       h.keyEnc = NO_KEY;
       save();
       return true;
     },
     remove(id) {
       const h = find(id);
-      if (!h) return false;
+      if (!h || !canWrite()) return false;
       hosts = hosts.filter((x) => x !== h);
       save();
-      if (tokens[id]) { delete tokens[id]; saveTokens(); }
+      // (A token that cannot be removed now is dropped at a later reading: no entry is left for it.)
+      if (tokens[id] && canWriteTokens()) { delete tokens[id]; saveTokens(); }
       return true;
     },
     // The key itself, for the window that connects to that PC. null when it cannot be read (another
@@ -184,7 +223,7 @@ function create({ file, crypt, now = () => Date.now() }) {
     // A connection to that PC is up: when, and what the PC said it is (its page tells the app).
     seen(id, info, at) {
       const h = find(id);
-      if (!h) return false;
+      if (!h || !canWrite()) return false;
       h.lastAt = Number(at) > 0 ? Number(at) : now();
       if (info && typeof info === 'object') {
         if (OSES.has(info.os)) h.os = info.os;
@@ -198,4 +237,4 @@ function create({ file, crypt, now = () => Date.now() }) {
   };
 }
 
-module.exports = { create, validKey, fingerprint, clean };
+module.exports = { create, validKey, fingerprint, clean, tokenFp };

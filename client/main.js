@@ -261,10 +261,11 @@ function listMode() {
     return { pc, os: osId, osName, app: APP ? APP.version : require('../host/package.json').version, install: hosts.install() };
   }
   shell.setList({
-    // A PC that gave this app a token is reached with the token only: its key is not handed out (it is
-    // kept only until the token has worked once, and is never a way back to a token the host took away).
-    key: (id) => (hosts.hasDevice(id) ? null : hosts.key(id)),
-    device: (id) => hosts.device(id),
+    // While the key is kept, the window connects with it; the token is used once the key is let go, which
+    // happens only after the page saw the token work. So a token that never worked never strands this app,
+    // and a lost PC whose key is gone holds only its token, which the host can block.
+    key: (id) => hosts.key(id),
+    device: (id) => (hosts.keyKept(id) ? null : hosts.device(id)),
     hello: () => deviceHello(),
     async paired(id, dev) {
       const ok = await hosts.setDevice(id, dev);
@@ -272,16 +273,12 @@ function listMode() {
       if (ok) changed();
       return ok;
     },
-    // The token worked (the page asked the host on the token's own topics, or a session came up with it).
-    verified: (id, devId) => { const ok = hosts.dropKey(id, devId); if (ok) { console.log('[client] the token works: the key of that PC is let go'); changed(); } return ok; },
-    info(id, info, how = {}) {
+    // The token worked (the page asked the host on the token's own topics): `fp` names which token.
+    verified: (id, fp) => { const ok = hosts.dropKey(id, fp); if (ok) { console.log('[client] the token works: the key of that PC is let go'); changed(); } return ok; },
+    info(id, info) {
       const on = !!info.connected, was = connected.has(id);
-      if (on) {
-        connected.add(id);
-        hosts.seen(id, { os: info.os, name: info.name, pc: info.pc, monitors: info.monitors });
-        retitle(id);
-        if (how.viaDevice && hosts.dropKey(id)) console.log('[client] connected with the token: the key of that PC is let go');
-      } else connected.delete(id);
+      if (on) { connected.add(id); hosts.seen(id, { os: info.os, name: info.name, pc: info.pc, monitors: info.monitors }); retitle(id); }
+      else connected.delete(id);
       if (on || was) changed();
     },
     home: () => showHome(),

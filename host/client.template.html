@@ -2149,21 +2149,30 @@ function showLock() {
 // work: here, by asking the host for its page over the token's own topics (the host listens there once it
 // has taken the new token).
 const wantPair = () => !DEVICE && !paired && !!shell && typeof shell.devicePaired === 'function' && typeof shell.deviceHello === 'function';
+// What this app says about itself when it asks: shown at the host. Its `install` (the app's own name, by
+// which the host replaces the token of an app that pairs again) goes over the connection once it is open
+// ('pair'), not in the hello, which everyone holding the key can read on the relay.
+let pairAsk = null;
 function gotDevice(m) {
   if (DEVICE || !(shell && typeof shell.devicePaired === 'function')) return;
   if (!m.ok) { paired = true; return; } // the host could not register this PC: the app goes on with the key
   if (typeof m.id !== 'string' || !/^[0-9a-f]{16}$/.test(m.id) || typeof m.secret !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(m.secret)) return;
   paired = true;
-  const dev = { id: m.id, secret: m.secret, server: SERVER };
+  const dev = { id: m.id, secret: m.secret };
   Promise.resolve(shell.devicePaired(dev)).then((ok) => {
     if (!ok) return;
     toast(mainView, '이 PC를 호스트에 기기로 등록했습니다. 다음부터는 키 없이 접속합니다', 5000);
     window.__rd.paired = 'stored';
-    verifyDevice(dev).then((works) => {
+    verifyDevice(dev).then(async (works) => {
       window.__rd.paired = works ? 'verified' : 'unverified';
-      if (works && typeof shell.deviceVerified === 'function') Promise.resolve(shell.deviceVerified(dev.id)).catch(() => {});
+      if (works && typeof shell.deviceVerified === 'function') Promise.resolve(shell.deviceVerified(await tokenFp(dev.secret))).catch(() => {});
     });
   }, () => {});
+}
+// The hash the app knows a token by (client/hosts.js tokenFp).
+async function tokenFp(secret) {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('my-remote token\n' + secret)));
+  return Array.from(d, (x) => x.toString(16).padStart(2, '0')).join('').slice(0, 16);
 }
 // Whether the host answers on the token's own topics (a 'ver' that already has the page: a short answer).
 async function verifyDevice(dev) {
@@ -2177,7 +2186,7 @@ async function verifyDevice(dev) {
       const end = (v) => { if (done) return; done = true; clearTimeout(t); if (c) c.close(); resolve(v); };
       const t = setTimeout(() => end(false), 12000);
       c = RD.channel({
-        server: dev.server, subTopic: k.topicClient, pubTopic: k.topicHost, rxKey: k.h2c, txKey: k.c2h,
+        server: SERVER, subTopic: k.topicClient, pubTopic: k.topicHost, rxKey: k.h2c, txKey: k.c2h,
         onMessage: (m) => { if (m && m.sid === vsid && m.t === 'app') end(true); },
       });
       c.ready.then(() => c.send({ t: 'ver', sid: vsid, ts: Date.now(), have: store.get('mr_app_hash') || '' })).catch(() => end(false));
@@ -2375,7 +2384,12 @@ async function onOffer(m) {
   my.ondatachannel = (e) => {
     if (e.channel.label === 'file') { if (pc === my) receiveFiles(e.channel); return; }
     dc = e.channel;
-    const ready = () => { if (pc === my) sendView(true); };
+    const ready = () => {
+      if (pc !== my) return;
+      sendView(true);
+      // Asked for a token in the hello: the app's own name goes now, over this connection (see pairAsk).
+      if (pairAsk && typeof pairAsk.install === 'string') { try { dc.send(JSON.stringify({ t: 'pair', install: pairAsk.install })); } catch {} }
+    };
     dc.onopen = ready;
     if (dc.readyState === 'open') ready();
     dc.onmessage = (ev) => { if (pc === my) onHostMessage(ev.data); };
@@ -2429,7 +2443,13 @@ async function begin() {
     if (sid !== mySid || chan !== c) return;
     const hello = { t: 'hello', sid, ts: Date.now(), mode, codec: codec || (await mobileCodec()) };
     // The app connected with the key: it asks for a token of its own (see gotDevice).
-    if (wantPair()) { try { const p = await shell.deviceHello(); if (p && typeof p === 'object') hello.pair = p; } catch {} }
+    pairAsk = null;
+    if (wantPair()) {
+      try {
+        const p = await shell.deviceHello();
+        if (p && typeof p === 'object') { pairAsk = p; hello.pair = { pc: p.pc, os: p.os, osName: p.osName, app: p.app }; }
+      } catch {}
+    }
     if (sid !== mySid || chan !== c) return;
     await c.send(hello);
     if (!ever) msg('호스트 응답 대기 중…');

@@ -381,31 +381,41 @@ the client app instead).
   AnyDesk, TeamViewer and Chrome Remote Desktop let one's own PCs in without asking every time: "앱은 기기별
   토큰으로 ... 잃어버린 기기만 끊을 수 있습니다"). A device is one client app (its profile); browsers and
   phones are none and connect with the key every time.
-  - Pairing: a client app connected with the key sends `hello.pair` (`{ pc, os, osName, app, install }`,
-    `mrShell.deviceHello`). Once the session's `input` channel is open (DTLS) the host makes a token
-    (`devices.add` in `host/devices.js`: 32 random bytes, safeStorage like the key, `devices.json`) and sends
-    `{t:'device', ok, id, secret}` over that channel, never through the relay. The page hands it to the app
-    (`mrShell.devicePaired` -> `hosts.setDevice`), then asks the host for its page on the token's own topics
-    (`verifyDevice`: a `ver` there, after 3, 6 and 12 s) and, answered, tells the app (`deviceVerified` ->
-    `hosts.dropKey`): the key is let go. A session that comes up with the token lets it go as well
-    (`hostInfo` with `viaDevice`). The same app pairing again (`install`, its random id) gets a new token
-    in its old entry, which stays blocked if it was.
-  - The app keeps tokens in `tokens.json` (by entry, with `install`), not in hosts.json, and a key let go
-    leaves `keyEnc: 'none'`: a version from before tokens, which the app goes back to when a newer one does
-    not come up, rewrites hosts.json with only the fields it knows and drops entries without `keyEnc`. It
-    then keeps the entry (and asks for its key) and never touches the tokens (test-hosts.js does what it does).
-  - Connecting: `openHost` loads the same loader; `mrShell.bootDevice` gives it `{ id, secret, server }`,
-    and `shell:bootKey` gives no key for such an entry (a token taken away must not fall back to the key).
-    Loader and page derive keys and topics from the token (`RD.derive(secret, RD.DEVICE)`): the token alone
-    reaches the host, and nobody without it, the key's holders included, reads or forges what goes to it.
-    The page gets it as `__mrBoot.device`; its self-update just reloads (the loader asks the app again).
+  - Pairing: a client app connected with the key sends `hello.pair` (`{ pc, os, osName, app }`,
+    `mrShell.deviceHello`); its `install` (the app's random id, by which the host gives an app that pairs
+    again a new token in its old entry, still blocked if it was) goes over the session's `input` channel
+    once it is open (`{t:'pair', install}`), not in the hello, which every key holder can read on the relay.
+    The host then makes a token (`devices.add` in `host/devices.js`: 32 random bytes, safeStorage like the
+    key, `devices.json`) and sends `{t:'device', ok, id, secret}` over that channel (DTLS), never through
+    the relay. The page hands it to the app (`mrShell.devicePaired` -> `hosts.setDevice`), then asks the host
+    for its page on the token's own topics (`verifyDevice`: a `ver` there, after 3, 6 and 12 s) and,
+    answered, tells the app which token worked (`deviceVerified(tokenFp)` -> `hosts.dropKey`): the key is
+    let go. Until then the app connects with the key, and pairs anew next time if the token never worked.
+  - The app keeps tokens in `tokens.json` (by entry, with `install` and each token's hash), not in
+    hosts.json, and a key let go leaves `keyEnc: 'none'`: a version from before tokens, which the app goes
+    back to when a newer one does not come up, rewrites hosts.json with only the fields it knows and drops
+    entries without `keyEnc`. It then keeps the entry (and asks for its key) and never touches the tokens.
+  - A store that cannot read its file (a virus scanner holding it: tried again 5 times; anything else) never
+    writes over it: the host listens on no token and gives none until it can read it again (every 10 s); the
+    app adds and changes nothing; a list that cannot be read keeps the tokens of entries it cannot see.
+    Found by a review: one failed read, then one pairing, had replaced every token, and those apps had let
+    go of their keys.
+  - Connecting: `openHost` loads the same loader. While the key is kept, `shell:bootKey` gives it; once it
+    is let go, `mrShell.bootDevice` gives `{ id, secret }` (never both: a token taken away is no way back to
+    the key, and a token not seen to work is never relied on). The loader talks to its own relay (never one
+    a page names), and loader and page derive keys and topics from the token (`RD.derive(secret,
+    RD.DEVICE)`): the token alone reaches the host, and nobody without it, the key's holders included, reads
+    or forges what goes to it. The page gets it as `__mrBoot.device`; its self-update just reloads.
   - The host listens on its own topic and every token's on ONE subscription (ntfy: `/<t1>,<t2>/sse`, each
     message carries its `topic`; tried on ntfy.sh 2026-11-16; the self-test's relay does the same).
     `subscribe()` in host.js makes it anew when a token comes, goes or is blocked (`devices-changed` with
-    `resub` from main), the new one opened before the old one is closed; messages go by topic to their
-    route (`master` or the device's) and are answered on it, and an answer must come on its session's route.
-    A blocked token is answered `{t:'denied', why:'blocked'}` and logged; a removed one is not listened to.
-    Blocking or removing the device of the live session ends it with `bye`. At most 30 tokens (`MAX`).
+    `resub` from main; a rename does not), and lets the older ones go once the new one is open (a minute at
+    most); messages go by topic to their route (`master` or the device's) and are answered on it; an answer
+    must come on its session's route and is taken once (both subscriptions may bring it). Messages are put
+    together per topic (`signal.js`), so junk on one topic pushes out nothing of another's.
+    A blocked token is answered `{t:'denied', why:'blocked'}` and logged, at most once a minute per device
+    (its holder may keep asking; `access.log` is kept under 2 MB while running too); a removed one is not
+    listened to. Blocking or removing the device of the live session ends it with `bye`. At most 30 tokens.
   - The host window's card "접속한 기기": name (rename), system, last connection and its address, added;
     차단 / 차단 해제 / 삭제 (asks). "접속 기록": `access.log` (`host/accesslog.js`: JSON lines `connect`, `end`,
     `denied`, `paired`; the remote end of the selected candidate pair, or, when the engine hides a peer-
@@ -419,17 +429,25 @@ the client app instead).
     the token (`Local State` was not there at all). So the self-test closes them (`quitGently`: taskkill
     without /F, SIGTERM elsewhere). A person's app killed in its very first run loses what it stored the
     same way (key or token) and asks for the key again.
-  - A token is as trustworthy as the session that gave it: someone holding the key who posed as the host
-    at that moment could hand out one of their own (as they could always pose as the host).
+  - A token is as trustworthy as the session that gave it, and it lasts: someone holding the key who posed
+    as the host at that moment (the real one off) could hand the app a token of their own, and the app would
+    go on connecting to them, also after the real host got a new key. Before tokens such a person had to
+    pose anew at every connection. The remedy for a key that leaked: 새 키 발급 with "등록된 기기도 모두 삭제"
+    (the host then has no device of theirs either), then on every client app "키 바꾸기" (which pairs anew).
+    The README says so. A review found this (2026-11-16); nothing short of the person comparing something
+    on both screens tells the real host from a key holder.
   - Not built yet (agreed with the user 2026-11-16): confirming a new device once at the host's screen (a
     paired device can press it from afar), an authenticator app's code for those who turn it on (opt-in),
     the release key's signature on the page the host serves (unsigned: no app powers), a one-time code
     with acceptance for helping others.
-  - Checked: `release/test-devices.js` (24: the store, the log), `release/test-hosts.js` (the app's side),
-    the self-test's `--client-app-check` (paired; the key let go; started again with the token alone,
-    logged as the device; blocked: cut off and turned away), the card in a picture with made-up devices.
-    Not tried: the real ntfy.sh with a real host and several tokens, a Linux client app, a browser whose
-    key a real old loader had kept.
+  - Checked: `release/test-devices.js` (26: the store, an unreadable file, the log), `release/test-hosts.js`
+    (34: the app's side, unreadable and broken files, an older version's rewrite), the self-test's
+    `--client-app-check` (paired; the token read back from devices.json; the key let go; started again with
+    the token alone, logged as the device; blocked: cut off and turned away; removed: not heard), an
+    independent review of the first version (its findings are fixed above), the card in a picture with
+    made-up devices. Bit while fixing: the once-a-minute limit started at 0 and the host page (reloaded by
+    the self-test a minute earlier) answered nobody. Not tried: the real ntfy.sh with a real host and
+    several tokens, a Linux client app, a browser whose key a real old loader had kept.
 - **The self-test keeps every display's picture moving.** The native capturer sends nothing while a
   screen stays the same, and the checks that count frames failed now and then on a PC with two
   monitors, one of them idle. A 64x28 counter window (no focus, no clicks) sits in a corner of every
@@ -1041,7 +1059,7 @@ Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하�
 - **`.github/workflows/ci.yml`** on every push to `main`, every pull request, by hand and weekly:
   `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-devices.js`, `test-appsync.js`, `test-shellswap.js` with sh, `test-watchdog.js`), `native` (`release/ci-native.js`:
   every committed binary rebuilt from `native/` with Ubuntu 22.04's mingw-w64 and compared byte for byte),
-  `Windows` (`test-assist.js`, `test-shellswap.js` with PowerShell, `test-watchdog.js`, the self-test, `test-app.js --packaged`), `Linux X11` (the self-test with
+  `Windows` (`test-assist.js`, `test-shellswap.js` with PowerShell, `test-watchdog.js`, the self-test with `--client-app-check` (from 2026-11-16: device tokens, and safeStorage's key that only a normal quit writes, are Windows matters), `test-app.js --packaged`), `Linux X11` (the self-test with
   `--input-check --clip-check --client-app-check` under Xvfb, `test-app.js --packaged`) and the `performance
   gate` on both (`release/bench-gate.js --profile=ci`). `codeql.yml` scans the JavaScript; `dependabot.yml`
   proposes Electron/koffi/action updates as pull requests that CI then tests.
@@ -1123,7 +1141,8 @@ Run from `host/` with Electron's env var cleared.
 | `node release/test-assist.js` | The host's side of the Windows assist service (`host/assist.js`) against a fake service and helper on test pipes: protocol and version, the pipe-server session checks, input routing per state and its encoding, pictures in pieces, Ctrl+Alt+Del, reconnecting, installing refused during a remote session, the first-start offer. Windows only (skips elsewhere); no input reaches the PC (the sink is recorded, never installed) and nothing runs elevated (`T.elevate`). A few seconds |
 | `host\bin\winassist.exe install`, `uninstall`, `status`, `grab <file.bmp>` | The assist service itself: install/uninstall need an elevated prompt (the host window's card does this through UAC). `grab` writes the current input desktop to a BMP (a secure one only when run as LocalSystem) |
 | `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept, device tokens (kept, the key let go only for the token that worked, a key given again replaces the token). A second |
-| `node release/test-devices.js` | The host's device tokens (`host/devices.js`) and access log (`host/accesslog.js`) in plain Node: tokens never as text, the same app pairing again, blocking, removal, the limit, a broken file kept; log entries with known fields only, kept 90 days and under 2 MB. A second |
+| `node release/test-devices.js` | The host's device tokens (`host/devices.js`) and access log (`host/accesslog.js`) in plain Node: tokens never as text, the same app pairing again, blocking, removal, the limit, a file that cannot be read never written over, a broken file kept; log entries with known fields only, kept 90 days and under 2 MB. A second |
+| `node release/test-qr.js`, `node release/test-totp.js` | The QR codes (`host/qr.js`) against the standard's worked example, format and version information and the layout; the one-time codes (`host/totp.js`) against RFC 6238's test values, base32, recovery codes. For the opt-in authenticator app of "Devices" (not wired up yet). A second |
 | `node release/test-watchdog.js` | The host's watchdog (`host/watchdog.js`) in plain Node with a fake host that starts it as `main.js` does: a quit on purpose, an end without a word, `abort()`, an older host's marker, the limit of 3 restarts in 30 minutes. Half a minute |
 | `node release/test-shellswap.js` | The shell replaced by a newer package (`host/shellswap.js`) in plain Node with keys, a feed on 127.0.0.1 and app folders of its own: the signed list, which package replaces which shell, staging (and archives that are not the listed one), and the real swap script (PowerShell / sh) on fake folders whose program is a copy of Node: swapped and confirmed, not confirmed (put back), still running (not swapped), nothing to start, the sweep. About a minute |
 | `node release/build.js --sign-packages=<folder>` | `packages.json` and its signature from the packages' records (`<name>.package.json`) and archives in `<folder>`, each archive hashed again; checked with the keys in `app/update-config.json`. Part of every release from 0.7.0 on |
@@ -1233,7 +1252,7 @@ lost and the sender retries. Checked with Node tests against a fake EventSource 
 
 Signaling (through the relay, each message deflated, encrypted, chunked to 3000 chars):
 
-1. client -> host topic: `{t:'hello', sid, ts, mode, codec, pair?}` (`codec` optional: `H264`, `H264HQ`, `VP9`, `AV1`; `pair`: a client app connected with the key asks for a device token, `{ pc, os, osName, app, install }`)
+1. client -> host topic: `{t:'hello', sid, ts, mode, codec, pair?}` (`codec` optional: `H264`, `H264HQ`, `VP9`, `AV1`; `pair`: a client app connected with the key asks for a device token, `{ pc, os, osName, app }`)
 2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, codec, cursorHidden, app, os, monitors:[{idx, mid, x, y, width, height, primary, hdr?}]}`
    (`os`: `{os: 'windows'|'linux'|'mac', name, pc}`, what the host runs, e.g. `Windows 10` or `Ubuntu 22.04.5 LTS`, and from 0.4.0 the computer's name (`os.hostname()`); the arrangement panel shows them with a logo, the client app's list keeps them)
    (`x`,`y`,`width`,`height` are the monitor's rectangle on the host's virtual desktop, physical pixels)
@@ -1270,7 +1289,8 @@ Data channel `input` (JSON text):
 | host -> client | `clipfiles` | Files were copied on the host during the session: `seq` (the clipboard's change count), `n` items, `dirs` of them folders, `bytes` of the plain files, `names` (at most 3, no paths). Files already on the clipboard when the session began are not announced, nor files the client sent itself (a paste, or a drop nothing took: they lie in the host's inbox), which it would otherwise fetch back |
 | client -> host | `clipget` | Fetch the files of `clipfiles` `seq`; refused (`dragdata` `none`, `why:'changed'`) when the clipboard changed since. The answer is a `dragdata` with `clip: true`, the bytes on a `file` channel as for dragging out. The client asks when focus leaves all of its windows (the person went to the client's own programs to paste), at most 512 MB, the app only; the files go onto the client's clipboard |
 | host -> client | `others` | `crd`: a Chrome Remote Desktop session is connected to the host as well (`remoting_desktop.exe` runs); `outline`: the host drags windows as an outline only. Checked every 10 s, sent when it changes; the client shows a warning. Both are checked on Windows only (elsewhere always false). The process list is a Toolhelp snapshot taken on a koffi worker thread (`input.processRunning`; about 67 ms for 479 processes on the test PC, so never on the main thread), not `tasklist` |
-| host -> client | `device` | Answer to `hello.pair`, once the channel is open: `ok`, `id`, `secret` (the device token: 32 bytes, base64url) or `why` (`full`, `nostore`). Only over this channel, never through the relay |
+| client -> host | `pair` | Right after the channel opened, when the hello asked for a token: `install`, the app's own random id (the host replaces the token of an app that pairs again). Here, not in the hello: key holders can read hellos on the relay |
+| host -> client | `device` | Answer to `hello.pair` (after `pair`): `ok`, `id`, `secret` (the device token: 32 bytes, base64url) or `why` (`full`, `nostore`, `unreadable`). Only over this channel, never through the relay |
 | host -> client | `bye` | Deliberate close; the client must not auto-reconnect |
 | host -> client | `renew` | Host monitors changed (or the capture method); the client reconnects at once and keeps its windows. A session whose input channel is not open yet gets it when it opens. After a native capturer's size renew, the matching `displays-changed` is ignored when the next session already has the current monitors (10 s) |
 

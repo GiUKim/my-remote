@@ -1158,10 +1158,11 @@ else {
     // Client apps with a token of their own (devices.js) and what came to this host (accesslog.js), in this
     // profile (the isolated runs: their throwaway one). The page listens on every token's topic: it is told
     // to subscribe anew (`resub`) when a token comes, goes or is blocked, else only to show the list again.
-    devices = Devices.create({
+    const deviceStore = () => Devices.create({
       file: path.join(app.getPath('userData'), 'devices.json'),
       crypt: { ready: encryptionReady, encrypt: async (text) => (await encryptKey(text)).toString('base64'), decrypt: async (b64) => (await decryptKey(b64)).text },
     });
+    devices = deviceStore();
     accessLog = AccessLog.create({ file: path.join(app.getPath('userData'), 'access.log') });
     try { accessLog.prune(); } catch (e) { console.error('access log', e.message); }
     const devicesChanged = (resub) => { if (win && !win.isDestroyed()) win.webContents.send('devices-changed', !!resub); };
@@ -1177,7 +1178,8 @@ else {
       return r;
     });
     ipcMain.on('device-seen', (_e, id, ip) => { if (devices.seen(String(id), { ip: String(ip || '') })) devicesChanged(false); });
-    ipcMain.handle('device-rename', (_e, id, name) => { const ok = devices.rename(String(id), String(name || '')); if (ok) devicesChanged(true); return ok; });
+    // (A new name needs no new subscription: the page takes names from the list it shows.)
+    ipcMain.handle('device-rename', (_e, id, name) => { const ok = devices.rename(String(id), String(name || '')); if (ok) devicesChanged(false); return ok; });
     ipcMain.handle('device-block', (_e, id, on) => { const ok = devices.block(String(id), !!on); if (ok) devicesChanged(true); return ok; });
     ipcMain.handle('device-remove', async (_e, id) => {
       const d = devices.get(String(id));
@@ -1201,7 +1203,7 @@ else {
       const r = await dialog.showMessageBox(win, {
         type: 'warning', buttons: ['취소', '새 키 발급'], defaultId: 0, cancelId: 0,
         message: '접속 키를 새로 발급할까요?',
-        detail: '기존 키로는 더 이상 접속할 수 없게 됩니다.' + (paired ? ' 등록된 기기(키 없이 접속하는 클라이언트 앱)는 그대로 접속합니다.' : '') + (cfgIssue ? '\n\n설정 파일을 읽지 못한 상태라 새 파일에는 접속 키만 저장됩니다. 원래 파일은 사본으로 남겨 둡니다.' : ''),
+        detail: '기존 키로는 더 이상 접속할 수 없게 됩니다.' + (paired ? ' 등록된 기기(키 없이 접속하는 클라이언트 앱)는 그대로 접속합니다.\n\n키가 샌 것 같으면 아래를 체크하고, 각 클라이언트 앱의 PC 목록에서 "키 바꾸기"로 새 키를 넣어 다시 등록하세요.' : '') + (cfgIssue ? '\n\n설정 파일을 읽지 못한 상태라 새 파일에는 접속 키만 저장됩니다. 원래 파일은 사본으로 남겨 둡니다.' : ''),
         // A key that leaked may have registered a device of someone else's with it.
         ...(paired ? { checkboxLabel: `등록된 기기 ${paired}대도 모두 삭제 (키가 샌 것 같을 때)`, checkboxChecked: false } : {}),
       });
@@ -1258,7 +1260,7 @@ else {
       }
     }
     if (SHELL_SWAP_TRIAL) shellSetup(); // the test VM's end-to-end check of the swap (see SHELL_SWAP_TRIAL)
-    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, accessLog, devicesChanged });
+    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged });
     if (BENCH) require('./bench').run({ cfg, bench: benchCfg, buildClientHtml, app });
     if (LOCALTEST) {
       const file = path.join(app.getPath('userData'), 'my-remote-localtest.html');

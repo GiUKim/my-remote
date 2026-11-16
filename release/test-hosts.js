@@ -73,15 +73,16 @@ const crypt = (opts = {}) => ({
 
   // A token of its own from the host (host/devices.js): kept like the key (in tokens.json), used instead of
   // it, and the key let go once the token has been seen to work.
-  const tok = key(), devId = 'a1b2c3d4e5f60718', server = 'https://ntfy.sh', tokFile = path.join(dir, 'tokens.json');
+  const tok = key(), devId = 'a1b2c3d4e5f60718', tokFile = path.join(dir, 'tokens.json');
   const both = () => fs.readFileSync(file, 'utf8') + (fs.existsSync(tokFile) ? fs.readFileSync(tokFile, 'utf8') : '');
   check('a token is kept for an entry, never as text, and given back for its window',
-    (await h.setDevice(a.id, { id: devId, secret: tok, server })) && !both().includes(tok) && fs.existsSync(tokFile)
-    && JSON.stringify(await h.device(a.id)) === JSON.stringify({ id: devId, secret: tok, server }) && h.hasDevice(a.id) && h.get(a.id).paired && h.get(a.id).hasKey);
-  check('what is no token, or a server that is no web address, is not kept',
-    !(await h.setDevice(a.id, { id: 'x', secret: tok, server })) && !(await h.setDevice(a.id, { id: devId, secret: 'short', server }))
-    && !(await h.setDevice(a.id, { id: devId, secret: tok, server: 'javascript:alert(1)' })) && (await h.device(a.id)).secret === tok);
-  check('the key is let go only for the token that worked', !h.dropKey(a.id, 'ffffffffffffffff') && h.get(a.id).hasKey && h.dropKey(a.id, devId) && !h.get(a.id).hasKey && (await h.key(a.id)) === null && !h.dropKey(a.id));
+    (await h.setDevice(a.id, { id: devId, secret: tok })) && !both().includes(tok) && fs.existsSync(tokFile)
+    && JSON.stringify(await h.device(a.id)) === JSON.stringify({ id: devId, secret: tok }) && h.hasDevice(a.id) && h.get(a.id).paired && h.get(a.id).hasKey);
+  check('while the key is kept, it is what the window connects with', h.keyKept(a.id) && (await h.key(a.id)) === k3);
+  check('what is no token is not kept', !(await h.setDevice(a.id, { id: 'x', secret: tok })) && !(await h.setDevice(a.id, { id: devId, secret: 'short' })) && (await h.device(a.id)).secret === tok);
+  const tokB = key();
+  check('the key is let go only for the token that worked (by its hash; a newer token of the same device is another)',
+    !h.dropKey(a.id, Hosts.tokenFp(tokB)) && !h.dropKey(a.id, '') && h.get(a.id).hasKey && h.dropKey(a.id, Hosts.tokenFp(tok)) && !h.get(a.id).hasKey && !h.keyKept(a.id) && (await h.key(a.id)) === null && !h.dropKey(a.id, Hosts.tokenFp(tok)));
   h = mk();
   check('read again, the entry has its token and no key, and its key still cannot be added twice',
     (await h.device(a.id)).secret === tok && (await h.key(a.id)) === null && (await h.add({ key: k3, name: 'again' })).why === 'exists');
@@ -102,7 +103,40 @@ const crypt = (opts = {}) => ({
   const k4 = key();
   check('a key given again (the host forgot the token) replaces the token: the entry connects with the key and pairs anew',
     (await h.setKey(a.id, k4)).ok && (await h.key(a.id)) === k4 && (await h.device(a.id)) === null && !h.get(a.id).paired && !h.hasDevice(a.id));
-  check('a token that cannot be read gives none', (await h.setDevice(a.id, { id: devId, secret: tok, server })) && (await mk(crypt({ locked: true })).device(a.id)) === null);
+  check('a token that cannot be read gives none', (await h.setDevice(a.id, { id: devId, secret: tok })) && (await mk(crypt({ locked: true })).device(a.id)) === null);
+
+  // A file that cannot be read (here: a folder in its place) is never written over, and a list that cannot
+  // be read does not take the tokens with it.
+  {
+    const tokText = fs.readFileSync(tokFile, 'utf8');
+    fs.renameSync(tokFile, tokFile + '.away');
+    fs.mkdirSync(tokFile);
+    const u = mk();
+    const inst2 = u.install();
+    check('tokens.json that cannot be read is not written over (no new name of the app kept, no token)',
+      fs.statSync(tokFile).isDirectory() && !!inst2 && !(await u.setDevice(a.id, { id: devId, secret: key() })) && u.note() === 'unreadable');
+    fs.rmdirSync(tokFile);
+    fs.renameSync(tokFile + '.away', tokFile);
+    clock += 11000;
+    check('... and is read again a little later', u.hasDevice(a.id) && u.note() === '' && fs.readFileSync(tokFile, 'utf8') === tokText);
+    const listText = fs.readFileSync(file, 'utf8');
+    fs.renameSync(file, file + '.away');
+    fs.mkdirSync(file);
+    const v = mk();
+    check('hosts.json that cannot be read is not written over: nothing is added, and the tokens stay',
+      v.list().length === 0 && !(await v.add({ key: key(), name: 'x' })).ok && fs.statSync(file).isDirectory() && fs.readFileSync(tokFile, 'utf8').includes(devId));
+    fs.rmdirSync(file);
+    fs.writeFileSync(file, '{ broken');
+    const tj = JSON.parse(fs.readFileSync(tokFile, 'utf8'));
+    delete tj.install;
+    fs.writeFileSync(tokFile, JSON.stringify(tj));
+    const w = mk();
+    w.install(); // makes a new name and writes tokens.json (it can be read): the tokens of entries it cannot see must stay
+    check('a broken hosts.json (kept aside) leaves the tokens of its entries in place', w.note() === 'broken' && fs.readFileSync(tokFile, 'utf8').includes(devId));
+    fs.writeFileSync(file, listText);
+    for (const f of fs.readdirSync(dir)) if (f.startsWith('hosts.json.bad-')) fs.rmSync(path.join(dir, f));
+    h = mk();
+  }
   check('removing an entry removes its token', h.remove(a.id) && !fs.readFileSync(tokFile, 'utf8').includes(devId) && !mk().hasDevice(a.id));
 
   check('an entry is removed, with its key', h.remove(b.id) && !h.get(b.id) && (await h.key(b.id)) === null && !fs.readFileSync(file, 'utf8').includes(b.id) && !h.remove(b.id));
@@ -115,12 +149,13 @@ const crypt = (opts = {}) => ({
   fs.writeFileSync(file, JSON.stringify({ v: 1, hosts: [{ id: 'zz', keyEnc: 'x' }, { id: 'abcdef012345', keyEnc: '' }, { id: 'abcdef012345', keyEnc: 'eA==', name: 'ok\u0001', os: 'beos' }, { id: 'abcdef012345', keyEnc: 'eA==' },
     { id: 'abcdef0123ff', keyEnc: 'none' }, { id: 'abcdef0123fe', keyEnc: 'none' }, null] }));
   fs.writeFileSync(path.join(dir, 'tokens.json'), JSON.stringify({ v: 1, install: 'x', tokens: {
-    abcdef0123ff: { id: 'a1b2c3d4e5f60718', secretEnc: 'eA==', server: 'https://ntfy.sh' }, abcdef0123fe: { id: 'bad', secretEnc: 'eA==', server: 'https://ntfy.sh' },
-    abcdef012345: { id: 'a1b2c3d4e5f60718', secretEnc: 'eA==', server: 'file:///etc/passwd' }, '000000000000': { id: 'a1b2c3d4e5f60718', secretEnc: 'eA==', server: 'https://ntfy.sh' } } }));
+    abcdef0123ff: { id: 'a1b2c3d4e5f60718', secretEnc: 'eA==' }, abcdef0123fe: { id: 'bad', secretEnc: 'eA==' },
+    abcdef012345: { id: 'a1b2c3d4e5f60718', secretEnc: '' }, '000000000000': { id: 'a1b2c3d4e5f60718', secretEnc: 'eA==' } } }));
   const odd = mk();
   check('entries and tokens that are not what they should be are left out, the rest is made safe',
     odd.list().length === 3 && odd.get('abcdef012345').name === 'ok' && odd.get('abcdef012345').os === '' && (await odd.key('abcdef012345')) === null
-    && odd.get('abcdef0123ff').paired && !odd.get('abcdef0123ff').hasKey && !odd.get('abcdef0123fe').paired && !odd.get('abcdef012345').paired && !/^x$/.test(odd.install()));
+    && odd.get('abcdef0123ff').paired && !odd.get('abcdef0123ff').hasKey && !odd.get('abcdef0123fe').paired && !odd.get('abcdef012345').paired && !/^x$/.test(odd.install())
+    && !fs.readFileSync(path.join(dir, 'tokens.json'), 'utf8').includes('000000000000'));
 
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   console.log(failed ? `\n${failed} FAILED (of ${n})` : `\nALL PASS (${n})`);

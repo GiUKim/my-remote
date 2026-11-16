@@ -28,16 +28,33 @@ const validInstall = (s) => typeof s === 'string' && /^[A-Za-z0-9_-]{8,64}$/.tes
 const clean = (s, max) => Array.from(String(s == null ? '' : s), (c) => { const n = c.codePointAt(0); return n < 32 || n === 127 || n === 0x2028 || n === 0x2029 ? ' ' : c; }).join('').trim().slice(0, max);
 const OSES = new Set(['windows', 'linux', 'mac']);
 
+// A read refused for a moment (a virus scanner holding the file) is tried again a few times; a file that
+// still cannot be read is never written over: every app with a token in it would lose its way in (its key
+// is gone), so the host listens on none of them until the file can be read again (tried every 10 s).
+const BUSY = new Set(['EBUSY', 'EPERM', 'EACCES', 'EAGAIN']);
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function readText(file) {
+  for (let i = 0; ; i++) {
+    try { return fs.readFileSync(file, 'utf8'); } catch (e) {
+      if (e.code === 'ENOENT') return null;
+      if (i < 4 && BUSY.has(e.code)) { pause(100); continue; }
+      throw e;
+    }
+  }
+}
+
 function create({ file, crypt, now = () => Date.now() }) {
   let devices = []; // { id, secretEnc, name, pc, os, osName, app, install, added, last, lastIp, n, blocked }
-  let loaded = false, note = '';
+  let loaded = false, note = '', unreadableAt = 0;
   const plain = new Map(); // id -> its token, once decrypted (asked for at every new subscription)
 
   function load() {
     loaded = true;
     devices = [];
+    note = '';
     let text;
-    try { text = fs.readFileSync(file, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') note = 'unreadable'; return; }
+    try { text = readText(file); } catch { note = 'unreadable'; unreadableAt = now(); return; }
+    if (text === null) return;
     try {
       const j = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
       if (!j || !Array.isArray(j.devices)) throw new Error('no list');
@@ -56,12 +73,16 @@ function create({ file, crypt, now = () => Date.now() }) {
     }
   }
   function save() {
+    if (note === 'unreadable') throw new Error('unreadable'); // never over a file that could not be read
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = file + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify({ v: 1, devices }, null, 1) + '\n', { mode: 0o600 });
     fs.renameSync(tmp, file);
   }
-  const find = (id) => { if (!loaded) load(); return devices.find((d) => d.id === id) || null; };
+  // Read when first asked, and again while the file could not be read (at most every 10 s).
+  const ensure = () => { if (!loaded || (note === 'unreadable' && now() - unreadableAt > 10000)) load(); };
+  const find = (id) => { ensure(); return devices.find((d) => d.id === id) || null; };
+  const writable = () => { ensure(); return note !== 'unreadable'; };
   // What the host's window shows: everything but the token.
   const pub = (d) => ({ id: d.id, name: d.name || d.pc || '', pc: d.pc, os: d.os, osName: d.osName, app: d.app, added: d.added, last: d.last, lastIp: d.lastIp, n: d.n, blocked: d.blocked });
 
@@ -75,13 +96,13 @@ function create({ file, crypt, now = () => Date.now() }) {
   return {
     MAX,
     // 'broken' / 'unreadable' when the file could not be used (it is kept, see load), else ''.
-    note() { if (!loaded) load(); return note; },
-    list() { if (!loaded) load(); return devices.map(pub); },
+    note() { ensure(); return note; },
+    list() { ensure(); return devices.map(pub); },
     get(id) { const d = find(id); return d ? pub(d) : null; },
     // Every device's token, for the host's page to listen on its topic and read what it sends. A token
     // that cannot be decrypted here (another user's file) is left out: that device cannot get in.
     async secrets() {
-      if (!loaded) load();
+      ensure();
       const out = [];
       for (const d of devices) {
         let s = plain.get(d.id);
@@ -91,15 +112,16 @@ function create({ file, crypt, now = () => Date.now() }) {
       return out;
     },
     // An app connected with the access key asks for a token of its own. -> { ok, id, secret, again } |
-    // { ok: false, why: 'full' | 'nostore' }.
+    // { ok: false, why: 'full' | 'nostore' | 'unreadable' }.
     async add(info = {}) {
-      if (!loaded) load();
+      if (!writable()) return { ok: false, why: 'unreadable' };
       const install = validInstall(info.install) ? info.install : '';
       let d = install ? devices.find((x) => x.install === install) : null;
       if (!d && devices.length >= MAX) return { ok: false, why: 'full' };
       const secret = crypto.randomBytes(32).toString('base64url');
       let secretEnc;
       try { secretEnc = await seal(secret); } catch { return { ok: false, why: 'nostore' }; }
+      if (!writable()) return { ok: false, why: 'unreadable' };
       const again = !!d && devices.includes(d);
       if (!again) {
         if (devices.length >= MAX) return { ok: false, why: 'full' }; // filled up while the token was being sealed
@@ -116,25 +138,25 @@ function create({ file, crypt, now = () => Date.now() }) {
     // A connection with that token is up: when, from where.
     seen(id, { ip } = {}) {
       const d = find(id);
-      if (!d) return false;
+      if (!d || !writable()) return false;
       d.last = now();
       d.n += 1;
       if (ip) d.lastIp = clean(ip, 64);
       save();
       return true;
     },
-    rename(id, name) { const d = find(id); if (!d) return false; d.name = clean(name, 40); save(); return true; },
-    block(id, on) { const d = find(id); if (!d) return false; d.blocked = !!on; save(); return true; },
+    rename(id, name) { const d = find(id); if (!d || !writable()) return false; d.name = clean(name, 40); save(); return true; },
+    block(id, on) { const d = find(id); if (!d || !writable()) return false; d.blocked = !!on; save(); return true; },
     remove(id) {
       const d = find(id);
-      if (!d) return false;
+      if (!d || !writable()) return false;
       devices = devices.filter((x) => x !== d);
       plain.delete(id);
       save();
       return true;
     },
     // Every token gone (a new access key was issued because the old one leaked: a device paired with it may be someone else's).
-    clear() { if (!loaded) load(); const n = devices.length; devices = []; plain.clear(); if (n) save(); return n; },
+    clear() { if (!writable()) return 0; const n = devices.length; devices = []; plain.clear(); if (n) save(); return n; },
   };
 }
 
