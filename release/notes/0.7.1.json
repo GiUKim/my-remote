@@ -1,0 +1,8 @@
+{
+  "ko": [
+    "호스트가 오류로 꺼지면 3초 뒤 스스로 다시 켜집니다(30분에 3번까지). 원격으로만 쓰는 PC가 오류 한 번에 접속할 수 없게 되는 일을 막습니다. 트레이의 종료로 끈 호스트는 다시 켜지 않습니다"
+  ],
+  "en": [
+    "A host that ends with an error starts again by itself 3 seconds later (at most 3 times in 30 minutes), so that a PC used only remotely is not left unreachable by one crash. A host quit from the tray is not started again"
+  ]
+}

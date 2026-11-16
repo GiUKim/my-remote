@@ -302,6 +302,25 @@ the client app instead).
   path with no drop point, so `shell.dropFiles` puts them on the client's clipboard. A person who
   presses Ctrl+V on the client before a large transfer is done pastes nothing (the toast shows the
   progress).
+- **The host started again after a crash** (`host/watchdog.js`, 0.7.1; the user's go-ahead 2026-11-16).
+  Seen that day on the person's PC: the host (0.6.0) ended with 0xC0000409 in koffi.node (a fail-fast,
+  parameter 7: abort) on its main thread while nobody was connected, one second after the client app had
+  installed an update and was restarting; it stayed down. The minidump Windows kept
+  (`%LOCALAPPDATA%\CrashDumps\MyRemote.exe.<pid>.dmp`; read locally with a script of the documented format,
+  never sent anywhere) shows nested exception dispatch inside koffi (a C++ exception while unwinding ->
+  terminate -> abort) with no Windows API frame on the stack; which koffi call it was cannot be named
+  without koffi's debug symbols, and nothing in the host calls koffi on a timer while no session is on.
+  So: a small process of its own (the app's program as Node, `stdio[0]` a pipe the host holds, so it learns
+  of the host's end at once, with no pid to be reused), started 8 s after the host page loaded (the moment
+  a new version says it is up: a host that crashes while starting is not started over and over), starts
+  the host again with its own program, arguments and folder 3 s after it ended without quitting. Quitting
+  on purpose writes the host's pid into `quit-on-purpose` in its profile first (`before-quit`, Windows'
+  `session-end`, `powerMonitor` `shutdown`); a marker of another pid does not count. At most 3 restarts in
+  30 minutes (`watchdog.json`), each noted in `watchdog.log` there. It ends with the host, so a shell swap
+  is not held up by it. A host ended from Task Manager counts as a crash (use the tray's 종료).
+  Checked: `release/test-watchdog.js` (6 checks: quit on purpose, an end without a word, `abort()`, an older
+  marker, the limit, old restarts) on Windows and Ubuntu 24.04; with the real host on this PC (`--localtest
+  --no-client --watchdog`): killed, it came back within 6 s; its window closed, it stayed down.
 - **The host page going away, and the config file.** When the host page reloads or its process
   dies, `pageGone()` in `main.js` releases held keys and buttons, restores the cursors, drops offered
   drag-out files and unfinished uploads and sets the tray to idle (the page's own teardown does not
@@ -919,9 +938,11 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
     back on the new shell, up 10 s later, the old folder gone; with the final code a 0.7.1 host fetched a
     0.7.2 whose MyRemote.exe was no program, swapped, waited 3 min, put it aside as `.failed`, came back on
     0.7.1 and recorded `bad-0.7.2`. On the Linux PC (Ubuntu 24.04, its own Xvfb display and data root) the
-    same first swap through `my-remote.sh`: swapped 2 s after the host quit, up 34 s later. Not verified: a
-    real feed (the first will be the release), the client app's swap at quit with the real app, a company
-    PC's policies (constrained language), a virus scanner holding files, a PC with the app in Program Files.
+    same first swap through `my-remote.sh`: swapped 2 s after the host quit, up 34 s later. The first real
+    one, through the published 0.7.0 and the real feed, on the person's PC (2026-11-16 16:12): the host on
+    the 0.6.0 package's shell began the swap, quit, and was swapped 5 s later; the new shell's host said it
+    was up 10 s after that. Not verified: the client app's swap at quit with the real app, a company PC's
+    policies (constrained language), a virus scanner holding files, a PC with the app in Program Files.
 - **Plain names.** No file or folder the package holds or the app makes has a space or anything but
   ASCII in its name (the user's rule, 2026-11-14: a path with Korean or a space fails on some systems
   and with some tools): `MyRemote.exe`, `README.txt` (Korean inside, with a byte order mark on
@@ -950,9 +971,9 @@ that asks host or client and the shortcuts in the real Start menu, the client ap
 Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하는 벤치마크, 버그를 잡는 CI/CD"):
 
 - **`.github/workflows/ci.yml`** on every push to `main`, every pull request, by hand and weekly:
-  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-appsync.js`, `test-shellswap.js` with sh), `native` (`release/ci-native.js`:
+  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-appsync.js`, `test-shellswap.js` with sh, `test-watchdog.js`), `native` (`release/ci-native.js`:
   every committed binary rebuilt from `native/` with Ubuntu 22.04's mingw-w64 and compared byte for byte),
-  `Windows` (`test-assist.js`, `test-shellswap.js` with PowerShell, the self-test, `test-app.js --packaged`), `Linux X11` (the self-test with
+  `Windows` (`test-assist.js`, `test-shellswap.js` with PowerShell, `test-watchdog.js`, the self-test, `test-app.js --packaged`), `Linux X11` (the self-test with
   `--input-check --clip-check --client-app-check` under Xvfb, `test-app.js --packaged`) and the `performance
   gate` on both (`release/bench-gate.js --profile=ci`). `codeql.yml` scans the JavaScript; `dependabot.yml`
   proposes Electron/koffi/action updates as pull requests that CI then tests.
@@ -1034,6 +1055,7 @@ Run from `host/` with Electron's env var cleared.
 | `node release/test-assist.js` | The host's side of the Windows assist service (`host/assist.js`) against a fake service and helper on test pipes: protocol and version, the pipe-server session checks, input routing per state and its encoding, pictures in pieces, Ctrl+Alt+Del, reconnecting, installing refused during a remote session, the first-start offer. Windows only (skips elsewhere); no input reaches the PC (the sink is recorded, never installed) and nothing runs elevated (`T.elevate`). A few seconds |
 | `host\bin\winassist.exe install`, `uninstall`, `status`, `grab <file.bmp>` | The assist service itself: install/uninstall need an elevated prompt (the host window's card does this through UAC). `grab` writes the current input desktop to a BMP (a secure one only when run as LocalSystem) |
 | `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept. A second |
+| `node release/test-watchdog.js` | The host's watchdog (`host/watchdog.js`) in plain Node with a fake host that starts it as `main.js` does: a quit on purpose, an end without a word, `abort()`, an older host's marker, the limit of 3 restarts in 30 minutes. Half a minute |
 | `node release/test-shellswap.js` | The shell replaced by a newer package (`host/shellswap.js`) in plain Node with keys, a feed on 127.0.0.1 and app folders of its own: the signed list, which package replaces which shell, staging (and archives that are not the listed one), and the real swap script (PowerShell / sh) on fake folders whose program is a copy of Node: swapped and confirmed, not confirmed (put back), still running (not swapped), nothing to start, the sweep. About a minute |
 | `node release/build.js --sign-packages=<folder>` | `packages.json` and its signature from the packages' records (`<name>.package.json`) and archives in `<folder>`, each archive hashed again; checked with the keys in `app/update-config.json`. Part of every release from 0.7.0 on |
 | `node release/test-appsync.js` | The two faces kept one app (`host/appsync.js`) in plain Node: a newer version followed once it came up in the other face (not on trial, not a bad one, once), the one entry in place of the two shortcuts (Windows and Linux layouts in folders of its own; a source folder's Linux entries stay). A second |
@@ -1067,6 +1089,7 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/icon.svg` | The app's icon for the Linux app menu entries (the tray icon is drawn in `main.js`) |
 | `client/hosts.js`, `client/home.html`, `client/home-preload.js` | The client app's list of PCs: the store (`hosts.json`, keys only encrypted; Electron-free), the list window's page and its bridge `window.mrHome` (see Gotchas) |
 | `client/launcher.html`, `client/launcher-preload.js` | The installed app's start screen (two big buttons: this PC shared as the host, another PC reached as the client), the client app's first window with `--launcher`; its bridge `window.mrStart` |
+| `host/watchdog.js`, `release/test-watchdog.js` | Starts the host again when it ended without quitting (a crash); its test, plain Node |
 | `host/shellswap.js`, `release/test-shellswap.js` | The installed app's shell replaced by a newer package: the signed list, the decision, staging next to the folder, the swap script, the check that the new shell is up. Its test, plain Node (see "The shell replaced by a newer package") |
 | `host/appsync.js`, `release/test-appsync.js` | The two faces kept one app: a running face follows a version the other installed; the one "MyRemote" entry in place of older packages' two shortcuts. Its test, plain Node |
 | `release/test-hosts.js` | The store's test, plain Node |

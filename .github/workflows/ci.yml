@@ -40,6 +40,8 @@ jobs:
         run: node release/ci-run.js node release/test-appsync.js
       - name: The shell replaced by a newer package (signed list, staging, the sh swap script on fake folders)
         run: node release/ci-run.js node release/test-shellswap.js
+      - name: The host started again after a crash (the watchdog)
+        run: node release/ci-run.js node release/test-watchdog.js
 
   native:
     name: native binaries rebuilt byte for byte
@@ -76,6 +78,8 @@ jobs:
         run: node release/ci-run.js node release/test-assist.js
       - name: The shell replaced by a newer package (the PowerShell swap script on fake folders)
         run: node release/ci-run.js node release/test-shellswap.js
+      - name: The host started again after a crash (the watchdog)
+        run: node release/ci-run.js node release/test-watchdog.js
       - name: Self-test
         working-directory: host
         run: node ../release/ci-run.js node_modules/electron/dist/electron.exe . --selftest

@@ -72,6 +72,31 @@ let cursorsHidden = false;
 const cursorMark = () => path.join(app.getPath('userData'), 'cursor-hidden');
 const cursorCache = new Map(); // handle -> { img, hx, hy } | null
 
+// ---- started again after a crash (host/watchdog.js) ------------------------------------------
+// A small process of its own, started once the host has been up for a while (8 s after its page loaded, the
+// moment a new version also says it is up), that starts the host again when it ends without quitting. A
+// quit on purpose writes this process's pid into the quit marker first (before-quit; also when Windows
+// ends the session or the system shuts down). Not in the isolated runs.
+// --localtest --watchdog: in a local trial too (its throwaway profile, the local relay), to check it end to end.
+let watchdog = null;
+const WATCHDOG_TRIAL = LOCALTEST && process.argv.includes('--watchdog');
+const quitMark = () => path.join(app.getPath('userData'), 'quit-on-purpose');
+function markQuit() {
+  if (ISOLATED && !WATCHDOG_TRIAL) return;
+  try { fs.writeFileSync(quitMark(), String(process.pid)); } catch {}
+}
+function startWatchdog() {
+  if ((ISOLATED && !WATCHDOG_TRIAL) || watchdog) return;
+  try {
+    const { spawn } = require('child_process');
+    watchdog = spawn(process.execPath, [path.join(__dirname, 'watchdog.js'), String(process.pid), quitMark(), path.join(app.getPath('userData'), 'watchdog.json'),
+      process.execPath, JSON.stringify(process.argv.slice(1)), process.cwd()],
+    { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, detached: true, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
+    watchdog.stdin.on('error', () => {}); // its end closes when this process ends: that is how it knows
+    watchdog.unref();
+  } catch (e) { console.error('[host] watchdog: ' + e.message); }
+}
+
 let cursorGuard = null;
 function setCursorsHidden(on) {
   if (on === cursorsHidden) return;
@@ -748,6 +773,9 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'host.html')); // by this file's place: in the installed app the app's own folder is the shell's
   // The installed app: this version counts as up once its page has loaded and stayed for a while (a
   // page that keeps crashing never gets there, and the shell goes back to the version before).
+  // The watchdog from the same moment on (a host that crashes while it starts is not started over and over).
+  if (!ISOLATED || WATCHDOG_TRIAL) win.webContents.once('did-finish-load', () => setTimeout(startWatchdog, 8000));
+  win.on('session-end', markQuit); // Windows ends the session (log off, shut down): not a crash
   // A shell swap waits for the same moment (shellswap.confirm: the new shell's code is up).
   if (APP && (!ISOLATED || SHELL_SWAP_TRIAL)) win.webContents.on('did-finish-load', () => setTimeout(() => {
     if (win.isDestroyed() || win.webContents.isCrashed()) return;
@@ -917,7 +945,7 @@ else if (!ISOLATED && !app.requestSingleInstanceLock()) app.quit();
 else {
   // Started again: after an update restart; while the page waits to be loaded again after a crash, at once.
   app.on('second-instance', () => { oneEntry(); if (codeStamp() !== startedStamp) restart(); else { reloadCrashedPage(); showWindow(); } });
-  app.on('before-quit', () => { quitting = true; assist.stop(); input.reset(); setCursorsHidden(false); clearKeyClip(); runningMark(false); });
+  app.on('before-quit', () => { quitting = true; markQuit(); assist.stop(); input.reset(); setCursorsHidden(false); clearKeyClip(); runningMark(false); });
   process.on('exit', () => { if (cursorsHidden) input.restoreCursors(); });
   app.whenReady().then(async () => {
     // The code is newer than the Electron it runs on: it was updated (git pull) without setup.ps1/setup.sh.
@@ -994,6 +1022,7 @@ else {
     const lockChanged = (on) => { screenLocked = on; if (win && !win.isDestroyed()) win.webContents.send('host-lock', on); };
     powerMonitor.on('lock-screen', () => lockChanged(true));
     powerMonitor.on('unlock-screen', () => lockChanged(false));
+    powerMonitor.on('shutdown', markQuit); // Linux and macOS: the system goes down, not a crash (the watchdog leaves it)
     ipcMain.handle('host-locked', () => { try { return powerMonitor.getSystemIdleState(1) === 'locked'; } catch { return screenLocked; } });
     // `nudge`: the pointer a pixel aside and back first (see input.nudge), while the client waits to learn
     // whether its drag became a drag-and-drop here.
