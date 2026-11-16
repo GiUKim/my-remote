@@ -34,6 +34,7 @@
   #updMsg { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12.5px; }
   #search { flex: 0 1 230px; min-width: 120px; }
   #add { flex: none; }
+  #exitStart { flex: none; }
 
   main { flex: 1 1 auto; overflow: auto; padding: 20px 22px 8px; }
   main::-webkit-scrollbar { width: 12px; }
@@ -104,6 +105,7 @@
   </div>
   <input id="search" type="search" placeholder="이름, 컴퓨터 이름으로 찾기" spellcheck="false" autocomplete="off">
   <button id="add" class="primary" title="Ctrl+N">＋ PC 추가</button>
+  <button id="exitStart" class="plain" hidden title="처음 화면(이 PC 공유 / 다른 PC에 접속)으로 돌아갑니다. 열려 있는 원격 PC 창은 그대로 둡니다">나가기</button>
 </header>
 <main>
   <div id="note"></div>
@@ -478,6 +480,8 @@ async function checkUpdate() {
   $('ver').textContent = info.version ? 'v' + info.version : '';
   if (info.version) document.title = 'My Remote v' + info.version; // the window's title too
   if (info.updates) { $('updCheck').hidden = false; $('updCheck').onclick = checkUpdate; }
+  // "나가기": back to the start screen (this list closes; the PCs' windows stay open).
+  if (info.startScreen && api.exit) { $('exitStart').hidden = false; $('exitStart').onclick = () => api.exit(); }
   const s = $('store');
   s.className = info.store === 'os' ? '' : 'warn';
   s.textContent = info.store === 'os' ? '🔒 접속 키는 이 PC에만, 운영체제가 암호화해 보관합니다'

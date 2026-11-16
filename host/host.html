@@ -5,7 +5,9 @@
 <title>My Remote Host</title>
 <style>
   body { font: 14px/1.5 "Segoe UI", "Malgun Gothic", sans-serif; margin: 0; padding: 18px; background: #14171c; color: #e6e8eb; }
-  h1 { font-size: 17px; margin: 0 0 12px; }
+  h1 { font-size: 17px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  h1 > span { flex: 1 1 auto; min-width: 0; }
+  #exitStart { flex: none; margin-left: 0; }
   .card { background: #1d2229; border: 1px solid #2c333d; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: #777; flex: none; }
@@ -21,7 +23,7 @@
 </style>
 </head>
 <body>
-  <h1>My Remote Host <small id="ver"></small><button id="updCheck" class="sub mini" style="display:none">업데이트 확인</button> <small id="updMsg"></small></h1>
+  <h1><span>My Remote Host <small id="ver"></small><button id="updCheck" class="sub mini" style="display:none">업데이트 확인</button> <small id="updMsg"></small></span><button id="exitStart" class="sub mini" style="display:none" title="처음 화면(이 PC 공유 / 다른 PC에 접속)으로 돌아갑니다. 호스트는 계속 켜져 있습니다. 끄려면 트레이 → 종료">나가기</button></h1>
   <div class="card" id="upd" style="display:none">
     <div><b id="updTitle"></b></div>
     <small id="updText"></small>

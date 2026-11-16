@@ -269,7 +269,15 @@ function listMode() {
     store: !(await crypt.ready().catch(() => false)) ? 'none' : obscuredOnly() ? 'obscured' : 'os',
     rolledBack: APP ? APP.rolledBack : [],
     updates: !!(APP && APP.update), // the installed app: the list has "업데이트 확인"
+    startScreen: true, // "나가기" (the start screen is the client app's own window: client/launcher.html)
   }));
+  // "나가기" (the user's wish, 2026-11-16: both faces lead back to the start screen): the start screen comes,
+  // this list closes after it, so the app does not end in between; the PCs' windows stay open.
+  handle('home:exit', () => {
+    showLauncher();
+    setTimeout(() => { if (home && !home.isDestroyed()) home.close(); }, 0);
+    return true;
+  });
   // "업데이트 확인", in the list and on the start screen: the feed now instead of at the next look (20 s after
   // the start, then every 6 h). An update found is asked about as usual (offerUpdate, over whichever of the
   // two windows is open), also one put off before; the page says the rest. The host and the client app run

@@ -845,6 +845,8 @@ function showUpdate(u) {
   // "업데이트 확인": the installed app with a feed (from a source folder updates come by git).
   $('updCheck').style.display = u.installed && u.state && u.state !== 'off' && u.state !== 'none' ? '' : 'none';
   $('updCheck').disabled = ['checking', 'downloading', 'ready'].includes(u.state);
+  // "나가기": back to the start screen (two big buttons); the host keeps running. Not in the isolated runs.
+  $('exitStart').style.display = u.startScreen ? '' : 'none';
   $('ver').title = !u.installed ? '소스 폴더에서 실행 중입니다. 업데이트는 git pull과 설치 스크립트로 합니다.'
     : u.error ? '업데이트를 확인하지 못했습니다: ' + u.error
     : u.checkedAt ? '최신 버전입니다 · 확인 ' + new Date(u.checkedAt).toLocaleTimeString() : '';
@@ -893,6 +895,7 @@ function updateChecked(u) {
 function watchUpdates() {
   if (!api.update) return;
   $('updCheck').onclick = checkUpdate;
+  $('exitStart').onclick = () => api.startScreen().then((ok) => { if (!ok) log('처음 화면을 열지 못했습니다'); }, () => {});
   api.update.status().then(showUpdate, () => {});
   api.update.onChange(showUpdate);
 }

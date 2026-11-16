@@ -750,7 +750,28 @@ const APP = global.__mrApp || null;
 if (APP && process.platform === 'win32') { app.setAppUserModelId(appsync.APP_ID); console.log('[host] app id ' + appsync.APP_ID); }
 let sessionLive = false;
 const appVersion = () => (APP ? APP.version : require('./package.json').version);
-const updateInfo = () => ({ version: appVersion(), installed: !!APP, rolledBack: APP ? APP.rolledBack : [], ...(APP && APP.update ? APP.update.status() : { state: 'none' }) });
+const updateInfo = () => ({ version: appVersion(), installed: !!APP, rolledBack: APP ? APP.rolledBack : [], startScreen: canStartScreen(), ...(APP && APP.update ? APP.update.status() : { state: 'none' }) });
+// "나가기" in the host window (the user's wish, 2026-11-16): the start screen with its two big buttons, which is
+// the client app's first window (client/launcher.html, --launcher; a running client app shows it on the
+// second start). This window hides; the host keeps running (quitting it would end remote access: the tray
+// quits it), and the start screen says it runs. Never in the isolated runs: the client app would start on
+// the person's own profile.
+const canStartScreen = () => !ISOLATED && fs.existsSync(path.join(__dirname, '..', 'client', 'launcher.html'));
+function openStartScreen() {
+  if (!canStartScreen()) return false;
+  const { spawn } = require('child_process');
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const o = { env, detached: true, stdio: 'ignore' };
+  const sh = path.join(path.dirname(process.execPath), 'my-remote.sh');
+  try {
+    if (!APP) spawn(process.execPath, [path.join(__dirname, '..', 'client'), '--launcher'], o).unref(); // a source folder: Electron given the client folder
+    else if (process.platform === 'linux' && fs.existsSync(sh)) spawn(sh, ['--client', '--launcher'], o).unref();
+    else spawn(process.execPath, ['--client', '--launcher', ...process.argv.filter((a) => a === '--no-sandbox')], o).unref();
+  } catch (e) { console.error('[host] start screen: ' + e.message); return false; }
+  if (win && !win.isDestroyed()) win.hide();
+  return true;
+}
 // Packages up to 0.5.x made two shortcuts (host, client): the one entry takes their place, at the start and
 // whenever another start reaches this running host. The first-start dialog of those packages' shells (their
 // exe started without --host/--client) makes the two again when its box is ticked, its default, and then
@@ -1109,6 +1130,7 @@ else {
     // Updates of the installed app (see updateInfo above). A required update restarts the host by
     // itself: not in the middle of a remote session (the shell waits for it to end, half an hour at most).
     ipcMain.handle('update-status', updateInfo);
+    ipcMain.handle('start-screen', () => openStartScreen());
     // ask: the person pressed "업데이트 확인", so an update found is asked about at once (askUpdate), as
     // the client app does; not waited for, so that the window can say what the check found meanwhile.
     ipcMain.handle('update-check', async (_e, ask) => { if (APP && APP.update) { await APP.update.check(); if (ask) askUpdate(); } return updateInfo(); });

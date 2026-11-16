@@ -266,12 +266,17 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         out.putOffShownWhenAsked = vis('upd') && /1\\.0\\.3/.test(text('updTitle')) && text('updMsg') === '';
         showUpdate({ ...base, installed: false, state: 'none', available: null });
         out.fromSource = !vis('upd') && /소스/.test(text('ver')) && !vis('updCheck');
+        // "나가기" (back to the start screen): shown where main says there is one, never in an isolated run.
+        showUpdate({ ...base, state: 'idle', available: null, startScreen: true });
+        out.exitShown = vis('exitStart');
+        showUpdate({ ...base, state: 'idle', available: null, startScreen: false });
+        out.exitHidden = !vis('exitStart');
         updateLater = '';
         document.getElementById('updMsg').textContent = '';
-        api.update.status().then(showUpdate);
-        return out;
+        return api.update.status().then((u) => { showUpdate(u); out.isolatedNoExit = u.startScreen === false && !vis('exitStart'); return api.startScreen(); })
+          .then((opened) => { out.isolatedOpensNothing = opened === false; return out; });
       })()`);
-      check('the host window shows an update on offer, lets it be put off, says when one is required or needs a new package, and checks when asked (its check-for-updates button)', Object.values(r).every(Boolean), JSON.stringify(r));
+      check('the host window shows an update on offer, lets it be put off, says when one is required or needs a new package, and checks when asked (its check-for-updates button); its "나가기" shows only where there is a start screen, never in an isolated run', Object.values(r).every(Boolean), JSON.stringify(r));
     }
 
     // --soak=<minutes>: a long session instead of the rest, to find what grows (no input injected).

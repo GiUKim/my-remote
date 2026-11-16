@@ -42,6 +42,8 @@ contextBridge.exposeInMainWorld('hostApi', {
     page: () => ipcRenderer.invoke('update-page'),
     onChange: (fn) => ipcRenderer.on('update-changed', (_e, s) => fn(s)),
   },
+  // "나가기": the app's start screen (the client app's first window); this window hides, the host keeps running.
+  startScreen: () => ipcRenderer.invoke('start-screen'),
   // The Windows assist service (host/assist.js): the lock screen and UAC prompts during a session, and
   // installing it (elevated: Windows asks the person at this PC).
   assist: {

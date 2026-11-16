@@ -1,8 +1,10 @@
 {
   "ko": [
+    "호스트 창과 PC 목록에 \"나가기\"가 생겼습니다. 누르면 처음 화면(이 PC 공유 / 다른 PC에 접속)으로 돌아갑니다. 호스트는 계속 켜져 있습니다(끄려면 트레이 → 종료)",
     "호스트가 오류로 꺼지면 3초 뒤 스스로 다시 켜집니다(30분에 3번까지). 원격으로만 쓰는 PC가 오류 한 번에 접속할 수 없게 되는 일을 막습니다. 트레이의 종료로 끈 호스트는 다시 켜지 않습니다"
   ],
   "en": [
+    "The host window and the list of PCs have \"나가기\" (exit): it goes back to the start screen (this PC shared / another PC reached). The host keeps running (the tray quits it)",
     "A host that ends with an error starts again by itself 3 seconds later (at most 3 times in 30 minutes), so that a PC used only remotely is not left unreachable by one crash. A host quit from the tray is not started again"
   ]
 }

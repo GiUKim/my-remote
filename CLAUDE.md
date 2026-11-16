@@ -870,6 +870,13 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
     Both faces set the entry's id before any window (`[host] app id` in its output; `test-app.js
     --packaged` checks it, `test-appsync.js` that the code's and the shell's entries carry it). Whether
     the notice really failed to show in 0.6.0 was not tried.
+  - "나가기" in both faces (the user's wish, 2026-11-16): the host window's (`start-screen`, `openStartScreen`
+    in `host/main.js`) starts the client app with `--client --launcher` (a running one shows the start
+    screen on that second start) and hides the host window; the host keeps running, since quitting it
+    would end remote access (the tray quits it), and the start screen says it runs. Never in the isolated
+    runs (the client app would start on the person's own profile): the self-test checks the button is
+    hidden there and opens nothing. The list's (`home:exit`) shows the start screen and then closes the
+    list; the PCs' windows stay. Checked in test mode: list -> 나가기 -> start screen -> 다른 PC에 접속 -> list.
   - Updates followed: `appsync.watch` reads the shell's `state.json` every 30 s; when `current` is newer
     than what runs and has come up (its trial over, never a bad one), the host restarts into it once no
     session is on, and the client app restarts at once with no PC window open, else asks. A restart keeps

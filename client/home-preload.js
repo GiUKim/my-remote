@@ -12,5 +12,6 @@ contextBridge.exposeInMainWorld('mrHome', {
   close: (id) => ipcRenderer.invoke('home:close', id),
   remove: (id) => ipcRenderer.invoke('home:remove', id),
   checkUpdate: () => ipcRenderer.invoke('home:checkUpdate'), // -> { state, version, error, available: { version, required, kind } | null }
+  exit: () => ipcRenderer.invoke('home:exit'), // "나가기": the start screen comes, this list closes
   onChange: (f) => { ipcRenderer.on('home:changed', () => { try { f(); } catch {} }); },
 });
