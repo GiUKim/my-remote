@@ -46,7 +46,8 @@ the client app instead).
 ## Rules for agents
 
 - **Never read, print, log, or commit the access key.** It lives DPAPI-encrypted in
-  `%APPDATA%\my-remote-host\config.json` (`keyEnc`); on Linux in `~/.config/my-remote-host/config.json`,
+  `%APPDATA%\my-remote-host\config.json` (`keyEnc`; the authenticator app's secret `otpEnc` too, when the
+  person turned it on); on Linux in `~/.config/my-remote-host/config.json`,
   encrypted with the desktop's keyring or, without one, only obscured (reading that file is reading
   the key). The copies `config.json.bad-<time>` that the host keeps of a broken file next to it hold
   the key just the same: never read them either. Do not decrypt it, do not ask the user to paste it
@@ -436,15 +437,39 @@ the client app instead).
     (the host then has no device of theirs either), then on every client app "키 바꾸기" (which pairs anew).
     The README says so. A review found this (2026-11-16); nothing short of the person comparing something
     on both screens tells the real host from a key holder.
-  - Not built yet (agreed with the user 2026-11-16): confirming a new device once at the host's screen (a
-    paired device can press it from afar), an authenticator app's code for those who turn it on (opt-in),
-    the release key's signature on the page the host serves (unsigned: no app powers), a one-time code
-    with acceptance for helping others.
+  - **New devices confirmed** (`confirmNew`; the user's go-ahead the same day: "새 기기만 처음 한 번 확인",
+    the authenticator app only for those who want it). A new install turns it on and lets its first client
+    app in without asking (`firstFree`, gone once a device paired or the person changed the setting); one
+    from before keeps going as it did until the person turns it on (an update must not lock anybody out of
+    a PC they reach only remotely). While on, a hello with the key (`main.js` 'gate') waits in the host page
+    (`ask` in host.js) until the person presses 허용 on the card at the top of the host window (a registered
+    device connected from afar sees that window and can press it; main brings the window forward and
+    notifies), or the client gives the code of the authenticator app. Both screens show the same 4-digit
+    number. One request waits at a time (the same page asking again replaces it), at most 6 in 10 minutes,
+    each 2 minutes; refused, timed out, busy or locked: `denied` with that `why`. A page allowed may come
+    back for 12 hours without asking (`allowedPks`: a reconnect, a renew). Devices with a token are never
+    asked; a browser is asked every time it opens.
+  - The client page makes one ECDSA P-256 key per page (`myKey`, the private half not extractable) and puts
+    its public half in every hello (`pk`); its answer (`sig` over `answer\n<sid>\n<sdp>`) and a code it
+    sends (`otp\n<sid>\n<code>`) are signed with it, and the host takes them only so (`verifySig`): nobody
+    else holding the key and reading the relay can answer in place of the client the person allowed.
+  - The authenticator app (opt-in, "휴대폰 인증 앱 설정" in the devices card): `host/totp.js` (RFC 6238: SHA-1,
+    6 digits, 30-s steps, the step before and after taken too, each step once: `otpLast`) and `host/qr.js`
+    (the setup address as a QR code). The secret is shown once, kept only after its code was typed at the
+    host, encrypted with safeStorage like the key (`otpEnc` in config.json), with ten recovery codes kept as
+    hashes (each once). Five wrong codes lock it for 15 minutes, doubling with each lock up to a day.
+    Turning confirmation off, setting the app up or removing it are refused during a remote session.
+    Recovery codes are copied through main (`copy-secret`: never passed on to a client, cleared after a minute).
+  - Still to come (agreed with the user 2026-11-16): the release key's signature on the page the host serves
+    (unsigned: no app powers), a one-time code with acceptance for helping others.
   - Checked: `release/test-devices.js` (26: the store, an unreadable file, the log), `release/test-hosts.js`
-    (34: the app's side, unreadable and broken files, an older version's rewrite), the self-test's
+    (34: the app's side, unreadable and broken files, an older version's rewrite), `release/test-totp.js`
+    (RFC 6238's test values), `release/test-qr.js` (the standard's worked example and tables; not yet read by
+    a real phone), the self-test (allowed at the host with the same number on both; back without asking;
+    refused; a wrong code and a recovery code; loosening refused during a session) and its
     `--client-app-check` (paired; the token read back from devices.json; the key let go; started again with
     the token alone, logged as the device; blocked: cut off and turned away; removed: not heard), an
-    independent review of the first version (its findings are fixed above), the card in a picture with
+    independent review of the first version (its findings are fixed above), the cards in pictures with
     made-up devices. Bit while fixing: the once-a-minute limit started at 0 and the host page (reloaded by
     the self-test a minute earlier) answered nobody. Not tried: the real ntfy.sh with a real host and
     several tokens, a Linux client app, a browser whose key a real old loader had kept.
@@ -1142,7 +1167,7 @@ Run from `host/` with Electron's env var cleared.
 | `host\bin\winassist.exe install`, `uninstall`, `status`, `grab <file.bmp>` | The assist service itself: install/uninstall need an elevated prompt (the host window's card does this through UAC). `grab` writes the current input desktop to a BMP (a secure one only when run as LocalSystem) |
 | `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept, device tokens (kept, the key let go only for the token that worked, a key given again replaces the token). A second |
 | `node release/test-devices.js` | The host's device tokens (`host/devices.js`) and access log (`host/accesslog.js`) in plain Node: tokens never as text, the same app pairing again, blocking, removal, the limit, a file that cannot be read never written over, a broken file kept; log entries with known fields only, kept 90 days and under 2 MB. A second |
-| `node release/test-qr.js`, `node release/test-totp.js` | The QR codes (`host/qr.js`) against the standard's worked example, format and version information and the layout; the one-time codes (`host/totp.js`) against RFC 6238's test values, base32, recovery codes. For the opt-in authenticator app of "Devices" (not wired up yet). A second |
+| `node release/test-qr.js`, `node release/test-totp.js` | The QR codes (`host/qr.js`) against the standard's worked example, format and version information and the layout; the one-time codes (`host/totp.js`) against RFC 6238's test values, base32, recovery codes. For the opt-in authenticator app of "Devices". A second |
 | `node release/test-watchdog.js` | The host's watchdog (`host/watchdog.js`) in plain Node with a fake host that starts it as `main.js` does: a quit on purpose, an end without a word, `abort()`, an older host's marker, the limit of 3 restarts in 30 minutes. Half a minute |
 | `node release/test-shellswap.js` | The shell replaced by a newer package (`host/shellswap.js`) in plain Node with keys, a feed on 127.0.0.1 and app folders of its own: the signed list, which package replaces which shell, staging (and archives that are not the listed one), and the real swap script (PowerShell / sh) on fake folders whose program is a copy of Node: swapped and confirmed, not confirmed (put back), still running (not swapped), nothing to start, the sweep. About a minute |
 | `node release/build.js --sign-packages=<folder>` | `packages.json` and its signature from the packages' records (`<name>.package.json`) and archives in `<folder>`, each archive hashed again; checked with the keys in `app/update-config.json`. Part of every release from 0.7.0 on |
@@ -1252,11 +1277,12 @@ lost and the sender retries. Checked with Node tests against a fake EventSource 
 
 Signaling (through the relay, each message deflated, encrypted, chunked to 3000 chars):
 
-1. client -> host topic: `{t:'hello', sid, ts, mode, codec, pair?}` (`codec` optional: `H264`, `H264HQ`, `VP9`, `AV1`; `pair`: a client app connected with the key asks for a device token, `{ pc, os, osName, app }`)
+1. client -> host topic: `{t:'hello', sid, ts, mode, codec, pk, pair?}` (`codec` optional: `H264`, `H264HQ`, `VP9`, `AV1`; `pk`: the page's own ECDSA P-256 public key, SPKI base64; `pair`: a client app connected with the key asks for a device token, `{ pc, os, osName, app }`)
+   - with new devices confirmed: host -> client `{t:'confirm', sid, ts, code, otp, wait}` (the number both screens show; `otp`: a code may be given), client -> host `{t:'otp', sid, ts, code, sig}`, host -> client `{t:'otp', sid, ok: false, why, left}`; allowed: the offer follows; else `{t:'denied', sid, why}` (`refused`, `timeout`, `busy`, `locked`, `old`, `blocked`)
 2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, codec, cursorHidden, app, os, monitors:[{idx, mid, x, y, width, height, primary, hdr?}]}`
    (`os`: `{os: 'windows'|'linux'|'mac', name, pc}`, what the host runs, e.g. `Windows 10` or `Ubuntu 22.04.5 LTS`, and from 0.4.0 the computer's name (`os.hostname()`); the arrangement panel shows them with a logo, the client app's list keeps them)
    (`x`,`y`,`width`,`height` are the monitor's rectangle on the host's virtual desktop, physical pixels)
-3. client -> host topic: `{t:'answer', sid, ts, sdp}`
+3. client -> host topic: `{t:'answer', sid, ts, sdp, sig}` (`sig`: ECDSA over `answer\n<sid>\n<sdp>` with the hello's key; required when the hello had one)
 
 The host appends `x-google-start-bitrate` to the answer's video codec parameters so the bandwidth
 estimate does not start near 300 kbps. ICE is non-trickle (candidates are gathered before sending). The host rejects messages older than five

@@ -1149,6 +1149,76 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       check('an open client updates itself when the host version changes', ok3, JSON.stringify(c));
       lw.destroy();
 
+      // New devices confirmed at the host (host.js ask, main.js 'gate'): a hello with the key waits until the
+      // person allows it, or the client gives the authenticator app's code (opt-in). Pages of their own, like
+      // a browser's (no device token); the host's card is pressed here as the person would.
+      {
+        const hjs = (code) => hostWin.webContents.executeJavaScript(code);
+        await sleep(1500);
+        const on = await hjs('hostApi.gate.set(true)');
+        const page = async () => {
+          const gw = new BrowserWindow({ show: false, width: 1280, height: 720, webPreferences: { backgroundThrottling: false } });
+          await gw.loadFile(file, { hash: `k=${cfg.key}&auto&ro` });
+          const g = (code) => gw.webContents.executeJavaScript(code);
+          const gstate = () => g(`({ state: window.__rd.state, frames: window.__rd.frames, connects: window.__rd.connects, asked: window.__rd.asked || null, denied: window.__rd.denied || '', askMsg: document.getElementById('askMsg').textContent })`);
+          const guntil = async (pred, secs) => { let x; for (let i = 0; i < secs * 2; i++) { await sleep(500); try { x = await gstate(); if (pred(x)) return [true, x]; } catch {} } return [false, x]; };
+          // Closed as a person closes it (연결 끊기, then the window): the host hears its channel close at once,
+          // where a window destroyed with its connection up is noticed only when the connection times out.
+          const close = async () => { try { await g('disconnect("")'); } catch {} await sleep(800); gw.destroy(); };
+          return { gw, g, guntil, close };
+        };
+        // Until no session is on (the settings that loosen this refuse while one is).
+        const idle = async () => { for (let i = 0; i < 40; i++) { if (!(await hjs('!!(typeof session !== "undefined" && session)'))) return true; await sleep(500); } return false; };
+        const card = () => hjs(`({ shown: getComputedStyle(document.getElementById('ask')).display !== 'none', code: document.getElementById('askCode').textContent, who: document.getElementById('askWho').textContent })`);
+        // Allowed at the host.
+        const p1 = await page();
+        let [asked1, a1] = await p1.guntil((x) => !!x.asked, 20);
+        const c1 = await card();
+        await hjs(`document.getElementById('askYes').click()`);
+        let [in1, b1] = await p1.guntil((x) => x.state === 'connected' && x.frames > 10, 30);
+        check('new devices confirmed: a connection with the key waits, the host shows its request with the number the client shows, and 허용 lets it in',
+          on && on.ok && asked1 && c1.shown && c1.code === a1.asked.code && /^\d{4}$/.test(c1.code) && in1 && !(await card()).shown,
+          `asked: ${asked1}, card ${JSON.stringify(c1)}, client ${JSON.stringify(a1 && a1.asked)}; then ${JSON.stringify(b1)}`);
+        // The same page comes back (a renegotiation) without being asked again.
+        const before1 = b1 ? b1.connects : 0;
+        hostWin.webContents.send('displays-changed');
+        let [again1, c1b] = await p1.guntil((x) => x.connects > before1 && x.state === 'connected', 30);
+        check('new devices confirmed: the page allowed comes back without being asked again', again1 && !(await card()).shown, JSON.stringify(c1b));
+        await p1.close();
+        await idle();
+        // Refused at the host.
+        const p2 = await page();
+        let [asked2] = await p2.guntil((x) => !!x.asked, 20);
+        await hjs(`document.getElementById('askNo').click()`);
+        let [out2, b2] = await p2.guntil((x) => x.denied === 'refused', 15);
+        check('new devices confirmed: 거부 turns the client away and it is told so', asked2 && out2 && b2.state !== 'connected' && !(await card()).shown, JSON.stringify(b2));
+        await p2.close();
+        // The authenticator app, set up at the host (its code typed there), then a wrong code and a recovery code from a client.
+        const T = require('./totp');
+        await idle();
+        const setup = await hjs('hostApi.otp.begin()');
+        const conf = setup && setup.ok ? await hjs(`hostApi.otp.confirm(${JSON.stringify(T.code(T.unbase32(setup.secret)))})`) : null;
+        const p3 = await page();
+        let [asked3, a3] = await p3.guntil((x) => x.asked && x.asked.otp, 20);
+        await p3.g(`document.getElementById('askIn').value = '000000'; document.getElementById('askGo').click()`);
+        let [wrong3, w3] = await p3.guntil((x) => /맞지 않습니다/.test(x.askMsg), 15);
+        const rec = conf && conf.recovery ? conf.recovery[0] : '';
+        await p3.g(`document.getElementById('askIn').value = ${JSON.stringify(rec.toUpperCase())}; document.getElementById('askGo').click()`);
+        let [in3, b3] = await p3.guntil((x) => x.state === 'connected' && x.frames > 10, 30);
+        const info3 = await hjs('hostApi.gate.info()');
+        check('new devices confirmed: with the authenticator app set up, a wrong code is refused and a recovery code lets the client in (once)',
+          !!conf && conf.ok && conf.recovery.length === 10 && asked3 && a3.asked.otp && wrong3 && in3 && info3.otp && info3.recoveryLeft === 9,
+          `setup ${!!(conf && conf.ok)}, asked with code ${!!(a3 && a3.asked && a3.asked.otp)}, wrong refused ${wrong3} (${w3 && w3.askMsg}), in ${in3}, recovery codes left ${info3 && info3.recoveryLeft}`);
+        // Loosening it is refused while someone is connected; done once nobody is.
+        const offLive = await hjs('hostApi.gate.set(false)');
+        await p3.close();
+        await idle();
+        const off = await hjs('hostApi.gate.set(false)');
+        const otpOff = await hjs('hostApi.otp.off()');
+        check('new devices confirmed: turning it off is refused during a remote session, and works without one',
+          offLive && !offLive.ok && offLive.why === 'remote' && off && off.ok && !off.confirmNew && otpOff && otpOff.ok, JSON.stringify({ offLive, off: off && off.ok, otpOff: otpOff && otpOff.ok }));
+      }
+
       if (SHELL_CHECK) {
         // The client app: one call to spread() must put one fullscreen window on every screen, in order.
         const shell = require('../client/shell');

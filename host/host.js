@@ -677,7 +677,7 @@ async function startSession(hello, route) {
   const s = (session = {
     sid: hello.sid, started: performance.now(), streams: [], timers: [], dropTimer: 0, videoSenders: [], clip: null, native: null,
     mode: hello.mode === 'smooth' ? 'smooth' : 'sharp', encQueue: Promise.resolve(),
-    route, pair: pairWish(hello, route), filesIn: 0, filesOut: 0, connectedAt: 0,
+    route, pair: pairWish(hello, route), filesIn: 0, filesOut: 0, connectedAt: 0, bind: hello.bind || null,
   });
   s.who = whoOf(route, s.pair);
   log(`접속 요청 수신 (${s.who}) — 화면 캡처 시작`);
@@ -910,6 +910,93 @@ async function subscribe() {
     if (!now || now.blocked) teardown(now ? '기기 차단' : '기기 삭제');
   }
 }
+// ---- new devices confirmed at this PC (main.js 'gate'; the user's go-ahead 2026-11-16) -----------------
+// While confirmation is on, a hello with the key waits here until the person at this PC presses 허용 (also
+// from a registered device: it sees this window), or the client gives the code of their authenticator app
+// (opt-in). The hello carries the client page's own public key (`pk`); the answer and any code must be
+// signed with it, so that nobody else holding the key, reading the relay, can take the session the person
+// allowed. One request waits at a time (the same page asking again replaces its own), at most 6 in 10
+// minutes, each for 2 minutes. A page allowed once may come again for 12 hours without asking (a reconnect).
+const GATE_WAIT = 120e3, ASK_LIMIT = 6, ASK_WINDOW = 600e3, ALLOWED_FOR = 12 * 3600e3;
+const GATE_HOW = { host: '이 PC에서 허용', otp: '인증 앱 코드', recovery: '복구 코드', first: '첫 기기', again: '방금 허용한 기기', off: '' };
+let pending = null;
+const askTimes = [];
+const allowedPks = new Map(); // a client page's pk -> until when it may come again without asking
+const unb64 = (s) => { try { return Uint8Array.from(atob(String(s)), (c) => c.charCodeAt(0)); } catch { return null; } };
+async function importPk(s) {
+  const raw = typeof s === 'string' && s.length < 200 ? unb64(s) : null;
+  if (!raw) return null;
+  try { return await crypto.subtle.importKey('spki', raw, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']); } catch { return null; }
+}
+async function verifySig(pk, text, sig) {
+  const s = typeof sig === 'string' && sig.length < 200 ? unb64(sig) : null;
+  if (!pk || !s) return false;
+  try { return await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pk, s, new TextEncoder().encode(text)); } catch { return false; }
+}
+function ask(m, route, g) {
+  const name = m.pair && typeof m.pair.pc === 'string' && m.pair.pc ? m.pair.pc.slice(0, 60) + ' (앱)' : '브라우저';
+  if (!m.bind) { route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: 'old' }).catch(() => {}); return; }
+  if (pending && pending.m.pk === m.pk) endAsk(); // the same page asking again
+  const now = performance.now();
+  while (askTimes.length && now - askTimes[0] > ASK_WINDOW) askTimes.shift();
+  if (pending || askTimes.length >= ASK_LIMIT) {
+    route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: 'busy' }).catch(() => {});
+    api.access({ ev: 'denied', via: 'key', name, why: 'busy' });
+    return;
+  }
+  askTimes.push(now);
+  const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 10000).padStart(4, '0');
+  const p = (pending = { m, route, name, code, otp: !!g.otp, since: now, tried: new Set() });
+  p.timer = setTimeout(() => { if (pending === p) refuse('timeout'); }, GATE_WAIT);
+  route.send({ t: 'confirm', sid: m.sid, ts: Date.now(), code, otp: p.otp, wait: GATE_WAIT }).catch(() => {});
+  showAsk(p);
+  api.gate.alert(name);
+  log(`새 기기가 접속을 요청했습니다: ${name} · 확인 숫자 ${code} — 이 창에서 허용하거나 거부하세요`);
+  api.access({ ev: 'asked', via: 'key', name });
+}
+function endAsk() {
+  const p = pending;
+  pending = null;
+  if (p) clearTimeout(p.timer);
+  hideAsk();
+  return p;
+}
+function refuse(why) {
+  const p = endAsk();
+  if (!p) return;
+  p.route.send({ t: 'denied', sid: p.m.sid, ts: Date.now(), why }).catch(() => {});
+  api.access({ ev: 'denied', via: 'key', name: p.name, why });
+  log(`${p.name}: ${why === 'refused' ? '거부했습니다' : why === 'timeout' ? '2분 안에 허용하지 않아 끝냈습니다' : why === 'locked' ? '코드를 여러 번 틀려 막았습니다' : '막았습니다'}`);
+}
+async function allow(how) {
+  const p = endAsk();
+  if (!p) return;
+  for (const [k, until] of allowedPks) if (until < performance.now()) allowedPks.delete(k);
+  if (allowedPks.size < 50) allowedPks.set(p.m.pk, performance.now() + ALLOWED_FOR);
+  api.access({ ev: 'approved', via: 'key', name: p.name, how });
+  log(`${p.name}: 허용했습니다 (${GATE_HOW[how] || how})`);
+  try { await startSession(p.m, p.route); } catch (e) {
+    log('오류: ' + e.message);
+    api.sourcesFailed();
+    if (session && session.sid === p.m.sid) teardown('오류', true);
+  }
+}
+// The waiting request in this window: who, the number its screen shows too, 허용 / 거부, the time left.
+let askTick = 0;
+function showAsk(p) {
+  $('askWho').textContent = p.name;
+  $('askCode').textContent = p.code;
+  $('ask').style.display = '';
+  $('askYes').onclick = () => { if (pending === p) allow('host'); };
+  $('askNo').onclick = () => { if (pending === p) refuse('refused'); };
+  clearInterval(askTick);
+  const left = () => { const s = Math.max(0, Math.round((GATE_WAIT - (performance.now() - p.since)) / 1000)); $('askLeft').textContent = `— ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} 남음`; };
+  left();
+  askTick = setInterval(left, 1000);
+  window.scrollTo(0, 0);
+}
+function hideAsk() { clearInterval(askTick); $('ask').style.display = 'none'; }
+
 // Who is on the other end, for the log and the access log. A device's name as the host window has it now
 // (a rename does not make a new subscription: devNames, filled by showDevices).
 const devNames = new Map();
@@ -953,6 +1040,18 @@ async function onMessage(m, route) {
     }
   } else if (m.t === 'hello') {
     if (!firstTime(m)) return; // replay
+    // The page's own key: the answer must be signed with it (see 'answer').
+    m.bind = await importPk(m.pk);
+    if (route.kind === 'key') {
+      // New devices confirmed here (see ask): a page allowed a moment ago may come again without asking.
+      if (m.bind && (allowedPks.get(m.pk) || 0) > performance.now()) m.allowed = 'again';
+      else {
+        const g = await api.gate.decide({ app: !!(m.pair && typeof m.pair === 'object') }).catch(() => ({ need: true, otp: false }));
+        if (g.need) { ask(m, route, g); return; }
+        m.allowed = g.how;
+        if (g.how === 'first') api.access({ ev: 'approved', via: 'key', name: (m.pair && m.pair.pc) || '', how: 'first' });
+      }
+    }
     try { await startSession(m, route); } catch (e) {
       log('오류: ' + e.message);
       api.sourcesFailed(); // the monitors main keeps listed may be out of date: it asks Windows again next time
@@ -960,10 +1059,25 @@ async function onMessage(m, route) {
       // that would tell the client not to try again.
       if (session && session.sid === m.sid) teardown('오류', true);
     }
+  } else if (m.t === 'otp' && pending && m.sid === pending.m.sid && route.key === pending.route.key) {
+    // The code of the client's authenticator app (or a recovery code), signed with that page's own key.
+    const p = pending, code = String(m.code || '').slice(0, 20);
+    if (p.tried.has(code)) return; // heard twice (two subscriptions), or played back
+    if (!(await verifySig(p.m.bind, `otp\n${m.sid}\n${code}`, m.sig)) || pending !== p || p.tried.has(code)) return;
+    p.tried.add(code);
+    const r = await api.otp.check(code).catch(() => ({ ok: false, why: 'error' }));
+    if (pending !== p) return;
+    if (r.ok) allow(r.how);
+    else if (r.why === 'locked') refuse('locked');
+    else p.route.send({ t: 'otp', sid: m.sid, ts: Date.now(), ok: false, why: r.why, left: r.left }).catch(() => {});
   } else if (m.t === 'answer' && session && m.sid === session.sid && session.route.key === route.key && session.pc && session.pc.signalingState === 'have-local-offer' && !session.answered) {
     const s = session;
+    // From the page that said hello (signed with its key), so that nobody else who holds the key and reads
+    // the relay can answer in its place, in a session the person allowed.
+    if (s.bind && !(await verifySig(s.bind, `answer\n${m.sid}\n${m.sdp}`, m.sig))) return;
     // Taken once: while subscriptions overlap (see subscribe) the same answer can arrive twice, and a
     // second one applied while the first is still being applied would fail and end the session.
+    if (session !== s || s.answered) return;
     s.answered = true;
     try {
       await s.pc.setRemoteDescription({ type: 'answer', sdp: hintBitrate(m.sdp, Math.round(cfg.startBitrateMbps * 1000), Math.round(cfg.minBitrateMbps * 1000), Math.round(cfg.maxTotalMbps * 1000)) });
@@ -1153,8 +1267,8 @@ function renameDevice(d, el) {
   input.onblur = () => end(true);
 }
 // "접속 기록": what came to this host, the newest first (main.js keeps it in access.log, 90 days).
-const ACCESS_WHAT = { connect: '접속', end: '종료', denied: '거부', paired: '기기 등록' };
-const ACCESS_WHY = { blocked: '차단된 기기' };
+const ACCESS_WHAT = { connect: '접속', end: '종료', denied: '거부', paired: '기기 등록', asked: '허용 요청', approved: '허용' };
+const ACCESS_WHY = { blocked: '차단된 기기', refused: '거부함', timeout: '2분 안에 허용하지 않음', busy: '요청이 겹치거나 너무 잦음', locked: '코드를 여러 번 틀림' };
 async function showAccess() {
   const box = $('accessList');
   if (box.style.display !== 'none') { box.style.display = 'none'; return; }
@@ -1169,6 +1283,7 @@ async function showAccess() {
       if (e.in || e.out) parts.push(`파일 받음 ${e.in || 0} · 보냄 ${e.out || 0}`);
     }
     if (e.ev === 'denied') parts.push(ACCESS_WHY[e.why] || e.why || '');
+    if (e.ev === 'approved') parts.push(GATE_HOW[e.how] || e.how || '');
     const line = document.createElement('div');
     line.textContent = parts.filter(Boolean).join(' · ');
     box.append(line);
@@ -1176,13 +1291,73 @@ async function showAccess() {
   box.style.display = '';
 }
 
+// ---- the settings: new devices confirmed, and the authenticator app (main.js 'gate', 'otp-*') ------------
+const GATE_WHY = { remote: '원격 접속 중에는 할 수 없습니다. 이 PC 앞에서 하세요(접속한 사람이 보안 설정을 풀 수 없게 막아 둔 것입니다)', none: '다시 시도하세요' };
+let otpCodes = null; // the recovery codes, while they are shown
+async function showGate(info) {
+  info = info && 'confirmNew' in info ? info : await api.gate.info().catch(() => null);
+  if (!info) return;
+  $('gateState').textContent = info.confirmNew ? '켜짐' : '꺼짐';
+  $('gateState').className = info.confirmNew ? 'on' : 'off';
+  $('gateBtn').textContent = info.confirmNew ? '끄기' : '켜기';
+  $('otpState').textContent = info.otp ? `켜짐 (복구 코드 ${info.recoveryLeft}개 남음)` : '꺼짐';
+  $('otpState').className = info.otp ? 'on' : 'off';
+  $('otpBtn').textContent = info.otp ? '끄기' : '설정';
+  $('gateNote').textContent = !info.confirmNew
+    ? '꺼져 있으면 접속 키만 있으면 어느 기기든 접속합니다. 키가 샐 때를 대비해 켜 두기를 권합니다.'
+    : (info.firstFree ? '처음 접속하는 클라이언트 앱 하나는 묻지 않고 등록합니다. 그다음부터 새 기기는 이 창에서 허용해야 접속됩니다.'
+      : '등록되지 않은 기기(브라우저 포함)는 이 창에서 허용해야 접속됩니다. 이미 등록한 기기로 원격 접속해 이 창의 허용을 눌러도 됩니다.')
+      + (info.otp ? ' 휴대폰 인증 앱의 코드로도 허용됩니다.' : ' 아무도 이 PC 앞에 없을 때를 위해 휴대폰 인증 앱을 설정해 둘 수 있습니다(선택).');
+}
+$('gateBtn').onclick = async () => {
+  const info = await api.gate.info();
+  const r = await api.gate.set(!info.confirmNew);
+  log(r.ok ? `새 기기 확인을 ${r.confirmNew ? '켰습니다' : '껐습니다'}` : '새 기기 확인: ' + (GATE_WHY[r.why] || r.why));
+  showGate(r);
+};
+const otpForm = (on) => {
+  $('otpSetup').style.display = on ? '' : 'none';
+  if (!on) { $('otpQr').textContent = ''; $('otpSecret').textContent = ''; $('otpCode').value = ''; }
+};
+$('otpBtn').onclick = async () => {
+  const info = await api.gate.info();
+  if (info.otp) {
+    const r = await api.otp.off();
+    log(r.ok ? '휴대폰 인증 앱을 껐습니다' : '휴대폰 인증 앱: ' + (GATE_WHY[r.why] || r.why));
+    showGate(r);
+    return;
+  }
+  const r = await api.otp.begin();
+  if (!r.ok) { log('휴대폰 인증 앱: ' + (GATE_WHY[r.why] || r.why)); return; }
+  $('otpQr').innerHTML = QR.svg(r.uri, { scale: 4 }); // our own markup: numbers only
+  $('otpSecret').textContent = r.secret.replace(/(.{4})/g, '$1 ').trim();
+  $('otpMsg').textContent = '';
+  otpForm(true);
+  $('otpCode').focus();
+};
+$('otpOk').onclick = async () => {
+  const r = await api.otp.confirm($('otpCode').value.trim());
+  if (!r.ok) { $('otpMsg').textContent = r.why === 'code' ? '코드가 맞지 않습니다. 앱에 지금 보이는 6자리를 넣으세요.' : '설정하지 못했습니다: ' + (GATE_WHY[r.why] || r.why); return; }
+  otpForm(false);
+  otpCodes = r.recovery;
+  $('otpRecovery').textContent = r.recovery.join('   ');
+  $('otpDone').style.display = '';
+  log('휴대폰 인증 앱을 설정했습니다');
+  showGate(r);
+};
+$('otpCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('otpOk').click(); });
+$('otpCancel').onclick = () => otpForm(false);
+$('otpCopy').onclick = () => { if (otpCodes) api.copySecret(otpCodes.join('\n')).then(() => log('복구 코드를 복사했습니다 (1분 뒤 클립보드에서 지웁니다)'), () => {}); };
+$('otpClose').onclick = () => { otpCodes = null; $('otpRecovery').textContent = ''; $('otpDone').style.display = 'none'; };
+
 (async () => {
   cfg = await api.getConfig();
   keys = await RD.derive(cfg.key);
   master = { kind: 'key', key: 'key', keys, send: (o) => chan.send(o) };
   await subscribe();
-  api.devices.onChanged((resub) => { if (resub) subscribe(); showDevices(); });
+  api.devices.onChanged((resub) => { if (resub) subscribe(); showDevices(); showGate(); });
   showDevices();
+  showGate();
   $('accessBtn').onclick = showAccess;
   log('시그널링 서버: ' + cfg.server);
   log('호스트 시작: ' + new Date().toLocaleString());

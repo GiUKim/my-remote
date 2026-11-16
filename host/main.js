@@ -9,6 +9,7 @@ const appsync = require('./appsync'); // the installed app's two faces kept one 
 const shellswap = require('./shellswap'); // the installed app's shell replaced by a newer package (see shellswap.js)
 const Devices = require('./devices'); // client apps with a token of their own instead of the access key (see devices.js)
 const AccessLog = require('./accesslog'); // what came to this host, kept on this PC (see accesslog.js)
+const totp = require('./totp'); // an authenticator app's codes, for those who turn them on (see totp.js)
 
 // The native capturer waits for each monitor's next image on a worker thread of the host page's
 // process; the default of four threads would be used up by three monitors. (Inherited by that process.)
@@ -66,6 +67,8 @@ const DEFAULTS = {
   audio: true,          // send system sound
   clipboard: true,      // two-way text clipboard
   hideHostCursor: true, // while connected, hide the cursor on this PC so the video has no trailing cursor
+  confirmNew: false,    // a connection with the access key waits until it is allowed here (or with the authenticator app's
+                        // code); a new install turns it on (see loadConfig), one from before keeps going as it did
 };
 const CLIP_MAX = 60000;
 
@@ -528,6 +531,7 @@ async function loadConfig() {
   }
   cfg = { ...DEFAULTS, ...saved };
   delete cfg.keyEnc;
+  for (const k of ['otpEnc', 'otpRecovery', 'otpLast', 'firstFree']) delete cfg[k]; // main's own (savedCfg); the page gets none of them
   savedCfg = { ...saved };
   delete savedCfg.keyEnc;
   // Linux without a keyring (no GNOME Keyring or KWallet running): Electron can then only obscure
@@ -545,6 +549,10 @@ async function loadConfig() {
     }
   }
   if (!key && text === null && !cfgIssue) { // the first start: no file yet
+    // A new install confirms new devices from the start, but lets the first client app in without asking
+    // (the person sets the host up and then connects from elsewhere). One from before keeps going as it
+    // did until the person turns it on: an update must never lock anybody out of a PC they reach remotely.
+    if (!ISOLATED) { Object.assign(savedCfg, { confirmNew: true, firstFree: true }); cfg.confirmNew = true; }
     try { const k = newKey(); await saveConfig(k); key = k; } catch (e) { problem(`새 접속 키를 저장하지 못했습니다 (${e.code || e.message}).`, `could not be written (${e.code || e.message})`); }
   }
   // Only a file that is fine otherwise is rewritten for that; the key stays the same.
@@ -1143,18 +1151,22 @@ else {
       APP.update.setCanRestart(() => { if (sessionLive) return false; quitting = true; return true; });
       APP.update.onChange(() => { if (win && !win.isDestroyed()) win.webContents.send('update-changed', updateInfo()); });
     }
-    ipcMain.handle('copy-key', async () => {
+    // The key, or the authenticator app's recovery codes ('copy-secret'), onto this PC's clipboard: never
+    // passed on to a client (clip-read leaves that change out) and taken off again after a minute.
+    ipcMain.handle('copy-secret', (_e, text) => (typeof text === 'string' && text.length > 0 && text.length < 2000 ? copySecret(text) : false));
+    ipcMain.handle('copy-key', () => copySecret(cfg.key));
+    async function copySecret(text) {
       if (keyOnClip) clearTimeout(keyOnClip.timer);
       keyOnClip = null;
       const before = input.clipSeq();
-      await clipboard.writeText(cfg.key);
+      await clipboard.writeText(text);
       // X11 counts a change when the X server's event about it has been read, which may be a moment after
       // the write: the count is taken once it has moved (Windows' has by now).
       let seq = input.clipSeq();
       for (let i = 0; i < 20 && seq === before && process.platform !== 'win32'; i++) { await new Promise((r) => setTimeout(r, 25)); seq = input.clipSeq(); }
       keyOnClip = { seq, timer: setTimeout(clearKeyClip, 60e3) }; // see clearKeyClip
       return true;
-    });
+    }
     // Client apps with a token of their own (devices.js) and what came to this host (accesslog.js), in this
     // profile (the isolated runs: their throwaway one). The page listens on every token's topic: it is told
     // to subscribe anew (`resub`) when a token comes, goes or is blocked, else only to show the list again.
@@ -1173,7 +1185,12 @@ else {
     ipcMain.handle('device-pair', async (_e, info) => {
       const o = info && typeof info === 'object' ? info : {};
       const r = await devices.add(o);
-      if (r.ok) { accessLog.add({ ev: 'paired', via: 'key', dev: r.id, name: o.pc, app: o.app }); devicesChanged(true); }
+      if (r.ok) {
+        accessLog.add({ ev: 'paired', via: 'key', dev: r.id, name: o.pc, app: o.app });
+        devicesChanged(true);
+        // The first device of a new install is in: from now on new ones are asked about.
+        if (savedCfg.firstFree) { delete savedCfg.firstFree; saveConfig(cfg.key).catch((e) => console.error('[host] saving settings', e.message)); }
+      }
       else console.warn('[host] a device could not be given a token:', r.why);
       return r;
     });
@@ -1198,6 +1215,89 @@ else {
     });
     ipcMain.on('access-add', (_e, entry) => accessLog.add(entry));
     ipcMain.handle('access-read', () => accessLog.read(300));
+
+    // ---- new devices confirmed at this PC (the user's go-ahead 2026-11-16) ----
+    // With `confirmNew` a connection with the access key waits in the page until the person here presses
+    // 허용 (also from a registered device, which sees this window), or the client gives the code of the
+    // authenticator app, which the person may turn on here (opt-in). Devices with a token are not asked.
+    // `firstFree` (a new install): the first client app is let in without asking. Turning confirmation off,
+    // and setting the app up or removing it, are refused during a remote session: whoever is connected must
+    // not be able to loosen what keeps others out (as with the assist service).
+    const gateInfo = () => ({ confirmNew: !!cfg.confirmNew, firstFree: !!savedCfg.firstFree, otp: !!savedCfg.otpEnc, recoveryLeft: (savedCfg.otpRecovery || []).length });
+    const saveSettings = () => saveConfig(cfg.key);
+    ipcMain.handle('gate-info', gateInfo);
+    ipcMain.handle('gate', (_e, info) => {
+      if (!cfg.confirmNew) return { need: false, how: 'off' };
+      if (info && info.app && savedCfg.firstFree && devices.list().length === 0) return { need: false, how: 'first' };
+      return { need: true, otp: !!savedCfg.otpEnc };
+    });
+    ipcMain.on('gate-alert', (_e, name) => {
+      if (!win || win.isDestroyed()) return;
+      showWindow();
+      win.flashFrame(true);
+      if (!ISOLATED && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: `새 기기가 접속을 요청했습니다: ${String(name || '').slice(0, 60)}. 호스트 창에서 허용하거나 거부하세요.` }).show();
+    });
+    ipcMain.handle('gate-set', async (_e, on) => {
+      if (!on && sessionLive) return { ok: false, why: 'remote', ...gateInfo() };
+      cfg.confirmNew = savedCfg.confirmNew = !!on;
+      delete savedCfg.firstFree; // set by the person here: the first device is theirs to allow too
+      try { await saveSettings(); } catch (e) { return { ok: false, why: e.message, ...gateInfo() }; }
+      return { ok: true, ...gateInfo() };
+    });
+    let otpPending = null; // a secret shown for setting the app up, kept only once its code was typed here
+    let otpFails = 0, otpLocks = 0, otpLockUntil = 0;
+    ipcMain.handle('otp-begin', () => {
+      if (sessionLive) return { ok: false, why: 'remote' };
+      otpPending = totp.newSecret();
+      return { ok: true, secret: otpPending, uri: totp.uri({ secret: otpPending, label: (cfg.hostOs && cfg.hostOs.pc) || 'PC' }) };
+    });
+    ipcMain.handle('otp-confirm', async (_e, code) => {
+      if (sessionLive) return { ok: false, why: 'remote' };
+      if (!otpPending) return { ok: false, why: 'none' };
+      const v = totp.verify(totp.unbase32(otpPending), code);
+      if (!v.ok) return { ok: false, why: 'code' };
+      const recovery = totp.recoveryCodes();
+      try {
+        savedCfg.otpEnc = (await encryptKey(otpPending)).toString('base64');
+        savedCfg.otpRecovery = recovery.map(totp.hashRecovery);
+        savedCfg.otpLast = v.step;
+        await saveSettings();
+      } catch (e) { delete savedCfg.otpEnc; delete savedCfg.otpRecovery; delete savedCfg.otpLast; return { ok: false, why: e.message }; }
+      otpPending = null;
+      otpFails = otpLocks = otpLockUntil = 0;
+      return { ok: true, recovery, ...gateInfo() };
+    });
+    ipcMain.handle('otp-off', async () => {
+      if (sessionLive) return { ok: false, why: 'remote' };
+      delete savedCfg.otpEnc; delete savedCfg.otpRecovery; delete savedCfg.otpLast;
+      otpPending = null;
+      try { await saveSettings(); } catch (e) { return { ok: false, why: e.message }; }
+      return { ok: true, ...gateInfo() };
+    });
+    // A code a client gave for a new device: the app's code of now (each 30-s step once), or one of the
+    // recovery codes (each once). Five wrong ones lock it for 15 minutes, doubling with every lock (at most a
+    // day), until a right one: guessing one code in a million then takes years, not days.
+    ipcMain.handle('otp-check', async (_e, code) => {
+      const now = Date.now();
+      if (now < otpLockUntil) return { ok: false, why: 'locked', left: 0 };
+      if (!savedCfg.otpEnc) return { ok: false, why: 'off' };
+      let secret = null;
+      try { secret = totp.unbase32((await decryptKey(savedCfg.otpEnc)).text); } catch {}
+      if (!secret || !secret.length) return { ok: false, why: 'off' };
+      const v = totp.verify(secret, code, { lastStep: Number(savedCfg.otpLast) || -1 });
+      const rec = v.ok ? -1 : totp.matchRecovery(savedCfg.otpRecovery, code);
+      if (v.ok || rec >= 0) {
+        otpFails = otpLocks = 0;
+        if (v.ok) savedCfg.otpLast = v.step; else savedCfg.otpRecovery.splice(rec, 1);
+        await saveSettings().catch((e) => console.error('[host] saving the code used', e.message));
+        return { ok: true, how: v.ok ? 'otp' : 'recovery', left: (savedCfg.otpRecovery || []).length };
+      }
+      if (++otpFails < 5) return { ok: false, why: 'code', left: 5 - otpFails };
+      otpFails = 0;
+      otpLocks++;
+      otpLockUntil = now + Math.min(24 * 3600e3, 15 * 60e3 * 2 ** (otpLocks - 1));
+      return { ok: false, why: 'locked', left: 0 };
+    });
     ipcMain.handle('regen-key', async () => {
       const paired = devices.list().length;
       const r = await dialog.showMessageBox(win, {

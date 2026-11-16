@@ -20,6 +20,10 @@
   #ov { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(10, 12, 15, .72); font-size: 17px; z-index: 3; }
   #panel, #help, #diag { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #14171c; z-index: 5; }
   #help, #diag { display: none; background: rgba(10, 12, 15, .8); z-index: 7; }
+  #ask { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(10, 12, 15, .86); z-index: 8; }
+  #ask .code { font: 600 30px/1.2 Consolas, monospace; letter-spacing: .2em; color: #fff; margin: 6px 0 2px; }
+  #ask input { font: 18px Consolas, monospace; width: 9em; padding: 6px 8px; border-radius: 6px; border: 1px solid #3a4350; background: #0e1014; color: #fff; letter-spacing: .1em; }
+  #askMsg { color: #e0b341; min-height: 1.4em; margin-top: 6px; }
   #diag textarea { width: 100%; height: 260px; box-sizing: border-box; background: #0e1014; color: #cfd6df; border: 1px solid #3a4350; border-radius: 6px; font: 12px/1.5 Consolas, monospace; padding: 8px; resize: vertical; }
   .box { width: min(460px, 90vw); background: #1d2229; border: 1px solid #2c333d; border-radius: 10px; padding: 22px; }
   #panel input[type=password] { width: 100%; box-sizing: border-box; font: 14px Consolas, monospace; padding: 8px; border-radius: 6px; border: 1px solid #3a4350; background: #0e1014; color: #fff; margin: 8px 0; }
@@ -176,6 +180,17 @@
     <button id="arrReset" style="margin-left:auto;background:#343c48">기본 배치</button>
     <button id="arrGo" style="background:#2b6cff">전체화면으로 시작</button>
   </div>
+</div></div>
+<div id="ask"><div class="box">
+  <h3 style="margin:0 0 8px">호스트의 허용을 기다리는 중</h3>
+  <small>이 기기는 아직 이 호스트에 등록되지 않았습니다. 호스트 PC 화면에 뜬 요청에서 <b>허용</b>을 누르세요(이미 등록한 다른 기기로 호스트에 접속해 눌러도 됩니다). 요청에 아래와 같은 숫자가 보여야 합니다.</small>
+  <div class="code" id="askCode"></div>
+  <div id="askOtp" style="display:none; margin-top:10px">
+    <small>또는 휴대폰 인증 앱의 6자리 코드(복구 코드도 됩니다):</small>
+    <div style="margin-top:6px"><input id="askIn" inputmode="numeric" autocomplete="one-time-code" maxlength="11" spellcheck="false"> <button id="askGo">확인</button></div>
+  </div>
+  <div id="askMsg"></div>
+  <div style="margin-top:10px"><button id="askCancel" style="background:#343c48">취소</button></div>
 </div></div>
 <div id="panel"><div class="box">
   <h2 style="margin:0 0 6px">My Remote</h2>
@@ -2196,7 +2211,66 @@ async function verifyDevice(dev) {
   return false;
 }
 // What the host's refusal means (the signaling 'denied').
-const DENIED = { blocked: '이 PC는 호스트에서 차단되었습니다. 호스트 PC의 "접속한 기기"에서 차단을 풀 수 있습니다.' };
+const DENIED = {
+  blocked: '이 PC는 호스트에서 차단되었습니다. 호스트 PC의 "접속한 기기"에서 차단을 풀 수 있습니다.',
+  refused: '호스트에서 이 접속을 거부했습니다.',
+  timeout: '호스트에서 2분 안에 허용하지 않았습니다. 다시 접속해 보세요.',
+  busy: '다른 기기가 호스트의 허용을 기다리고 있거나, 요청이 너무 잦습니다. 잠시 뒤 다시 접속해 보세요.',
+  locked: '코드를 여러 번 틀려 OTP 확인이 잠시 막혔습니다. 호스트에서 허용하거나 나중에 다시 시도하세요.',
+  old: '이 화면이 호스트와 맞지 않습니다. 다시 접속해 보세요.',
+};
+
+// ---- this page's own key: the host knows the client it allowed by it ------------------------------------
+// Made once per page (the private half cannot leave it): its public half goes in every hello (`pk`), and the
+// answer and any code typed for the host are signed with it. A host that asked the person whether to let
+// this client in (new devices confirmed, see host.js) takes the answer only from the client it allowed, so
+// that nobody else holding the key, reading the relay, can step into that session. A host also lets this
+// page come back for a while without asking again (a reconnect).
+let pageKey = null;
+const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+async function myKey() {
+  if (!pageKey) {
+    const k = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']);
+    pageKey = { priv: k.privateKey, pub: b64(await crypto.subtle.exportKey('spki', k.publicKey)) };
+  }
+  return pageKey;
+}
+async function signed(text) {
+  const k = await myKey();
+  return b64(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, k.priv, new TextEncoder().encode(text)));
+}
+
+// ---- waiting for the host to allow this client (a new device) ------------------------------------------
+// The host asks the person there (or takes the code of their authenticator app, when they turned that on).
+let asking = null; // { sid, timer }
+function showAsk(m) {
+  clearTimeout(helloTimer);
+  if (asking) clearTimeout(asking.timer);
+  const mySid = sid;
+  asking = { sid: mySid, timer: setTimeout(() => { if (asking && asking.sid === mySid) { hideAsk(); lost('호스트에서 허용하지 않았습니다.'); } }, (Number(m.wait) || 120000) + 15000) };
+  $('askCode').textContent = String(m.code || '').replace(/[^0-9]/g, '').slice(0, 8);
+  $('askOtp').style.display = m.otp ? '' : 'none';
+  $('askMsg').textContent = '';
+  $('askIn').value = '';
+  $('ask').style.display = 'flex';
+  window.__rd.asked = { code: $('askCode').textContent, otp: !!m.otp };
+  if (m.otp) setTimeout(() => $('askIn').focus(), 0);
+}
+function hideAsk() {
+  if (asking) clearTimeout(asking.timer);
+  asking = null;
+  $('ask').style.display = 'none';
+}
+async function sendCode() {
+  const code = $('askIn').value.trim();
+  if (!asking || !chan || !code) return;
+  $('askMsg').textContent = '확인하는 중…';
+  try { await chan.send({ t: 'otp', sid: asking.sid, ts: Date.now(), code, sig: await signed('otp\n' + asking.sid + '\n' + code) }); }
+  catch (e) { $('askMsg').textContent = '보내지 못했습니다: ' + e.message; }
+}
+$('askGo').onclick = sendCode;
+$('askIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendCode(); });
+$('askCancel').onclick = () => { hideAsk(); disconnect('접속을 취소했습니다.'); };
 
 // The client app's list of PCs (window.mrShell.hostInfo, there only in a window opened from that list)
 // learns here when this session is up, and what the host said it is: its entry shows that.
@@ -2222,6 +2296,7 @@ function forgetSession() {
 }
 function cleanupPc() {
   clearTimeout(helloTimer); clearTimeout(retryTimer);
+  hideAsk();
   if (chan) { chan.close(); chan = null; }
   const old = pc;
   pc = null; dc = null;
@@ -2421,7 +2496,8 @@ async function onOffer(m) {
   await my.setLocalDescription(await my.createAnswer());
   await RD.waitIce(my, 2500);
   if (pc !== my || !chan) return;
-  await chan.send({ t: 'answer', sid, ts: Date.now(), sdp: my.localDescription.sdp });
+  const sdp = my.localDescription.sdp;
+  await chan.send({ t: 'answer', sid, ts: Date.now(), sdp, sig: await signed('answer\n' + sid + '\n' + sdp) });
   if (!ever) msg('연결 수립 중…');
 }
 
@@ -2435,13 +2511,15 @@ async function begin() {
       server: DEVICE && DEVICE.server ? DEVICE.server : SERVER, subTopic: keys.topicClient, pubTopic: keys.topicHost, rxKey: keys.h2c, txKey: keys.c2h,
       onMessage: (m) => {
         if (!m || m.sid !== sid) return;
-        if (m.t === 'offer' && !pc) onOffer(m).catch((e) => lost('오류: ' + e.message));
-        else if (m.t === 'denied') { window.__rd.denied = String(m.why || ''); disconnect(DENIED[m.why] || '호스트가 접속을 거부했습니다.'); }
+        if (m.t === 'offer' && !pc) { hideAsk(); onOffer(m).catch((e) => lost('오류: ' + e.message)); }
+        else if (m.t === 'confirm' && !pc) showAsk(m);
+        else if (m.t === 'otp' && asking) $('askMsg').textContent = m.why === 'code' ? `코드가 맞지 않습니다${Number(m.left) > 0 ? ` (남은 시도 ${Number(m.left)}번)` : ''}` : '확인하지 못했습니다';
+        else if (m.t === 'denied') { hideAsk(); window.__rd.denied = String(m.why || ''); disconnect(DENIED[m.why] || '호스트가 접속을 거부했습니다.'); }
       },
     }));
     await Promise.race([c.ready, sleep(10000).then(() => { throw new Error('시그널링 서버에 연결할 수 없습니다'); })]);
     if (sid !== mySid || chan !== c) return;
-    const hello = { t: 'hello', sid, ts: Date.now(), mode, codec: codec || (await mobileCodec()) };
+    const hello = { t: 'hello', sid, ts: Date.now(), mode, codec: codec || (await mobileCodec()), pk: (await myKey()).pub };
     // The app connected with the key: it asks for a token of its own (see gotDevice).
     pairAsk = null;
     if (wantPair()) {

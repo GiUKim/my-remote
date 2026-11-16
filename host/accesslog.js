@@ -4,15 +4,16 @@
 // host's profile, on this PC only, never sent anywhere. Entries older than 90 days are dropped when the
 // host starts, and the file is kept under 2 MB.
 //
-// Entry: { t (ms), ev: 'connect' | 'end' | 'denied' | 'paired', via: 'key' | 'device', dev?, name?, app?,
-// ip?, kind? (the address's ICE candidate type), dur? (s), in?, out? (files), why? }
+// Entry: { t (ms), ev: 'connect' | 'end' | 'denied' | 'paired' | 'asked' | 'approved', via: 'key' | 'device',
+// dev?, name?, app?, ip?, kind? (the address's ICE candidate type), dur? (s), in?, out? (files), why?, how?
+// (how a new device was allowed: 'host', 'otp', 'recovery', 'first', 'again') }
 //
 // Electron-free (release/test-devices.js runs it under plain Node).
 'use strict';
 const fs = require('fs');
 const path = require('path');
 
-const EVENTS = new Set(['connect', 'end', 'denied', 'paired']);
+const EVENTS = new Set(['connect', 'end', 'denied', 'paired', 'asked', 'approved']);
 const clean = (s, max) => Array.from(String(s == null ? '' : s), (c) => { const n = c.codePointAt(0); return n < 32 || n === 127 || n === 0x2028 || n === 0x2029 ? ' ' : c; }).join('').trim().slice(0, max);
 
 // Only known fields, as plain values: the page that asks for an entry is the host's own, but what it
@@ -21,7 +22,7 @@ function entry(e, t) {
   if (!e || !EVENTS.has(e.ev)) return null;
   const o = { t, ev: e.ev, via: e.via === 'device' ? 'device' : 'key' };
   if (/^[0-9a-f]{16}$/.test(String(e.dev || ''))) o.dev = e.dev;
-  for (const [k, max] of [['name', 60], ['app', 20], ['ip', 64], ['kind', 12], ['why', 40]]) if (e[k] != null && clean(e[k], max)) o[k] = clean(e[k], max);
+  for (const [k, max] of [['name', 60], ['app', 20], ['ip', 64], ['kind', 12], ['why', 40], ['how', 12]]) if (e[k] != null && clean(e[k], max)) o[k] = clean(e[k], max);
   for (const k of ['dur', 'in', 'out']) if (Number.isFinite(Number(e[k])) && Number(e[k]) >= 0) o[k] = Math.round(Number(e[k]));
   return o;
 }
