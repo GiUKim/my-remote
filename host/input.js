@@ -133,7 +133,9 @@ function coverage() {
 function target(d, x, y, virt) {
   const r = monitors[d];
   if (!r || !Number.isFinite(x) || !Number.isFinite(y) || Math.abs(x) > 16 || Math.abs(y) > 16) return null;
-  const v = virt || backend.virtualDesktop() || coverage();
+  // A dry run (the self-test's simulate) maps onto the monitors it was given, never this PC's own desktop: a
+  // check of where things land failed on GitHub's runner, whose 1024x768 desktop clipped a 1920-wide stand-in.
+  const v = virt || (dry ? coverage() : backend.virtualDesktop() || coverage());
   const px = Math.min(v.x + v.width - 1, Math.max(v.x, r.x + x * (r.width - 1)));
   const py = Math.min(v.y + v.height - 1, Math.max(v.y, r.y + y * (r.height - 1)));
   return {
