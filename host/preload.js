@@ -33,6 +33,19 @@ contextBridge.exposeInMainWorld('hostApi', {
   onDisplaysChanged: (fn) => ipcRenderer.on('displays-changed', () => fn()),
   copyKey: () => ipcRenderer.invoke('copy-key'),
   regenKey: () => ipcRenderer.invoke('regen-key'),
+  // Client apps with a token of their own (host/devices.js) and what came to this host (host/accesslog.js).
+  devices: {
+    secrets: () => ipcRenderer.invoke('devices-secrets'), // [{ id, secret, name, blocked }]: the page listens on their topics
+    list: () => ipcRenderer.invoke('devices-list'),
+    pair: (info) => ipcRenderer.invoke('device-pair', info), // an app connected with the key asks for a token
+    seen: (id, ip) => ipcRenderer.send('device-seen', id, ip),
+    rename: (id, name) => ipcRenderer.invoke('device-rename', id, name),
+    block: (id, on) => ipcRenderer.invoke('device-block', id, !!on),
+    remove: (id) => ipcRenderer.invoke('device-remove', id), // asks the person first
+    onChanged: (fn) => ipcRenderer.on('devices-changed', (_e, resub) => fn(!!resub)), // resub: a token came, went or was blocked
+  },
+  access: (entry) => ipcRenderer.send('access-add', entry),
+  accessLog: () => ipcRenderer.invoke('access-read'),
   exportClient: () => ipcRenderer.invoke('export-client'),
   // The installed app's version and updates (main.js: updateInfo). `state` is 'none' when run from a source folder.
   update: {

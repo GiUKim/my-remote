@@ -12,21 +12,23 @@ ipcRenderer.on('shell:shown', (_e, shown) => {
 });
 
 // A window the app opened for one of the PCs in its list (client/main.js): the loader in it is not to
-// ask the person for the key. It gets that PC's key from the app, put into the loader's own field with
-// "keep it in this browser" off, and its button is pressed - once, for the document this window loads
-// (the loader; the page the loader then writes in its place is not touched). So the key is never part
-// of an address and is not kept in this window's storage.
+// ask the person for the key. It gets that PC's key from the app, put into the loader's own field (with
+// "keep it in this browser" off, where a loader from before 2026-11-16 has that box), and its button is
+// pressed - once, for the document this window loads (the loader; the page the loader then writes in its
+// place is not touched). So the key is never part of an address and is not kept in this window's
+// storage. A PC that gave this app a token of its own (bootDevice below) has no key here: the app hands
+// out none for it, and the loader connects with the token.
 let inList = false;
 try { inList = ipcRenderer.sendSync('shell:inList') === true; } catch {}
 if (inList) {
   window.addEventListener('DOMContentLoaded', async () => {
     const field = document.getElementById('key'), go = document.getElementById('go'), keep = document.getElementById('remember');
-    if (!field || !go || !keep) return; // not the loader
+    if (!field || !go) return; // not the loader
     let key = null;
     try { key = await ipcRenderer.invoke('shell:bootKey'); } catch {}
     if (!key || document.getElementById('key') !== field) return; // no key to be had, or the loader has gone on meanwhile
     field.value = key;
-    keep.checked = false;
+    if (keep) keep.checked = false;
     go.click();
   }, { once: true });
 }
@@ -39,6 +41,14 @@ contextBridge.exposeInMainWorld('mrShell', {
   ...(inList ? {
     hostInfo: (info) => ipcRenderer.invoke('shell:hostInfo', info),
     home: () => ipcRenderer.invoke('shell:home'),
+    // This PC as a device of that host (from 2026-11-16 on; the page and the loader must not rely on them):
+    // bootDevice -> { id, secret, server } | null, the token the loader connects with instead of the key;
+    // deviceHello -> what the host is told about this PC when it gives it a token; devicePaired(dev) keeps
+    // the token the host gave; deviceVerified(id): it worked, so the app lets go of the key.
+    bootDevice: () => ipcRenderer.invoke('shell:bootDevice'),
+    deviceHello: () => ipcRenderer.invoke('shell:deviceHello'),
+    devicePaired: (dev) => ipcRenderer.invoke('shell:devicePaired', dev),
+    deviceVerified: (id) => ipcRenderer.invoke('shell:deviceVerified', id),
   } : {}),
   screens: () => ipcRenderer.invoke('shell:screens'),
   fullscreenAll: () => ipcRenderer.invoke('shell:fullscreenAll'),

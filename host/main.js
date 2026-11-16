@@ -7,6 +7,8 @@ const input = require('./input');
 const assist = require('./assist'); // Windows: the lock screen through the assist service (see assist.js)
 const appsync = require('./appsync'); // the installed app's two faces kept one app (see appsync.js)
 const shellswap = require('./shellswap'); // the installed app's shell replaced by a newer package (see shellswap.js)
+const Devices = require('./devices'); // client apps with a token of their own instead of the access key (see devices.js)
+const AccessLog = require('./accesslog'); // what came to this host, kept on this PC (see accesslog.js)
 
 // The native capturer waits for each monitor's next image on a worker thread of the host page's
 // process; the default of four threads would be used up by three monitors. (Inherited by that process.)
@@ -438,6 +440,7 @@ function pageGone() {
 }
 
 let cfg = null;
+let devices = null, accessLog = null; // devices.js and accesslog.js, in this profile (made when the app is ready)
 let savedCfg = {}; // only what the user set; defaults are not frozen into the file
 // config.json holds the access key, and every client that has the key loses access when it changes.
 // So a key is made by itself only when there is no file at all (the first start). A file that is there
@@ -1152,11 +1155,55 @@ else {
       keyOnClip = { seq, timer: setTimeout(clearKeyClip, 60e3) }; // see clearKeyClip
       return true;
     });
+    // Client apps with a token of their own (devices.js) and what came to this host (accesslog.js), in this
+    // profile (the isolated runs: their throwaway one). The page listens on every token's topic: it is told
+    // to subscribe anew (`resub`) when a token comes, goes or is blocked, else only to show the list again.
+    devices = Devices.create({
+      file: path.join(app.getPath('userData'), 'devices.json'),
+      crypt: { ready: encryptionReady, encrypt: async (text) => (await encryptKey(text)).toString('base64'), decrypt: async (b64) => (await decryptKey(b64)).text },
+    });
+    accessLog = AccessLog.create({ file: path.join(app.getPath('userData'), 'access.log') });
+    try { accessLog.prune(); } catch (e) { console.error('access log', e.message); }
+    const devicesChanged = (resub) => { if (win && !win.isDestroyed()) win.webContents.send('devices-changed', !!resub); };
+    ipcMain.handle('devices-secrets', () => devices.secrets());
+    ipcMain.handle('devices-list', () => ({ list: devices.list(), note: devices.note(), max: Devices.MAX }));
+    // An app connected with the access key asks for a token of its own (the page asks once the session's
+    // channel is open, so the token goes over the connection, never through the relay).
+    ipcMain.handle('device-pair', async (_e, info) => {
+      const o = info && typeof info === 'object' ? info : {};
+      const r = await devices.add(o);
+      if (r.ok) { accessLog.add({ ev: 'paired', via: 'key', dev: r.id, name: o.pc, app: o.app }); devicesChanged(true); }
+      else console.warn('[host] a device could not be given a token:', r.why);
+      return r;
+    });
+    ipcMain.on('device-seen', (_e, id, ip) => { if (devices.seen(String(id), { ip: String(ip || '') })) devicesChanged(false); });
+    ipcMain.handle('device-rename', (_e, id, name) => { const ok = devices.rename(String(id), String(name || '')); if (ok) devicesChanged(true); return ok; });
+    ipcMain.handle('device-block', (_e, id, on) => { const ok = devices.block(String(id), !!on); if (ok) devicesChanged(true); return ok; });
+    ipcMain.handle('device-remove', async (_e, id) => {
+      const d = devices.get(String(id));
+      if (!d) return false;
+      if (!SELFTEST) {
+        const r = await dialog.showMessageBox(win, {
+          type: 'warning', buttons: ['취소', '삭제'], defaultId: 0, cancelId: 0, noLink: true,
+          message: `"${d.name || '이름 없는 기기'}"를 삭제할까요?`,
+          detail: '이 기기는 더 이상 키 없이 접속할 수 없습니다. 다시 쓰려면 그 기기의 앱에서 접속 키를 다시 입력해야 합니다.\n\n잃어버린 기기라면 삭제나 차단을 하세요. 차단은 목록에 남아 접속 시도가 기록되고, 나중에 풀 수 있습니다.',
+        });
+        if (r.response !== 1) return false;
+      }
+      const ok = devices.remove(d.id);
+      if (ok) devicesChanged(true);
+      return ok;
+    });
+    ipcMain.on('access-add', (_e, entry) => accessLog.add(entry));
+    ipcMain.handle('access-read', () => accessLog.read(300));
     ipcMain.handle('regen-key', async () => {
+      const paired = devices.list().length;
       const r = await dialog.showMessageBox(win, {
         type: 'warning', buttons: ['취소', '새 키 발급'], defaultId: 0, cancelId: 0,
         message: '접속 키를 새로 발급할까요?',
-        detail: '기존 키로는 더 이상 접속할 수 없게 됩니다.' + (cfgIssue ? '\n\n설정 파일을 읽지 못한 상태라 새 파일에는 접속 키만 저장됩니다. 원래 파일은 사본으로 남겨 둡니다.' : ''),
+        detail: '기존 키로는 더 이상 접속할 수 없게 됩니다.' + (paired ? ' 등록된 기기(키 없이 접속하는 클라이언트 앱)는 그대로 접속합니다.' : '') + (cfgIssue ? '\n\n설정 파일을 읽지 못한 상태라 새 파일에는 접속 키만 저장됩니다. 원래 파일은 사본으로 남겨 둡니다.' : ''),
+        // A key that leaked may have registered a device of someone else's with it.
+        ...(paired ? { checkboxLabel: `등록된 기기 ${paired}대도 모두 삭제 (키가 샌 것 같을 때)`, checkboxChecked: false } : {}),
       });
       if (r.response !== 1) return false;
       const key = newKey();
@@ -1165,6 +1212,7 @@ else {
         dialog.showMessageBox(win, { type: 'error', message: '새 키를 저장하지 못했습니다', detail: `${e.code || e.message}\n\n기존 키를 그대로 씁니다.` }).catch(() => {});
         return false;
       }
+      if (r.checkboxChecked) { const n = devices.clear(); console.log(`[host] a new access key; ${n} device token(s) removed with it`); }
       cfg.key = key; // only once it is saved
       // The session under way ends first, and its client is told not to come back (its key no longer
       // works); then the page starts over with the new key.
@@ -1210,7 +1258,7 @@ else {
       }
     }
     if (SHELL_SWAP_TRIAL) shellSetup(); // the test VM's end-to-end check of the swap (see SHELL_SWAP_TRIAL)
-    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder });
+    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, accessLog, devicesChanged });
     if (BENCH) require('./bench').run({ cfg, bench: benchCfg, buildClientHtml, app });
     if (LOCALTEST) {
       const file = path.join(app.getPath('userData'), 'my-remote-localtest.html');

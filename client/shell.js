@@ -31,8 +31,10 @@ const FULLSCREEN_JS = `document.documentElement.requestFullscreen()
   .then(() => true, () => false)`;
 const shells = new Map(); // main webContents id -> { win, children, host }
 // The app's list of PCs (client/main.js), when there is one: { key(id) -> Promise<key | null>,
-// info(id, what the page says about its session), home() }. A window opened for a PC of that list
-// (attach(win, { host: id })) gets that PC's key from here; see shell:bootKey.
+// info(id, what the page says about its session, { viaDevice }), home(), and for this PC as a device of a
+// host: device(id) -> Promise<{ id, secret, server } | null>, hello(), paired(id, dev), verified(id, devId) }.
+// A window opened for a PC of that list (attach(win, { host: id })) gets that PC's key or token from here;
+// see shell:bootKey and shell:bootDevice.
 let list = null;
 function setList(hooks) { list = hooks || null; }
 
@@ -274,8 +276,24 @@ function setupIpc() {
   const listed = (e) => { const s = shellOf(e.sender); return s && s.host && list && e.sender === s.win.webContents && (!e.senderFrame || e.senderFrame === e.sender.mainFrame) ? s : null; };
   ipcMain.on('shell:inList', (e) => { e.returnValue = !!listed(e); });
   ipcMain.handle('shell:bootKey', async (e) => { const s = listed(e); return s ? list.key(s.host) : null; });
+  // This PC as a device of that host (see "Devices" in CLAUDE.md): the token the loader connects with
+  // instead of the key, what the host is told about this PC, the token the host gave, and that it worked.
+  ipcMain.handle('shell:bootDevice', async (e) => {
+    const s = listed(e);
+    if (!s || !list.device) return null;
+    const d = await list.device(s.host);
+    s.viaDevice = !!d; // a session that comes up now came with the token
+    return d;
+  });
+  ipcMain.handle('shell:deviceHello', (e) => (listed(e) && list.hello ? list.hello() : null));
+  ipcMain.handle('shell:devicePaired', async (e, dev) => {
+    const s = listed(e);
+    if (!s || !list.paired || !dev || typeof dev !== 'object') return false;
+    return list.paired(s.host, { id: String(dev.id || ''), secret: String(dev.secret || ''), server: String(dev.server || '') });
+  });
+  ipcMain.handle('shell:deviceVerified', async (e, id) => { const s = listed(e); return !!(s && list.verified && (await list.verified(s.host, String(id || '')))); });
   // What the page says about its session: connected or not, and what the host said it is.
-  ipcMain.handle('shell:hostInfo', (e, info) => { const s = listed(e); if (!s) return false; list.info(s.host, info && typeof info === 'object' ? info : {}); return true; });
+  ipcMain.handle('shell:hostInfo', (e, info) => { const s = listed(e); if (!s) return false; list.info(s.host, info && typeof info === 'object' ? info : {}, { viaDevice: !!s.viaDevice }); return true; });
   ipcMain.handle('shell:home', (e) => { if (!listed(e)) return false; list.home(); return true; });
   ipcMain.handle('shell:dragGhost', async (e, o) => {
     if (!shellOf(e.sender)) return false;

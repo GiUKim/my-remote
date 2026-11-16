@@ -18,6 +18,12 @@
   #updMsg { font-size: 12.5px; font-weight: 400; }
   button:disabled { opacity: .55; cursor: default; }
   code { background: #0e1014; padding: 3px 6px; border-radius: 4px; word-break: break-all; }
+  .dev { border-top: 1px solid #2c333d; padding: 6px 0 4px; } .dev:first-child { border-top: 0; }
+  .dev .btns { margin-left: auto; display: flex; gap: 4px; } .dev .btns button.mini { margin-left: 0; }
+  .tag { font-size: 12px; padding: 0 6px; border-radius: 4px; } .tag.on { background: #1f4d2e; color: #7fe3a0; } .tag.bad { background: #5a1f1f; color: #ff9b9b; }
+  #devList { margin-top: 6px; }
+  #accessList { font: 12px/1.5 Consolas, "Malgun Gothic", monospace; max-height: 220px; overflow: auto; color: #aab2bd; margin-top: 8px; border-top: 1px solid #2c333d; padding-top: 6px; }
+  input.ren { font: inherit; font-weight: 600; background: #0e1014; color: #fff; border: 1px solid #3a4350; border-radius: 4px; padding: 1px 6px; width: 16em; }
   #log { font: 12px/1.45 Consolas, monospace; white-space: pre-wrap; max-height: 230px; overflow: auto; color: #aab2bd; }
   small { color: #8b94a1; }
 </style>
@@ -55,6 +61,11 @@
       <button id="regen" class="sub">새 키 발급</button>
       <button id="kick" class="sub">연결 끊기</button>
     </div>
+  </div>
+  <div class="card" id="devs">
+    <div class="row"><b>접속한 기기</b> <small id="devsNote"></small><span style="flex:1"></span><button id="accessBtn" class="sub mini">접속 기록</button></div>
+    <div id="devList"></div>
+    <div id="accessList" style="display:none"></div>
   </div>
   <div class="card"><div id="log"></div></div>
   <script src="signal.js"></script>

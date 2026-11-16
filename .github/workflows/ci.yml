@@ -36,6 +36,8 @@ jobs:
         run: node release/ci-run.js node release/test-update.js
       - name: The client app's list of PCs
         run: node release/ci-run.js node release/test-hosts.js
+      - name: The host's device tokens and access log
+        run: node release/ci-run.js node release/test-devices.js
       - name: Host and client kept one app (updates followed, the one entry)
         run: node release/ci-run.js node release/test-appsync.js
       - name: The shell replaced by a newer package (signed list, staging, the sh swap script on fake folders)

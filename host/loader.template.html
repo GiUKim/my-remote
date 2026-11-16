@@ -18,9 +18,8 @@
 <body>
 <div class="box">
   <h2 style="margin:0 0 6px">My Remote</h2>
-  <small>호스트 프로그램에 표시된 접속 키를 입력하세요.</small>
+  <small id="hint">호스트 프로그램에 표시된 접속 키를 입력하세요.</small>
   <input id="key" type="password" placeholder="접속 키" autocomplete="off" spellcheck="false">
-  <label><input id="remember" type="checkbox"> <small>이 브라우저에 키 저장 (본인 전용 기기에서만)</small></label>
   <div style="margin-top:12px"><button id="go">접속</button></div>
   <div id="msg"></div>
 </div>
@@ -34,6 +33,9 @@
 // Bootstrap protocol (keep stable, old loaders are out there):
 //   loader -> host: { t: 'ver', sid, ts, have: <hash of cached page or ''> }
 //   host -> loader: { t: 'app', sid, ts, hash, html? }   html omitted when have === hash
+// In the client app a PC of its list may have a token of its own instead of the key (from 2026-11-16,
+// window.mrShell.bootDevice): the same exchange on the token's own topics (RD.DEVICE). A host refuses a
+// blocked token: { t: 'denied', sid, why }.
 // Everything is wrapped in a function so nothing here collides with the page it loads.
 (() => {
 /*__SIGNAL_JS__*/
@@ -47,10 +49,11 @@ const preset = location.hash.slice(1) || '__PRESET__';
 const params = new URLSearchParams(preset);
 const msg = (s) => { $('msg').textContent = s; };
 let busy = false;
+let device = null; // { id, secret, server }: this PC's token for that host (the client app)
 
 function launch(html, key, updated) {
   // Replace this document with the client page. The window object is kept, so the page can read __mrBoot.
-  window.__mrBoot = { key, remember: $('remember').checked, preset, updated };
+  window.__mrBoot = { key: device ? '' : key, device: device || undefined, remember: false, preset, updated };
   document.open();
   document.write(html);
   document.close();
@@ -66,9 +69,9 @@ async function digest(html) {
 async function go(fresh) {
   if (busy) return;
   const key = $('key').value.trim();
-  store.set('mr_key', $('remember').checked ? key : null);
+  store.set('mr_key', null); // browsers no longer keep the key (2026-11-16): what an older loader kept goes
   let keys;
-  try { keys = await RD.derive(key); } catch (e) { msg('오류: ' + e.message); return; }
+  try { keys = device ? await RD.derive(device.secret, RD.DEVICE) : await RD.derive(key); } catch (e) { msg('오류: ' + e.message); return; }
   busy = true; $('go').disabled = true;
   const fail = (text) => { busy = false; $('go').disabled = false; msg(text); };
   const cached = fresh ? null : store.get('mr_app_html');
@@ -78,9 +81,16 @@ async function go(fresh) {
   try {
     msg('호스트에 연결하는 중…');
     chan = RD.channel({
-      server: SERVER, subTopic: keys.topicClient, pubTopic: keys.topicHost, rxKey: keys.h2c, txKey: keys.c2h,
+      server: device && device.server ? device.server : SERVER, subTopic: keys.topicClient, pubTopic: keys.topicHost, rxKey: keys.h2c, txKey: keys.c2h,
       onMessage: async (m) => {
-        if (done || !m || m.t !== 'app' || m.sid !== sid) return;
+        if (done || !m || m.sid !== sid) return;
+        if (m.t === 'denied') {
+          done = true;
+          chan.close();
+          fail(m.why === 'blocked' ? '이 PC는 호스트에서 차단되었습니다. 호스트 PC의 "접속한 기기"에서 차단을 풀 수 있습니다.' : '호스트가 접속을 거부했습니다.');
+          return;
+        }
+        if (m.t !== 'app') return;
         done = true;
         chan.close();
         if (typeof m.html === 'string' && m.html.length > 1000) {
@@ -106,7 +116,8 @@ async function go(fresh) {
       if (done) return;
       done = true;
       chan.close();
-      fail('호스트가 응답하지 않습니다. 호스트 프로그램이 켜져 있는지와 접속 키를 확인하세요.');
+      fail(device ? '호스트가 응답하지 않습니다. 호스트가 꺼져 있거나, 호스트에서 이 PC의 등록을 지웠을 수 있습니다. 지웠다면 PC 목록의 "키 바꾸기"로 접속 키를 다시 넣으면 다시 등록됩니다.'
+        : '호스트가 응답하지 않습니다. 호스트 프로그램이 켜져 있는지와 접속 키를 확인하세요.');
     }, 15000);
   } catch (e) {
     done = true;
@@ -117,9 +128,22 @@ async function go(fresh) {
 
 $('go').onclick = () => go();
 $('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-{ const k = store.get('mr_key'); if (k) { $('key').value = k; $('remember').checked = true; } }
+// A key in the slot where loaders before 2026-11-16 remembered one: the hand-over of a page that updated
+// itself (#auto), or one an older loader kept. Used once and removed.
+{ const k = store.get('mr_key'); if (k) { $('key').value = k; store.set('mr_key', null); } }
 if (params.get('k')) { $('key').value = params.get('k'); try { history.replaceState(null, '', location.pathname); } catch {} }
-if (params.has('auto') && $('key').value) go();
+// The client app gives a PC of its list that has a token of its own the token instead of the key.
+const shell = window.mrShell && typeof window.mrShell.bootDevice === 'function' ? window.mrShell : null;
+if (shell) {
+  shell.bootDevice().then((d) => {
+    if (!d || typeof d.secret !== 'string') { if (params.has('auto') && $('key').value) go(); return; }
+    device = { id: String(d.id || ''), secret: d.secret, server: typeof d.server === 'string' && /^https?:\/\//.test(d.server) ? d.server : SERVER };
+    $('hint').textContent = '이 PC는 호스트에 기기로 등록되어 있어 키 없이 접속합니다.';
+    $('key').style.display = 'none';
+    $('go').textContent = '다시 연결';
+    go();
+  }, () => { if (params.has('auto') && $('key').value) go(); });
+} else if (params.has('auto') && $('key').value) go();
 })();
 </script>
 </body>

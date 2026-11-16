@@ -179,9 +179,8 @@
 </div></div>
 <div id="panel"><div class="box">
   <h2 style="margin:0 0 6px">My Remote</h2>
-  <small>호스트 프로그램에 표시된 접속 키를 입력하세요.</small>
+  <small id="keyHint">호스트 프로그램에 표시된 접속 키를 입력하세요.</small>
   <input id="key" type="password" placeholder="접속 키" autocomplete="off" spellcheck="false">
-  <label><input id="remember" type="checkbox"> <small>이 브라우저에 키 저장 (본인 전용 기기에서만)</small></label>
   <div style="margin-top:12px"><button id="go">접속</button></div>
   <div id="msg"></div>
 </div></div>
@@ -214,6 +213,10 @@ const HINT = 'Ctrl+Alt+←/→ 모니터 전환 · ↑ 전체 보기 · ↓ 원�
 
 let keys = null, pc = null, dc = null, chan = null, sid = null;
 let want = false, ever = false, retry = 0, retryTimer = 0, helloTimer = 0;
+// A client app that connects with this PC's own token from the host (boot.device: { id, secret, server },
+// given to it once when it connected with the key) instead of the key: see "Devices" in CLAUDE.md.
+const DEVICE = boot && boot.device && typeof boot.device.secret === 'string' ? boot.device : null;
+let paired = false; // this page was given a token for this app (it asks once per page)
 let monitors = [];          // host monitors: [{idx, mid, x, y, width, height, primary, stream}]
 const views = [];           // one per client window: what it shows and how
 let mainView = null, winSeq = 0;
@@ -2139,6 +2142,53 @@ function showLock() {
     }
   }
 }
+// ---- this PC as a device of the host (the client app only) ------------------------------------------
+// Connected with the key, the app asks the host for a token of this PC's own (hello.pair). The host sends
+// it over this connection ('device'); the app keeps it in place of the key and from then on connects with
+// it (window.mrShell: devicePaired, deviceVerified). It drops the key once the token has been seen to
+// work: here, by asking the host for its page over the token's own topics (the host listens there once it
+// has taken the new token).
+const wantPair = () => !DEVICE && !paired && !!shell && typeof shell.devicePaired === 'function' && typeof shell.deviceHello === 'function';
+function gotDevice(m) {
+  if (DEVICE || !(shell && typeof shell.devicePaired === 'function')) return;
+  if (!m.ok) { paired = true; return; } // the host could not register this PC: the app goes on with the key
+  if (typeof m.id !== 'string' || !/^[0-9a-f]{16}$/.test(m.id) || typeof m.secret !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(m.secret)) return;
+  paired = true;
+  const dev = { id: m.id, secret: m.secret, server: SERVER };
+  Promise.resolve(shell.devicePaired(dev)).then((ok) => {
+    if (!ok) return;
+    toast(mainView, '이 PC를 호스트에 기기로 등록했습니다. 다음부터는 키 없이 접속합니다', 5000);
+    window.__rd.paired = 'stored';
+    verifyDevice(dev).then((works) => {
+      window.__rd.paired = works ? 'verified' : 'unverified';
+      if (works && typeof shell.deviceVerified === 'function') Promise.resolve(shell.deviceVerified(dev.id)).catch(() => {});
+    });
+  }, () => {});
+}
+// Whether the host answers on the token's own topics (a 'ver' that already has the page: a short answer).
+async function verifyDevice(dev) {
+  let k;
+  try { k = await RD.derive(dev.secret, RD.DEVICE); } catch { return false; }
+  for (const wait of [3000, 6000, 12000]) {
+    await sleep(wait);
+    const ok = await new Promise((resolve) => {
+      const vsid = RD.rand(16);
+      let c = null, done = false;
+      const end = (v) => { if (done) return; done = true; clearTimeout(t); if (c) c.close(); resolve(v); };
+      const t = setTimeout(() => end(false), 12000);
+      c = RD.channel({
+        server: dev.server, subTopic: k.topicClient, pubTopic: k.topicHost, rxKey: k.h2c, txKey: k.c2h,
+        onMessage: (m) => { if (m && m.sid === vsid && m.t === 'app') end(true); },
+      });
+      c.ready.then(() => c.send({ t: 'ver', sid: vsid, ts: Date.now(), have: store.get('mr_app_hash') || '' })).catch(() => end(false));
+    });
+    if (ok) return true;
+  }
+  return false;
+}
+// What the host's refusal means (the signaling 'denied').
+const DENIED = { blocked: '이 PC는 호스트에서 차단되었습니다. 호스트 PC의 "접속한 기기"에서 차단을 풀 수 있습니다.' };
+
 // The client app's list of PCs (window.mrShell.hostInfo, there only in a window opened from that list)
 // learns here when this session is up, and what the host said it is: its entry shows that.
 function tellList(connected) {
@@ -2231,6 +2281,7 @@ function onHostMessage(data) {
       : m.outline && !was.outline ? '호스트의 "창을 끄는 동안 내용 표시"가 꺼져 있어, 창을 끄는 동안에는 테두리만 움직입니다' : '';
     if (say) for (const v of liveViews()) toast(v, say, 10000);
   }
+  else if (m.t === 'device') gotDevice(m);
   else if (m.t === 'dragdata') gotDragData(m);
   else if (m.t === 'put') gotPut(m);
   else if (m.t === 'clipfiles') gotClipFiles(m);
@@ -2269,20 +2320,18 @@ async function onOffer(m) {
     // The windows and fullscreen do not survive the reload; the new page puts them back (restoreLayout).
     try { sessionStorage.setItem('mr_respread', JSON.stringify({ spread: mainView.layoutSig != null && liveViews().some((v) => !v.isMain), fs: !!document.fullscreenElement })); } catch {}
     cleanupPc();
-    // The loader takes the key from the address (#k=...) or from the one it remembers. Never the address:
-    // the browser would keep it in its history. So it goes where a remembered key is kept, and when the
-    // person did not want it kept there, a mark tells the new page to remove it at once (see boot).
-    // The mark is kept where the key is, not only in this tab: when the tab is closed before the new
-    // page has started, the page that starts next, whenever that is, still finds it and removes the key.
-    // Without a mark the loader simply asks for the key again.
+    // With a token the loader gets it from the app again (mrShell.bootDevice): nothing to hand over.
+    if (DEVICE) { location.reload(); return; }
+    // The loader takes the key from the address (#k=...) or from the slot where loaders before 2026-11-16
+    // kept a remembered key. Never the address: the browser would keep it in its history. So it goes into
+    // that slot, with a mark that tells the new page to remove it at once (see boot; the new page empties
+    // the slot anyway). The mark is kept where the key is, not only in this tab: when the tab is closed
+    // before the new page has started, the page that starts next, whenever that is, still finds it and
+    // removes the key. Without a mark the loader simply asks for the key again.
     const key = $('key').value.trim();
-    let handOver = $('remember').checked;
-    if (!handOver) {
-      store.set('mr_forget_key', '1');
-      try { sessionStorage.setItem('mr_forget_key', '1'); } catch {}
-      handOver = store.get('mr_forget_key') === '1';
-    }
-    if (handOver) store.set('mr_key', key);
+    store.set('mr_forget_key', '1');
+    try { sessionStorage.setItem('mr_forget_key', '1'); } catch {}
+    if (store.get('mr_forget_key') === '1') store.set('mr_key', key);
     const rest = '#auto' + (READONLY ? '&ro' : '');
     try { history.replaceState(null, '', location.pathname + location.search + rest); } catch { location.hash = rest.slice(1); }
     location.reload();
@@ -2369,12 +2418,20 @@ async function begin() {
   try {
     if (!ever) msg('시그널링 서버 연결 중…');
     const c = (chan = RD.channel({
-      server: SERVER, subTopic: keys.topicClient, pubTopic: keys.topicHost, rxKey: keys.h2c, txKey: keys.c2h,
-      onMessage: (m) => { if (m && m.t === 'offer' && m.sid === sid && !pc) onOffer(m).catch((e) => lost('오류: ' + e.message)); },
+      server: DEVICE && DEVICE.server ? DEVICE.server : SERVER, subTopic: keys.topicClient, pubTopic: keys.topicHost, rxKey: keys.h2c, txKey: keys.c2h,
+      onMessage: (m) => {
+        if (!m || m.sid !== sid) return;
+        if (m.t === 'offer' && !pc) onOffer(m).catch((e) => lost('오류: ' + e.message));
+        else if (m.t === 'denied') { window.__rd.denied = String(m.why || ''); disconnect(DENIED[m.why] || '호스트가 접속을 거부했습니다.'); }
+      },
     }));
     await Promise.race([c.ready, sleep(10000).then(() => { throw new Error('시그널링 서버에 연결할 수 없습니다'); })]);
     if (sid !== mySid || chan !== c) return;
-    await c.send({ t: 'hello', sid, ts: Date.now(), mode, codec: codec || (await mobileCodec()) });
+    const hello = { t: 'hello', sid, ts: Date.now(), mode, codec: codec || (await mobileCodec()) };
+    // The app connected with the key: it asks for a token of its own (see gotDevice).
+    if (wantPair()) { try { const p = await shell.deviceHello(); if (p && typeof p === 'object') hello.pair = p; } catch {} }
+    if (sid !== mySid || chan !== c) return;
+    await c.send(hello);
     if (!ever) msg('호스트 응답 대기 중…');
     helloTimer = setTimeout(() => {
       if (sid === mySid && (!pc || pc.connectionState !== 'connected')) lost('호스트가 응답하지 않습니다. 호스트 프로그램 실행 여부와 키를 확인하세요.');
@@ -2385,9 +2442,9 @@ async function begin() {
 }
 
 async function connect() {
-  const key = $('key').value.trim();
-  store.set('mr_key', $('remember').checked ? key : null);
-  try { keys = await RD.derive(key); } catch (e) { msg('오류: ' + e.message); return; }
+  // Browsers no longer keep the key (2026-11-16): a slot that a loader before that filled is emptied.
+  store.set('mr_key', null);
+  try { keys = DEVICE ? await RD.derive(DEVICE.secret, RD.DEVICE) : await RD.derive($('key').value.trim()); } catch (e) { msg('오류: ' + e.message); return; }
   want = true; ever = false; retry = 0;
   $('audio').play().catch(() => {}); // unlock audio playback while we have a user gesture
   begin();
@@ -2553,19 +2610,23 @@ function buildReport() {
 }
 
 // ---- boot ----------------------------------------------------------------------------
+// Browsers no longer keep the key (the user's decision, 2026-11-16: other local files opened in the same
+// browser share that storage): a key a loader before that remembered is removed here, also when it came
+// as the hand-over of a self-update (see onOffer). The app keeps PCs in its own list, encrypted.
+store.set('mr_key', null);
+store.set('mr_forget_key', null);
+try { sessionStorage.removeItem('mr_forget_key'); } catch {}
+if (DEVICE) {
+  // This PC connects with its own token: there is no key to give, only to connect again.
+  $('keyHint').textContent = '이 PC는 호스트에 기기로 등록되어 있어 키 없이 접속합니다.';
+  $('key').style.display = 'none';
+  $('go').textContent = '다시 연결';
+}
 if (boot) {
-  // Back from a self-update (see onOffer): the key came through the remembered-key slot, which the
-  // person had left empty. Empty it again before anything else; connect() then leaves it empty.
-  let forget = store.get('mr_forget_key') === '1';
-  try { forget = sessionStorage.getItem('mr_forget_key') === '1' || forget; sessionStorage.removeItem('mr_forget_key'); } catch {}
-  if (forget) { store.set('mr_key', null); store.set('mr_forget_key', null); boot.remember = false; }
   try { respread = JSON.parse(sessionStorage.getItem('mr_respread') || 'null'); sessionStorage.removeItem('mr_respread'); } catch {}
-  $('key').value = boot.key;
-  $('remember').checked = !!boot.remember;
+  if (!DEVICE) $('key').value = boot.key || '';
   connect();
 } else {
-  const k = store.get('mr_key');
-  if (k) { $('key').value = k; $('remember').checked = true; }
   if (hash.get('k')) { $('key').value = hash.get('k'); history.replaceState(null, '', location.pathname); }
   if (hash.has('auto') && $('key').value) connect();
 }

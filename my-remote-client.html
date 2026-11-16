@@ -18,9 +18,8 @@
 <body>
 <div class="box">
   <h2 style="margin:0 0 6px">My Remote</h2>
-  <small>호스트 프로그램에 표시된 접속 키를 입력하세요.</small>
+  <small id="hint">호스트 프로그램에 표시된 접속 키를 입력하세요.</small>
   <input id="key" type="password" placeholder="접속 키" autocomplete="off" spellcheck="false">
-  <label><input id="remember" type="checkbox"> <small>이 브라우저에 키 저장 (본인 전용 기기에서만)</small></label>
   <div style="margin-top:12px"><button id="go">접속</button></div>
   <div id="msg"></div>
 </div>
@@ -34,6 +33,9 @@
 // Bootstrap protocol (keep stable, old loaders are out there):
 //   loader -> host: { t: 'ver', sid, ts, have: <hash of cached page or ''> }
 //   host -> loader: { t: 'app', sid, ts, hash, html? }   html omitted when have === hash
+// In the client app a PC of its list may have a token of its own instead of the key (from 2026-11-16,
+// window.mrShell.bootDevice): the same exchange on the token's own topics (RD.DEVICE). A host refuses a
+// blocked token: { t: 'denied', sid, why }.
 // Everything is wrapped in a function so nothing here collides with the page it loads.
 (() => {
 // Shared by host and client.
@@ -68,11 +70,14 @@ const RD = (() => {
     return new Uint8Array(await res.arrayBuffer());
   }
 
-  async function derive(secret) {
+  // `salt`: DEVICE for a device token (a client app's own secret, given to it by the host; see
+  // host/devices.js), which gives keys and topics of its own; the access key uses the default.
+  const DEVICE = 'my-remote-device-v1';
+  async function derive(secret, salt) {
     const raw = unb64u(secret.trim());
     if (raw.length !== 32) throw new Error('접속 키 형식이 올바르지 않습니다');
     const base = await crypto.subtle.importKey('raw', raw, 'HKDF', false, ['deriveBits', 'deriveKey']);
-    const p = (info) => ({ name: 'HKDF', hash: 'SHA-256', salt: te.encode('my-remote-v1'), info: te.encode(info) });
+    const p = (info) => ({ name: 'HKDF', hash: 'SHA-256', salt: te.encode(salt || 'my-remote-v1'), info: te.encode(info) });
     const aes = (info) => crypto.subtle.deriveKey(p(info), base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
     const topic = async (info) => {
       const bits = new Uint8Array(await crypto.subtle.deriveBits(p(info), base, 128));
@@ -127,6 +132,10 @@ const RD = (() => {
   }
 
   // opts: { server, subTopic, pubTopic, rxKey, txKey, onMessage, onState }
+  // The host listens on several topics at once (its own and one per device token): `subTopic` is then
+  // their names joined by commas (ntfy sends each message with the topic it came on), `rxKey` a function
+  // of the topic giving its key (or nothing: the message is dropped), and `onMessage` hears the topic too.
+  // `send(obj, { pubTopic, txKey })` sends elsewhere than `opts` says (the answer on a device's own topic).
   function channel(opts) {
     const parts = new Map();
     let es = null, closed = false, timer = null, quiet = null, wait = 2000;
@@ -186,7 +195,10 @@ const RD = (() => {
           const m = JSON.parse(ev.data);
           const f = String(m.message || '').split('.');
           if (f.length !== 5 || f[0] !== 'mr1') return;
-          const id = f[1], i = +f[2], n = +f[3];
+          const topic = typeof m.topic === 'string' ? m.topic : '';
+          const key = typeof opts.rxKey === 'function' ? opts.rxKey(topic) : opts.rxKey;
+          if (!key) return;
+          const id = topic + '/' + f[1], i = +f[2], n = +f[3];
           // Every loader handed out drops a message of more than 40 chunks (120000 characters), so
           // the client page the host sends in one 'app' reply has to stay within that.
           if (!(n >= 1 && n <= 40 && i >= 0 && i < n)) return;
@@ -199,8 +211,8 @@ const RD = (() => {
           arr[i] = f[4];
           if (arr.some((x) => x === null)) return;
           parts.delete(id);
-          const obj = await open(opts.rxKey, arr.join(''));
-          opts.onMessage(obj);
+          const obj = await open(key, arr.join(''));
+          opts.onMessage(obj, topic);
         } catch (e) {
           // Not decryptable with our key (noise or forgery), or too large: ignore.
         }
@@ -208,13 +220,14 @@ const RD = (() => {
     }
     connect();
 
-    async function send(obj) {
-      const text = await seal(opts.txKey, obj);
+    async function send(obj, to) {
+      const text = await seal((to && to.txKey) || opts.txKey, obj);
+      const topic = (to && to.pubTopic) || opts.pubTopic;
       const id = rand(6);
       const n = Math.ceil(text.length / CHUNK);
       for (let i = 0; i < n; i++) {
         const body = `mr1.${id}.${i}.${n}.${text.slice(i * CHUNK, (i + 1) * CHUNK)}`;
-        const r = await fetch(`${opts.server}/${opts.pubTopic}`, { method: 'POST', body });
+        const r = await fetch(`${opts.server}/${topic}`, { method: 'POST', body });
         if (!r.ok) throw new Error('시그널링 서버 전송 실패: HTTP ' + r.status);
       }
     }
@@ -237,7 +250,7 @@ const RD = (() => {
     });
   }
 
-  return { derive, channel, waitIce, rand };
+  return { derive, channel, waitIce, rand, DEVICE };
 })();
 
 const SERVER = 'https://ntfy.sh';
@@ -250,10 +263,11 @@ const preset = location.hash.slice(1) || '';
 const params = new URLSearchParams(preset);
 const msg = (s) => { $('msg').textContent = s; };
 let busy = false;
+let device = null; // { id, secret, server }: this PC's token for that host (the client app)
 
 function launch(html, key, updated) {
   // Replace this document with the client page. The window object is kept, so the page can read __mrBoot.
-  window.__mrBoot = { key, remember: $('remember').checked, preset, updated };
+  window.__mrBoot = { key: device ? '' : key, device: device || undefined, remember: false, preset, updated };
   document.open();
   document.write(html);
   document.close();
@@ -269,9 +283,9 @@ async function digest(html) {
 async function go(fresh) {
   if (busy) return;
   const key = $('key').value.trim();
-  store.set('mr_key', $('remember').checked ? key : null);
+  store.set('mr_key', null); // browsers no longer keep the key (2026-11-16): what an older loader kept goes
   let keys;
-  try { keys = await RD.derive(key); } catch (e) { msg('오류: ' + e.message); return; }
+  try { keys = device ? await RD.derive(device.secret, RD.DEVICE) : await RD.derive(key); } catch (e) { msg('오류: ' + e.message); return; }
   busy = true; $('go').disabled = true;
   const fail = (text) => { busy = false; $('go').disabled = false; msg(text); };
   const cached = fresh ? null : store.get('mr_app_html');
@@ -281,9 +295,16 @@ async function go(fresh) {
   try {
     msg('호스트에 연결하는 중…');
     chan = RD.channel({
-      server: SERVER, subTopic: keys.topicClient, pubTopic: keys.topicHost, rxKey: keys.h2c, txKey: keys.c2h,
+      server: device && device.server ? device.server : SERVER, subTopic: keys.topicClient, pubTopic: keys.topicHost, rxKey: keys.h2c, txKey: keys.c2h,
       onMessage: async (m) => {
-        if (done || !m || m.t !== 'app' || m.sid !== sid) return;
+        if (done || !m || m.sid !== sid) return;
+        if (m.t === 'denied') {
+          done = true;
+          chan.close();
+          fail(m.why === 'blocked' ? '이 PC는 호스트에서 차단되었습니다. 호스트 PC의 "접속한 기기"에서 차단을 풀 수 있습니다.' : '호스트가 접속을 거부했습니다.');
+          return;
+        }
+        if (m.t !== 'app') return;
         done = true;
         chan.close();
         if (typeof m.html === 'string' && m.html.length > 1000) {
@@ -309,7 +330,8 @@ async function go(fresh) {
       if (done) return;
       done = true;
       chan.close();
-      fail('호스트가 응답하지 않습니다. 호스트 프로그램이 켜져 있는지와 접속 키를 확인하세요.');
+      fail(device ? '호스트가 응답하지 않습니다. 호스트가 꺼져 있거나, 호스트에서 이 PC의 등록을 지웠을 수 있습니다. 지웠다면 PC 목록의 "키 바꾸기"로 접속 키를 다시 넣으면 다시 등록됩니다.'
+        : '호스트가 응답하지 않습니다. 호스트 프로그램이 켜져 있는지와 접속 키를 확인하세요.');
     }, 15000);
   } catch (e) {
     done = true;
@@ -320,9 +342,22 @@ async function go(fresh) {
 
 $('go').onclick = () => go();
 $('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-{ const k = store.get('mr_key'); if (k) { $('key').value = k; $('remember').checked = true; } }
+// A key in the slot where loaders before 2026-11-16 remembered one: the hand-over of a page that updated
+// itself (#auto), or one an older loader kept. Used once and removed.
+{ const k = store.get('mr_key'); if (k) { $('key').value = k; store.set('mr_key', null); } }
 if (params.get('k')) { $('key').value = params.get('k'); try { history.replaceState(null, '', location.pathname); } catch {} }
-if (params.has('auto') && $('key').value) go();
+// The client app gives a PC of its list that has a token of its own the token instead of the key.
+const shell = window.mrShell && typeof window.mrShell.bootDevice === 'function' ? window.mrShell : null;
+if (shell) {
+  shell.bootDevice().then((d) => {
+    if (!d || typeof d.secret !== 'string') { if (params.has('auto') && $('key').value) go(); return; }
+    device = { id: String(d.id || ''), secret: d.secret, server: typeof d.server === 'string' && /^https?:\/\//.test(d.server) ? d.server : SERVER };
+    $('hint').textContent = '이 PC는 호스트에 기기로 등록되어 있어 키 없이 접속합니다.';
+    $('key').style.display = 'none';
+    $('go').textContent = '다시 연결';
+    go();
+  }, () => { if (params.has('auto') && $('key').value) go(); });
+} else if (params.has('auto') && $('key').value) go();
 })();
 </script>
 </body>

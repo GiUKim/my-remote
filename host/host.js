@@ -3,6 +3,11 @@ const $ = (id) => document.getElementById(id);
 const CLIP_MAX = 60000;
 let cfg, keys, chan;
 let session = null;
+// Where a signaling message came from, and where its answer goes: the access key's own topics (`master`),
+// or a device's (a client app with a token of its own, host/devices.js; its topics and keys come from that
+// token alone, so it reaches this host without the key, and nobody without the token can read or forge
+// what goes to it). routes: the topic this host listens on -> its route. See subscribe().
+let master = null, routes = new Map(), subSeq = 0;
 
 function log(s) {
   const line = `${new Date().toLocaleTimeString()}  ${s}`;
@@ -198,6 +203,10 @@ function teardown(reason, silent) {
   $('stats').textContent = '';
   status('대기 중 — 접속을 기다리는 중', 'ok');
   log('세션 종료: ' + reason);
+  if (s.connectedAt) {
+    api.access({ ev: 'end', via: s.route.kind, dev: s.route.id, name: s.who, ip: s.ip, dur: (Date.now() - s.connectedAt) / 1000, in: s.filesIn, out: s.filesOut, why: reason });
+    showDevices(); // no longer "접속 중"
+  }
 }
 
 // Ends the session and has the client come back at once with a new hello, keeping its windows: the
@@ -442,6 +451,7 @@ function receiveUpload(s, ch) {
       // A drop goes where it was let go - unless the person has clicked or typed since, then onto the clipboard.
       const r = await api.putDone(gid, mode === 'drop' && !s.putTouched ? at : null, mode);
       gid = null;
+      s.filesIn += n;
       log(`받기: 파일 ${n}개 — ${r.how}${r.why ? ' (' + r.why + ')' : ''}`);
       txTo(s, { t: 'put', state: 'done', how: r.how, n: r.n || n, why: r.why || '' });
       try { ch.close(); } catch {}
@@ -466,6 +476,7 @@ async function dragOut(s, button) {
   if (session !== s) return;
   if (r.kind === 'files') {
     const n = r.files.filter((f) => !f.dir).length;
+    s.filesOut += n;
     log(`끌어내기: 파일 ${n}개를 보냅니다${r.skipped ? ` (${r.skipped}개는 제외: 너무 많거나 큼)` : ''}`);
     txTo(s, { t: 'dragdata', kind: 'files', files: r.files, skipped: r.skipped || 0 });
     sendFiles(s, r.files);
@@ -590,13 +601,62 @@ async function clipGet(s, seq) {
   const r = await api.clipGet(seq);
   if (session !== s) return;
   if (r.kind === 'files') {
+    s.filesOut += r.files.filter((f) => !f.dir).length;
     log(`복사한 파일: ${r.files.filter((f) => !f.dir).length}개를 보냅니다`);
     txTo(s, { t: 'dragdata', kind: 'files', files: r.files, skipped: r.skipped || 0, clip: true });
     sendFiles(s, r.files);
   } else txTo(s, { t: 'dragdata', kind: 'none', why: r.why, clip: true });
 }
 
-async function startSession(hello) {
+// The token goes over the session's own connection (DTLS, whose fingerprints the offer and the answer
+// carry), never through the relay: someone reading the relay with the key in hand does not pick it up.
+async function pairDevice(s) {
+  const p = s.pair;
+  s.pair = null;
+  const r = await api.devices.pair(p).catch(() => null);
+  if (session !== s) return;
+  if (!r || !r.ok) {
+    log('이 클라이언트 앱을 기기로 등록하지 못했습니다' + (r && r.why === 'full' ? ' (등록된 기기가 너무 많습니다: 쓰지 않는 기기를 지우세요)' : r && r.why === 'nostore' ? ' (이 PC의 암호화 저장소를 쓸 수 없습니다)' : ''));
+    txTo(s, { t: 'device', ok: false, why: r ? r.why : 'error' });
+    return;
+  }
+  txTo(s, { t: 'device', ok: true, id: r.id, secret: r.secret });
+  log(`${p.pc || '이 클라이언트 앱'}을(를) 기기로 등록했습니다 — 다음부터 키 없이 접속합니다`);
+}
+// The address the session's connection uses (the remote end of the selected candidate pair), for the log.
+// The engine does not reveal a peer-reflexive one (the client's own addresses come hidden behind mDNS
+// names): then the public address the client learned through STUN, from its answer, if it has one.
+async function remoteAddress(pc) {
+  let out = { ip: '', kind: '' };
+  try {
+    const rep = await pc.getStats();
+    rep.forEach((r) => {
+      const pair = r.type === 'transport' && r.selectedCandidatePairId ? rep.get(r.selectedCandidatePairId) : null;
+      const c = pair && rep.get(pair.remoteCandidateId);
+      if (c) out = { ip: c.address || c.ip || '', kind: c.candidateType || '' };
+    });
+  } catch {}
+  if (!out.ip) {
+    const m = /^a=candidate:\S+ \d+ \S+ \d+ ([0-9A-Fa-f.:]+) \d+ typ srflx/m.exec((pc.remoteDescription && pc.remoteDescription.sdp) || '');
+    if (m) out.ip = m[1];
+  }
+  return out;
+}
+async function noteConnected(s) {
+  const a = await remoteAddress(s.pc);
+  s.ip = a.ip;
+  const r = s.route;
+  api.access({ ev: 'connect', via: r.kind, dev: r.id, name: s.who, ip: a.ip, kind: a.kind });
+  if (r.kind === 'device') api.devices.seen(r.id, a.ip); else showDevices();
+}
+// A client app connected with the key may ask for a token of its own (hello.pair: what it says it is).
+function pairWish(hello, route) {
+  const p = route.kind === 'key' && hello.pair && typeof hello.pair === 'object' ? hello.pair : null;
+  if (!p) return null;
+  const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+  return { pc: str(p.pc, 60), os: str(p.os, 10), osName: str(p.osName, 60), app: str(p.app, 20), install: str(p.install, 64) };
+}
+async function startSession(hello, route) {
   teardown('새 접속 요청');
   // The session is the current one from here on, so that a newer hello or a teardown during any of the
   // waits below finds it and closes what it has. After each wait it checks that it still is the
@@ -604,8 +664,10 @@ async function startSession(hello) {
   const s = (session = {
     sid: hello.sid, started: performance.now(), streams: [], timers: [], dropTimer: 0, videoSenders: [], clip: null, native: null,
     mode: hello.mode === 'smooth' ? 'smooth' : 'sharp', encQueue: Promise.resolve(),
+    route, pair: pairWish(hello, route), filesIn: 0, filesOut: 0, connectedAt: 0,
   });
-  log('접속 요청 수신 — 화면 캡처 시작');
+  s.who = whoOf(route, s.pair);
+  log(`접속 요청 수신 (${s.who}) — 화면 캡처 시작`);
   status('연결 협상 중…', 'wait');
   const sources = await (s.sourcesP = api.getSources());
   if (session !== s) return;
@@ -617,7 +679,7 @@ async function startSession(hello) {
 
   const dc = (s.dc = pc.createDataChannel('input', { ordered: true }));
   dc.onmessage = (e) => onClientMessage(s, dc, e.data);
-  dc.onopen = () => { if (session !== s) return; if (s.stale) renew(s, s.stale); else startChannelTasks(s, dc); };
+  dc.onopen = () => { if (session !== s) return; if (s.stale) renew(s, s.stale); else { startChannelTasks(s, dc); if (s.pair) pairDevice(s); } };
   // The client closed its connection (연결 끊기, its page closed or reloaded). The channel closes at
   // once, while the connection state would say so only after the ICE timeout and the 15-s grace.
   dc.onclose = () => { if (session === s) teardown('클라이언트 연결 종료', true); };
@@ -686,6 +748,7 @@ async function startSession(hello) {
       status('원격 접속 중 (화면 전송 중)', 'live');
       api.session(true);
       applyEncoding(s);
+      if (!s.connectedAt) { s.connectedAt = Date.now(); noteConnected(s); }
     } else if (st === 'failed' || st === 'closed') teardown('연결 ' + st);
     else if (st === 'disconnected') { clearTimeout(s.dropTimer); s.dropTimer = setTimeout(() => teardown('연결 끊김'), 15000); }
   };
@@ -698,7 +761,7 @@ async function startSession(hello) {
   const mids = (s.mids = s.videoSenders.map((sender) => pc.getTransceivers().find((t) => t.sender === sender).mid));
   const appHash = await api.getClientHash();
   if (session !== s) return;
-  await chan.send({
+  await route.send({
     app: appHash,
     t: 'offer', sid: s.sid, ts: Date.now(), sdp: pc.localDescription.sdp, ice: cfg.iceServers, audio, codec: s.codec, cursorHidden: s.cursorHidden, os: cfg.hostOs,
     monitors: sources.map((src, i) => ({ idx: i, mid: mids[i], x: src.x, y: src.y, width: src.width, height: src.height, primary: src.primary, hdr: src.hdr || undefined })),
@@ -794,32 +857,79 @@ function firstTime(m) {
   return true;
 }
 
-async function onMessage(m) {
+// The relay subscription: this host's own topic (the access key's) and one per device token, on one
+// connection (ntfy sends each message with the topic it came on). Made anew when a token comes, goes or is
+// blocked. The new one is made before the old one is let go, so what is sent meanwhile is not missed: a
+// message heard on both is taken once (firstTime; an answer only fits the offer it answers). The route is
+// looked up when a message arrives, so a token removed meanwhile is not heard on the old subscription.
+async function subscribe() {
+  const my = ++subSeq;
+  const list = await api.devices.secrets().catch(() => []);
+  const next = new Map([[keys.topicHost, master]]);
+  for (const d of list) {
+    let k;
+    try { k = await RD.derive(d.secret, RD.DEVICE); } catch { continue; }
+    next.set(k.topicHost, {
+      kind: 'device', key: 'dev:' + d.id, id: d.id, name: d.name || '이름 없는 기기', blocked: !!d.blocked, keys: k,
+      send: (o) => chan.send(o, { pubTopic: k.topicClient, txKey: k.h2c }),
+    });
+  }
+  if (my !== subSeq) return; // a newer list is on its way
+  routes = next;
+  const old = chan;
+  const c = RD.channel({
+    server: cfg.server, subTopic: [...next.keys()].join(','), pubTopic: keys.topicClient, txKey: keys.h2c,
+    rxKey: (t) => { const r = t ? next.get(t) : master; return r ? r.keys.c2h : null; },
+    onMessage: (m, t) => { const r = t ? routes.get(t) : master; if (r) onMessage(m, r); },
+    onState: (st) => { if (c === chan && !session) status(st === 'open' ? '대기 중 — 접속을 기다리는 중' : '시그널링 서버 재연결 중…', st === 'open' ? 'ok' : 'wait'); },
+  });
+  chan = c;
+  if (old) Promise.race([c.ready, new Promise((r) => setTimeout(r, 8000))]).then(() => old.close());
+  // A device blocked or removed while its session is on: that session ends, and its client is told not to come back.
+  const s = session;
+  if (s && s.route.kind === 'device') {
+    const now = [...routes.values()].find((r) => r.key === s.route.key);
+    if (!now || now.blocked) teardown(now ? '기기 차단' : '기기 삭제');
+  }
+}
+// Who is on the other end, for the log and the access log.
+const whoOf = (route, pair) => (route.kind === 'device' ? route.name : pair && pair.pc ? pair.pc + ' (키)' : '키로 접속');
+
+async function onMessage(m, route) {
   if (!m || typeof m.sid !== 'string' || !(Math.abs(Date.now() - m.ts) <= MAX_AGE)) return; // also without a ts
   if (m.sid.length > 64) return; // a sid is 22 characters; a long one would only fill `seen`
+  if (route.kind === 'device' && route.blocked) {
+    // A blocked device is told so (it would otherwise wait and try again) and nothing else happens.
+    if ((m.t === 'ver' || m.t === 'hello') && firstTime(m)) {
+      route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: 'blocked' }).catch(() => {});
+      log(`차단한 기기의 접속을 거부했습니다: ${route.name}`);
+      api.access({ ev: 'denied', via: 'device', dev: route.id, name: route.name, why: 'blocked' });
+    }
+    return;
+  }
   if (m.t === 'ver') {
-    // A loader asking for the current client page. Only someone holding the key can have sent
-    // this, and the reply is encrypted to the key. The page is skipped when the loader has it.
+    // A loader asking for the current client page. Only someone holding the key (or a device's token)
+    // can have sent this, and the reply is encrypted to it. The page is skipped when the loader has it.
     if (!firstTime(m)) return; // replay
     try {
       const app = await api.getClientApp();
       const fresh = m.have !== app.hash;
-      await chan.send({ t: 'app', sid: m.sid, ts: Date.now(), hash: app.hash, html: fresh ? app.html : undefined });
-      log(fresh ? '클라이언트 화면을 최신 버전으로 전송했습니다' : '클라이언트 화면이 이미 최신입니다');
+      await route.send({ t: 'app', sid: m.sid, ts: Date.now(), hash: app.hash, html: fresh ? app.html : undefined });
+      log((fresh ? '클라이언트 화면을 최신 버전으로 전송했습니다' : '클라이언트 화면이 이미 최신입니다') + (route.kind === 'device' ? ` (${route.name})` : ''));
     } catch (e) {
       // The loader says so and can be tried again. A session that is live has nothing to do with it.
       log('클라이언트 화면 전송 실패: ' + e.message);
     }
   } else if (m.t === 'hello') {
     if (!firstTime(m)) return; // replay
-    try { await startSession(m); } catch (e) {
+    try { await startSession(m, route); } catch (e) {
       log('오류: ' + e.message);
       api.sourcesFailed(); // the monitors main keeps listed may be out of date: it asks Windows again next time
       // Only the session this hello started; a newer one may have taken its place meanwhile. No 'bye':
       // that would tell the client not to try again.
       if (session && session.sid === m.sid) teardown('오류', true);
     }
-  } else if (m.t === 'answer' && session && m.sid === session.sid && session.pc && session.pc.signalingState === 'have-local-offer') {
+  } else if (m.t === 'answer' && session && m.sid === session.sid && session.route.key === route.key && session.pc && session.pc.signalingState === 'have-local-offer') {
     const s = session;
     try {
       await s.pc.setRemoteDescription({ type: 'answer', sdp: hintBitrate(m.sdp, Math.round(cfg.startBitrateMbps * 1000), Math.round(cfg.minBitrateMbps * 1000), Math.round(cfg.maxTotalMbps * 1000)) });
@@ -946,14 +1056,98 @@ async function showAssist(st) {
   $('assistOff').onclick = () => act('uninstall');
 }
 
+// ---- client apps with a token of their own (host/devices.js), and the access log ---------------------
+const two = (n) => String(n).padStart(2, '0');
+const fmtTime = (t) => { if (!t) return ''; const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()} ${two(d.getHours())}:${two(d.getMinutes())}`; };
+let devShowSeq = 0;
+async function showDevices() {
+  const my = ++devShowSeq;
+  const r = await api.devices.list().catch(() => null);
+  if (my !== devShowSeq || !r) return;
+  const box = $('devList');
+  box.textContent = '';
+  $('devsNote').textContent = (r.list.length ? `— ${r.list.length}대` : '') + (r.note ? ' · 기기 목록 파일을 읽지 못했습니다 (원래 파일은 사본으로 남겨 두었습니다)' : '');
+  if (!r.list.length) {
+    const p = document.createElement('small');
+    p.textContent = '아직 없습니다. 클라이언트 앱에서 접속 키로 한 번 접속하면 그 PC가 여기에 등록되고, 다음부터는 키 없이 접속합니다. 잃어버린 PC는 여기서 차단하거나 삭제하면 그 PC만 끊깁니다.';
+    box.append(p);
+    return;
+  }
+  const live = session && session.connectedAt && session.route.kind === 'device' ? session.route.id : null;
+  for (const d of r.list) {
+    const row = document.createElement('div');
+    row.className = 'dev';
+    row.dataset.id = d.id;
+    const name = document.createElement('b');
+    name.textContent = d.name || '이름 없는 기기';
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    if (d.blocked) { tag.textContent = '차단됨'; tag.classList.add('bad'); } else if (d.id === live) { tag.textContent = '접속 중'; tag.classList.add('on'); } else tag.style.display = 'none';
+    const btns = document.createElement('span');
+    btns.className = 'btns';
+    const button = (text, fn) => { const b = document.createElement('button'); b.className = 'sub mini'; b.textContent = text; b.onclick = fn; btns.append(b); };
+    button('이름 바꾸기', () => renameDevice(d, name));
+    button(d.blocked ? '차단 해제' : '차단', () => api.devices.block(d.id, !d.blocked).then((ok) => { if (ok) log(`${d.name || '기기'}: ${d.blocked ? '차단을 풀었습니다' : '차단했습니다 — 이 기기는 더 이상 접속할 수 없습니다'}`); }));
+    button('삭제', () => api.devices.remove(d.id).then((ok) => { if (ok) log(`${d.name || '기기'}: 삭제했습니다`); }));
+    const top = document.createElement('div');
+    top.className = 'row';
+    top.append(name, tag, btns);
+    const meta = document.createElement('small');
+    meta.textContent = [d.osName, d.last ? `마지막 접속 ${fmtTime(d.last)}${d.lastIp ? ' (' + d.lastIp + ')' : ''}` : '키 없이 접속한 적 아직 없음', `등록 ${fmtTime(d.added)}`].filter(Boolean).join(' · ');
+    row.append(top, meta);
+    box.append(row);
+  }
+}
+function renameDevice(d, el) {
+  const input = document.createElement('input');
+  input.className = 'ren';
+  input.value = d.name || '';
+  input.maxLength = 40;
+  el.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const end = (save) => {
+    if (done) return;
+    done = true;
+    const v = input.value.trim();
+    if (save && v && v !== d.name) api.devices.rename(d.id, v); else showDevices();
+  };
+  input.onkeydown = (e) => { if (e.key === 'Enter') end(true); else if (e.key === 'Escape') end(false); };
+  input.onblur = () => end(true);
+}
+// "접속 기록": what came to this host, the newest first (main.js keeps it in access.log, 90 days).
+const ACCESS_WHAT = { connect: '접속', end: '종료', denied: '거부', paired: '기기 등록' };
+const ACCESS_WHY = { blocked: '차단된 기기' };
+async function showAccess() {
+  const box = $('accessList');
+  if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+  const list = await api.accessLog().catch(() => []);
+  box.textContent = '';
+  if (!list.length) { const p = document.createElement('small'); p.textContent = '기록이 없습니다.'; box.append(p); }
+  for (const e of list) {
+    const parts = [fmtTime(e.t), ACCESS_WHAT[e.ev] || e.ev, e.name || (e.via === 'device' ? '기기' : '키로 접속')];
+    if (e.ip) parts.push(e.ip);
+    if (e.ev === 'end') {
+      parts.push(`${Math.max(1, Math.round((e.dur || 0) / 60))}분`);
+      if (e.in || e.out) parts.push(`파일 받음 ${e.in || 0} · 보냄 ${e.out || 0}`);
+    }
+    if (e.ev === 'denied') parts.push(ACCESS_WHY[e.why] || e.why || '');
+    const line = document.createElement('div');
+    line.textContent = parts.filter(Boolean).join(' · ');
+    box.append(line);
+  }
+  box.style.display = '';
+}
+
 (async () => {
   cfg = await api.getConfig();
   keys = await RD.derive(cfg.key);
-  chan = RD.channel({
-    server: cfg.server, subTopic: keys.topicHost, pubTopic: keys.topicClient, rxKey: keys.c2h, txKey: keys.h2c,
-    onMessage,
-    onState: (st) => { if (!session) status(st === 'open' ? '대기 중 — 접속을 기다리는 중' : '시그널링 서버 재연결 중…', st === 'open' ? 'ok' : 'wait'); },
-  });
+  master = { kind: 'key', key: 'key', keys, send: (o) => chan.send(o) };
+  await subscribe();
+  api.devices.onChanged((resub) => { if (resub) subscribe(); showDevices(); });
+  showDevices();
+  $('accessBtn').onclick = showAccess;
   log('시그널링 서버: ' + cfg.server);
   log('호스트 시작: ' + new Date().toLocaleString());
   if (cfg.viewOnly) log('주의: 이 PC에서는 원격 입력을 넣을 수 없어 보기 전용으로 동작합니다 (' + cfg.viewOnly + ')');

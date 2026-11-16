@@ -24,7 +24,8 @@ const INPUT_CHECK = process.argv.includes('--input-check');
 // loader that talks to this test's relay only, and wait until it shows the host's picture.
 const CLIENT_APP_CHECK = process.argv.includes('--client-app-check');
 
-// Minimal ntfy-compatible pub/sub: POST /topic, GET /topic/sse
+// Minimal ntfy-compatible pub/sub: POST /topic, GET /topic/sse, GET /topic1,topic2/sse (several topics
+// on one subscription, as ntfy.sh does: each message says the topic it came on).
 exports.startRelay = () => new Promise((resolve) => {
   const subs = new Map();
   const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' };
@@ -34,14 +35,14 @@ exports.startRelay = () => new Promise((resolve) => {
     else if (req.method === 'GET' && parts[1] === 'sse') {
       res.writeHead(200, { ...cors, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
       res.write(': open\n\n');
-      if (!subs.has(parts[0])) subs.set(parts[0], new Set());
-      subs.get(parts[0]).add(res);
-      req.on('close', () => subs.get(parts[0]).delete(res));
+      const topics = parts[0].split(',').filter(Boolean);
+      for (const t of topics) { if (!subs.has(t)) subs.set(t, new Set()); subs.get(t).add(res); }
+      req.on('close', () => { for (const t of topics) subs.get(t).delete(res); });
     } else if (req.method === 'POST' && parts.length === 1) {
       let body = '';
       req.on('data', (c) => (body += c));
       req.on('end', () => {
-        for (const s of subs.get(parts[0]) || []) s.write(`data: ${JSON.stringify({ event: 'message', message: body })}\n\n`);
+        for (const s of subs.get(parts[0]) || []) s.write(`data: ${JSON.stringify({ event: 'message', topic: parts[0], message: body })}\n\n`);
         res.writeHead(200, cors); res.end('{}');
       });
     } else { res.writeHead(404, cors); res.end(); }
@@ -50,6 +51,24 @@ exports.startRelay = () => new Promise((resolve) => {
 });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// A client app the test started, ended as a person ends it (its windows closed: Windows' taskkill without
+// /F; SIGTERM elsewhere), not killed. On Windows Chromium writes the profile's "Local State", which holds
+// the key safeStorage encrypts with, only then: a first run that is killed leaves no such file, and the
+// next start cannot read what it stored (found when the second start could not read the token the first
+// had been given). Killed only when it has not ended in 10 s.
+async function quitGently(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  const gone = new Promise((r) => child.once('exit', r));
+  try {
+    if (process.platform === 'win32') require('child_process').spawnSync('taskkill', ['/PID', String(child.pid)], { stdio: 'ignore', windowsHide: true });
+    else child.kill('SIGTERM');
+  } catch {}
+  if (!(await Promise.race([gone.then(() => true), sleep(10000).then(() => false)]))) {
+    try { child.kill(); } catch {}
+    await Promise.race([gone, sleep(3000)]);
+  }
+  await sleep(500);
+}
 // The clipboard's text as it is, to be put back after a check that uses the clipboard: { mime: text },
 // {} when it is empty, null when it holds anything but the allowed text types (the check is skipped
 // then: that would be lost). Electron's clipboard is promise-based since Electron 44.
@@ -70,7 +89,7 @@ async function restoreClipboard(rec) {
 module.exports.keepTextClipboard = keepTextClipboard; // also for dragcheck.js
 module.exports.restoreClipboard = restoreClipboard;
 
-exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder }) => {
+exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, accessLog, devicesChanged }) => {
   const results = [];
   const check = (name, ok, detail) => { results.push(!!ok); console.log(`[selftest] ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  - ' + detail : ''}`); };
   const info = (text) => console.log(`[selftest] INFO  ${text}`);
@@ -1179,8 +1198,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       }
       check('client app (client/main.js, a program of its own) connects and shows the host\'s picture', !!seen,
         seen ? `fps ${JSON.stringify(seen.fps)}, decoder ${seen.dec}, windows ${JSON.stringify(seen.views)}` : 'no measurements from the app arrived');
-      try { child.kill(); } catch {}
-      await sleep(1500); // let it go before its profile (inside `dir`) is removed
+      await quitGently(child); // before its profile (inside `dir`) is removed
 
       // The same through the app's list of PCs (--list): a profile of its own, and this test's key handed
       // to it as a PC to add and open (home-import.json). The loader in that PC's window has no key in it
@@ -1207,10 +1225,65 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         }
         const os0 = cfg.hostOs || {};
         check('client app: a PC of its list opens in a window of its own with the key from the app; the list notes when and what the host is',
-          !!seen2 && !!entry && entry.lastAt > 0 && entry.os === os0.os && entry.osName === os0.name && entry.pc === os0.pc && !!entry.keyEnc && !text.includes(cfg.key) && !fs.existsSync(imp),
+          !!seen2 && !!entry && entry.lastAt > 0 && entry.os === os0.os && entry.osName === os0.name && entry.pc === os0.pc && !!(entry.keyEnc || entry.dev) && !text.includes(cfg.key) && !fs.existsSync(imp),
           seen2 ? `fps ${JSON.stringify(seen2.fps)}; entry ${entry ? JSON.stringify({ name: entry.name, os: entry.os, osName: entry.osName, pc: !!entry.pc, lastAt: entry.lastAt > 0, monitors: entry.monitors }) : 'none'}; key as text in the file: ${text.includes(cfg.key)}` : 'no measurements from the app arrived');
-        try { child2.kill(); } catch {}
-        await sleep(1500);
+
+        // Devices (host/devices.js): connected with the key, the app was given a token of its own over that
+        // connection, keeps it like the key, and lets the key go once the token has been seen to work.
+        // The token is kept in tokens.json (by entry), and the key let go leaves 'none' in hosts.json.
+        const prof = path.join(ldir, 'client-app-profile');
+        const readEntry = () => {
+          try {
+            const t = fs.readFileSync(path.join(prof, 'hosts.json'), 'utf8'), e = JSON.parse(t).hosts[0] || null;
+            let tt = '', d = null;
+            try { tt = fs.readFileSync(path.join(prof, 'tokens.json'), 'utf8'); d = e ? (JSON.parse(tt).tokens || {})[e.id] || null : null; } catch {}
+            return { text: t + tt, e, d };
+          } catch { return { text: '', e: null, d: null }; }
+        };
+        let got = readEntry();
+        for (let i = 0; i < 45 && !(got.e && got.d && got.e.keyEnc === 'none'); i++) { await sleep(1000); got = readEntry(); }
+        const devList = devices.list(), secrets = await devices.secrets();
+        const dev0 = devList[0], tok = secrets[0] ? secrets[0].secret : '';
+        check('devices: the app connected with the key is given a token of its own, keeps it encrypted, and lets go of the key once the token works',
+          devList.length === 1 && !!got.e && !!got.d && got.d.id === dev0.id && got.e.keyEnc === 'none' && !!tok && !got.text.includes(tok) && !got.text.includes(cfg.key) && dev0.pc === os.hostname().slice(0, 60),
+          `host lists ${devList.length} device(s)${dev0 ? ` (${JSON.stringify({ pc: dev0.pc === os.hostname().slice(0, 60), osName: dev0.osName, app: dev0.app })})` : ''}; app entry ${got.e ? JSON.stringify({ token: !!got.d, sameId: !!(got.d && dev0 && got.d.id === dev0.id), keyKept: got.e.keyEnc !== 'none' }) : 'none'}; token or key as text in the files: ${!!tok && got.text.includes(tok)}/${got.text.includes(cfg.key)}`);
+        await quitGently(child2); // so that what it stored can be read by the next start (see quitGently)
+
+        // Started again, the PC opens with its token: no key anywhere (the loader gets the token from the
+        // app), on the token's own topics. The host notes the device and logs where it came from.
+        const startList = () => require('child_process').spawn(process.execPath, [args[0], '--loader=' + lloader, '--list', '--open-all', ...args.slice(2)], { env, stdio: 'ignore' });
+        const accessSince = (t0, f) => accessLog.read(100).filter((e) => e.t >= t0 && f(e));
+        const t3 = Date.now(), from3 = fs.existsSync(diag) ? fs.statSync(diag).size : 0;
+        const child3 = startList();
+        let seen3 = null;
+        for (let i = 0; i < 60 && !seen3; i++) {
+          await sleep(1000);
+          let log = '';
+          try { log = fs.readFileSync(diag, 'utf8').slice(from3); } catch {}
+          for (const line of log.split('\n')) { let e = null; try { e = JSON.parse(line); } catch {} if (e && e.client && e.client.shell === true && Object.values(e.client.fps || {}).some((f) => f > 0)) seen3 = e.client; }
+        }
+        await sleep(1500); // the host notes the device once the connection is up
+        const conn3 = accessSince(t3, (e) => e.ev === 'connect' && e.via === 'device' && e.dev === (dev0 && dev0.id));
+        const dev3 = dev0 ? devices.get(dev0.id) : null;
+        check('devices: started again, the app connects with its token alone, and the host logs the device and where it came from',
+          !!seen3 && conn3.length >= 1 && !!dev3 && dev3.n >= 1 && dev3.last >= t3,
+          `${seen3 ? 'picture shown' : 'no measurements from the app arrived'}; access log ${JSON.stringify(conn3.map((e) => ({ ev: e.ev, via: e.via, ip: !!e.ip, kind: e.kind })))}; device seen ${dev3 ? dev3.n : '-'} time(s)`);
+
+        // Blocked at the host: the session under way ends, and the token no longer gets in (the host says so).
+        const t4 = Date.now();
+        devices.block(dev0 ? dev0.id : '', true);
+        devicesChanged(true);
+        let ended = [];
+        for (let i = 0; i < 10 && !ended.length; i++) { await sleep(500); ended = accessSince(t4, (e) => e.ev === 'end' && e.via === 'device'); }
+        await quitGently(child3);
+        const t5 = Date.now();
+        const child4 = startList();
+        let denied = [];
+        for (let i = 0; i < 40 && !denied.length; i++) { await sleep(1000); denied = accessSince(t5, (e) => e.ev === 'denied' && e.why === 'blocked'); }
+        check('devices: a device blocked at the host is cut off at once and turned away when it comes again; the key was never needed for it',
+          ended.length >= 1 && denied.length >= 1 && accessSince(t5, (e) => e.ev === 'connect').length === 0,
+          `session ended: ${ended.length ? ended[0].why : 'no'}; turned away: ${denied.length}; connected anyway: ${accessSince(t5, (e) => e.ev === 'connect').length}`);
+        await quitGently(child4);
       }
     }
   } catch (e) {

@@ -22,6 +22,7 @@ const argOf = (name) => (process.argv.find((a) => a.startsWith(name)) || '').sli
 // loader, and - once - the PCs named in home-import.json next to it ([{ name, key, open, loader }],
 // removed when read; `loader`: another loader file for that PC, when two test hosts each have a relay
 // of their own). For the self-test, with its relay and its throwaway key. Never the app's own profile.
+// With --open-all as well, every PC already in that list opens at the start.
 // With --home-shot=<file.png> as well, the list is not shown: a picture of it is written there and the
 // app ends (a look at the list with made-up PCs; an entry of home-import.json may then say what its PC
 // "said": seen: { os, name, pc, monitors }, lastAt; --home-size=<w>x<h>, --home-js=<code to run first>).
@@ -221,7 +222,8 @@ function listMode() {
     if (!h) return { ok: false, why: 'gone' };
     const was = open.get(id);
     if (was && !was.isDestroyed()) { if (was.isMinimized()) was.restore(); was.show(); was.focus(); return { ok: true }; }
-    if (!(await hosts.key(id))) return { ok: false, why: 'nokey' }; // the stored key cannot be read here any more
+    // Its token (it connects with that) or its key; neither can be read here any more: the person gives the key again.
+    if (!(await hosts.device(id)) && !(await hosts.key(id))) return { ok: false, why: 'nokey' };
     // Each further window a little down and to the right of the one before, so none hides another.
     const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea, n = open.size % 6;
     const width = Math.min(1280, area.width), height = Math.min(800, area.height);
@@ -247,12 +249,39 @@ function listMode() {
     return { ok: true };
   }
 
+  // What this PC tells a host that gives it a token of its own (see host/devices.js).
+  function deviceHello() {
+    let pc = '';
+    try { pc = String(os.hostname() || '').slice(0, 60); } catch {}
+    let osName = 'Linux';
+    if (process.platform === 'win32') osName = Number(os.release().split('.')[2]) >= 22000 ? 'Windows 11' : 'Windows 10';
+    else if (process.platform === 'darwin') osName = 'macOS';
+    else { try { const m = /^PRETTY_NAME="?([^"\n]*)"?\s*$/m.exec(fs.readFileSync('/etc/os-release', 'utf8')); if (m && m[1]) osName = m[1].slice(0, 60); } catch {} }
+    const osId = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'mac' : 'linux';
+    return { pc, os: osId, osName, app: APP ? APP.version : require('../host/package.json').version, install: hosts.install() };
+  }
   shell.setList({
-    key: (id) => hosts.key(id),
-    info(id, info) {
+    // A PC that gave this app a token is reached with the token only: its key is not handed out (it is
+    // kept only until the token has worked once, and is never a way back to a token the host took away).
+    key: (id) => (hosts.hasDevice(id) ? null : hosts.key(id)),
+    device: (id) => hosts.device(id),
+    hello: () => deviceHello(),
+    async paired(id, dev) {
+      const ok = await hosts.setDevice(id, dev);
+      console.log(`[client] ${ok ? 'a host gave this app a token of its own' : 'a token from a host could not be kept'}`);
+      if (ok) changed();
+      return ok;
+    },
+    // The token worked (the page asked the host on the token's own topics, or a session came up with it).
+    verified: (id, devId) => { const ok = hosts.dropKey(id, devId); if (ok) { console.log('[client] the token works: the key of that PC is let go'); changed(); } return ok; },
+    info(id, info, how = {}) {
       const on = !!info.connected, was = connected.has(id);
-      if (on) { connected.add(id); hosts.seen(id, { os: info.os, name: info.name, pc: info.pc, monitors: info.monitors }); retitle(id); }
-      else connected.delete(id);
+      if (on) {
+        connected.add(id);
+        hosts.seen(id, { os: info.os, name: info.name, pc: info.pc, monitors: info.monitors });
+        retitle(id);
+        if (how.viaDevice && hosts.dropKey(id)) console.log('[client] connected with the token: the key of that PC is let go');
+      } else connected.delete(id);
       if (on || was) changed();
     },
     home: () => showHome(),
@@ -393,6 +422,9 @@ function listMode() {
       clientShell();
     }
     if (!homeAlt) return;
+    // --open-all (a test only, with --list): every PC of that list opens at the start, as a person's click would
+    // (the self-test's second start: the PC it added before now connects with its token).
+    if (process.argv.includes('--open-all')) for (const h of hosts.list()) await openHost(h.id);
     // The self-test's PCs (see --list above).
     const file = path.join(testDir, 'home-import.json');
     let items = [];

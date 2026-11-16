@@ -30,11 +30,14 @@ const RD = (() => {
     return new Uint8Array(await res.arrayBuffer());
   }
 
-  async function derive(secret) {
+  // `salt`: DEVICE for a device token (a client app's own secret, given to it by the host; see
+  // host/devices.js), which gives keys and topics of its own; the access key uses the default.
+  const DEVICE = 'my-remote-device-v1';
+  async function derive(secret, salt) {
     const raw = unb64u(secret.trim());
     if (raw.length !== 32) throw new Error('접속 키 형식이 올바르지 않습니다');
     const base = await crypto.subtle.importKey('raw', raw, 'HKDF', false, ['deriveBits', 'deriveKey']);
-    const p = (info) => ({ name: 'HKDF', hash: 'SHA-256', salt: te.encode('my-remote-v1'), info: te.encode(info) });
+    const p = (info) => ({ name: 'HKDF', hash: 'SHA-256', salt: te.encode(salt || 'my-remote-v1'), info: te.encode(info) });
     const aes = (info) => crypto.subtle.deriveKey(p(info), base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
     const topic = async (info) => {
       const bits = new Uint8Array(await crypto.subtle.deriveBits(p(info), base, 128));
@@ -89,6 +92,10 @@ const RD = (() => {
   }
 
   // opts: { server, subTopic, pubTopic, rxKey, txKey, onMessage, onState }
+  // The host listens on several topics at once (its own and one per device token): `subTopic` is then
+  // their names joined by commas (ntfy sends each message with the topic it came on), `rxKey` a function
+  // of the topic giving its key (or nothing: the message is dropped), and `onMessage` hears the topic too.
+  // `send(obj, { pubTopic, txKey })` sends elsewhere than `opts` says (the answer on a device's own topic).
   function channel(opts) {
     const parts = new Map();
     let es = null, closed = false, timer = null, quiet = null, wait = 2000;
@@ -148,7 +155,10 @@ const RD = (() => {
           const m = JSON.parse(ev.data);
           const f = String(m.message || '').split('.');
           if (f.length !== 5 || f[0] !== 'mr1') return;
-          const id = f[1], i = +f[2], n = +f[3];
+          const topic = typeof m.topic === 'string' ? m.topic : '';
+          const key = typeof opts.rxKey === 'function' ? opts.rxKey(topic) : opts.rxKey;
+          if (!key) return;
+          const id = topic + '/' + f[1], i = +f[2], n = +f[3];
           // Every loader handed out drops a message of more than 40 chunks (120000 characters), so
           // the client page the host sends in one 'app' reply has to stay within that.
           if (!(n >= 1 && n <= 40 && i >= 0 && i < n)) return;
@@ -161,8 +171,8 @@ const RD = (() => {
           arr[i] = f[4];
           if (arr.some((x) => x === null)) return;
           parts.delete(id);
-          const obj = await open(opts.rxKey, arr.join(''));
-          opts.onMessage(obj);
+          const obj = await open(key, arr.join(''));
+          opts.onMessage(obj, topic);
         } catch (e) {
           // Not decryptable with our key (noise or forgery), or too large: ignore.
         }
@@ -170,13 +180,14 @@ const RD = (() => {
     }
     connect();
 
-    async function send(obj) {
-      const text = await seal(opts.txKey, obj);
+    async function send(obj, to) {
+      const text = await seal((to && to.txKey) || opts.txKey, obj);
+      const topic = (to && to.pubTopic) || opts.pubTopic;
       const id = rand(6);
       const n = Math.ceil(text.length / CHUNK);
       for (let i = 0; i < n; i++) {
         const body = `mr1.${id}.${i}.${n}.${text.slice(i * CHUNK, (i + 1) * CHUNK)}`;
-        const r = await fetch(`${opts.server}/${opts.pubTopic}`, { method: 'POST', body });
+        const r = await fetch(`${opts.server}/${topic}`, { method: 'POST', body });
         if (!r.ok) throw new Error('시그널링 서버 전송 실패: HTTP ' + r.status);
       }
     }
@@ -199,5 +210,5 @@ const RD = (() => {
     });
   }
 
-  return { derive, channel, waitIce, rand };
+  return { derive, channel, waitIce, rand, DEVICE };
 })();

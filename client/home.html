@@ -150,7 +150,7 @@
 <dialog id="keyDlg">
   <form method="dialog">
     <h3>키 바꾸기</h3>
-    <p><b id="keyWho"></b>의 접속 키를 새로 넣습니다. 호스트에서 <b>새 키 발급</b>을 눌렀을 때 쓰세요. 이름과 접속 기록은 그대로 남습니다.</p>
+    <p><b id="keyWho"></b>의 접속 키를 새로 넣습니다. 호스트에서 <b>새 키 발급</b>을 눌렀거나, 호스트의 "접속한 기기"에서 이 PC를 지웠을 때 쓰세요. 이 키로 한 번 접속하면 이 PC가 다시 기기로 등록됩니다. 이름과 접속 기록은 그대로 남습니다.</p>
     <label for="newKey">새 접속 키</label>
     <div class="keyRow"><input id="newKey" type="password" placeholder="접속 키 (43글자)" spellcheck="false" autocomplete="off"><button type="button" class="plain" id="newShow">보기</button></div>
     <div class="hint" id="keyHint"></div>
@@ -164,7 +164,7 @@
 <dialog id="delDlg">
   <form method="dialog">
     <h3>목록에서 지우기</h3>
-    <p><b id="delWho"></b>을(를) 목록에서 지웁니다. 이 PC에 보관한 그 PC의 접속 키도 함께 지워지고, 열려 있는 창은 닫힙니다. 호스트 PC에는 아무 영향이 없습니다.</p>
+    <p><b id="delWho"></b>을(를) 목록에서 지웁니다. 이 PC에 보관한 그 PC의 접속 키(또는 기기 등록)도 함께 지워지고, 열려 있는 창은 닫힙니다. 호스트 PC의 "접속한 기기"에는 이 PC가 남아 있으니, 다시 쓰지 않을 거라면 거기서도 지우세요.</p>
     <div class="btns">
       <button type="button" class="plain" id="delCancel">취소</button>
       <button type="submit" class="danger" id="delGo">지우기</button>
@@ -229,7 +229,7 @@ function stateOf(h) {
 function subOf(h) {
   const lines = [];
   if (h.name && h.pc && h.pc !== h.name) lines.push(h.pc);
-  const os = [h.osName, h.monitors > 0 ? `모니터 ${h.monitors}개` : ''].filter(Boolean).join(' · ');
+  const os = [h.osName, h.monitors > 0 ? `모니터 ${h.monitors}개` : '', h.paired ? '기기로 등록됨' : ''].filter(Boolean).join(' · ');
   if (os) lines.push(os);
   return lines.length ? lines : ['접속하면 정보가 채워집니다'];
 }
