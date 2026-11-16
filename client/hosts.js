@@ -54,6 +54,9 @@ function create({ file, crypt, now = () => Date.now() }) {
   const tokFile = path.join(path.dirname(file), 'tokens.json');
   let hosts = []; // { id, name, fp, keyEnc, addedAt, lastAt, os, osName, pc, monitors }
   let tokens = {}; // entry id -> { id, secretEnc, fp }: that host's token for this app
+  // Entries whose host has sent a page a release signed (client/pagecheck.js decide): from then on an
+  // unsigned page from it runs as in a browser; before, it keeps what it had before 0.8.0.
+  let pinned = new Set();
   let install = ''; // this app's own name for the hosts (see above)
   let loaded = false, note = '', tokNote = '', unreadableAt = 0;
   // A file that is not what this program wrote holds keys or tokens: it is kept under another name, once,
@@ -64,6 +67,7 @@ function create({ file, crypt, now = () => Date.now() }) {
     loaded = true;
     hosts = [];
     tokens = {};
+    pinned = new Set();
     note = tokNote = '';
     let j;
     try { j = readJson(file); if (j !== undefined && (!j || !Array.isArray(j.hosts))) throw new Error('no list'); } catch (e) {
@@ -91,6 +95,9 @@ function create({ file, crypt, now = () => Date.now() }) {
       if (!/^[0-9a-f]{12}$/.test(hid) || !d || !validDevId(d.id) || typeof d.secretEnc !== 'string' || !d.secretEnc) continue;
       if (note || hosts.some((h) => h.id === hid)) tokens[hid] = { id: d.id, secretEnc: d.secretEnc, fp: typeof d.fp === 'string' ? d.fp.slice(0, 16) : '' };
     }
+    for (const hid of Array.isArray(t && t.pinned) ? t.pinned : []) {
+      if (typeof hid === 'string' && /^[0-9a-f]{12}$/.test(hid) && (note || hosts.some((h) => h.id === hid))) pinned.add(hid);
+    }
   }
   const write = (f, obj) => {
     fs.mkdirSync(path.dirname(f), { recursive: true });
@@ -103,7 +110,7 @@ function create({ file, crypt, now = () => Date.now() }) {
   const canWrite = () => { ensure(); return note !== 'unreadable'; };
   const canWriteTokens = () => { ensure(); return tokNote !== 'unreadable' && note !== 'unreadable'; };
   const save = () => { if (note === 'unreadable') throw new Error('unreadable'); write(file, { v: 1, hosts }); };
-  const saveTokens = () => { if (tokNote === 'unreadable' || note === 'unreadable') throw new Error('unreadable'); write(tokFile, { v: 1, install: install || undefined, tokens }); };
+  const saveTokens = () => { if (tokNote === 'unreadable' || note === 'unreadable') throw new Error('unreadable'); write(tokFile, { v: 1, install: install || undefined, tokens, pinned: [...pinned] }); };
   const find = (id) => { ensure(); return hosts.find((h) => h.id === id) || null; };
   const hasKey = (h) => !!h.keyEnc && h.keyEnc !== NO_KEY;
   // What a page may know of an entry: everything but the key and the token. `paired`: it connects with a
@@ -162,8 +169,9 @@ function create({ file, crypt, now = () => Date.now() }) {
       h.keyEnc = keyEnc;
       h.fp = fp;
       save();
-      // Its token goes (with a key kept, the window connects with the key anyway, and pairs anew).
-      if (tokens[id] && canWriteTokens()) { delete tokens[id]; saveTokens(); }
+      // Its token goes (with a key kept, the window connects with the key anyway, and pairs anew), and so does
+      // what it knew of its host (the key may be another PC's now).
+      if ((tokens[id] || pinned.has(id)) && canWriteTokens()) { delete tokens[id]; pinned.delete(id); saveTokens(); }
       return { ok: true, id };
     },
     // This app's own name for the hosts, made once (kept only where tokens.json can be written).
@@ -210,7 +218,15 @@ function create({ file, crypt, now = () => Date.now() }) {
       hosts = hosts.filter((x) => x !== h);
       save();
       // (A token that cannot be removed now is dropped at a later reading: no entry is left for it.)
-      if (tokens[id] && canWriteTokens()) { delete tokens[id]; saveTokens(); }
+      if ((tokens[id] || pinned.has(id)) && canWriteTokens()) { delete tokens[id]; pinned.delete(id); saveTokens(); }
+      return true;
+    },
+    // Whether this PC's host has sent a page a release signed (a token implies it: only such a page pairs).
+    signedSeen(id) { return !!find(id) && (pinned.has(id) || !!tokens[id]); },
+    markSigned(id) {
+      if (!find(id) || pinned.has(id) || !canWriteTokens()) return false;
+      pinned.add(id);
+      saveTokens();
       return true;
     },
     // The key itself, for the window that connects to that PC. null when it cannot be read (another

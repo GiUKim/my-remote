@@ -486,8 +486,15 @@ the client app instead).
     the window loads anything else (`did-start-navigation`). Only a signed page gets what the app adds to a
     browser: saving files where they were dropped, the click and Ctrl+V after a drop, the clipboard both
     ways (`clipPoll`/`clipWrite`), device tokens (`deviceHello`/`Paired`/`Verified`). Anything else runs as in
-    a browser (pictures, input, windows, fullscreen). So a host older than 0.8.0 loses those in a 0.8.0
-    client app until it is updated. `__mrBoot.signed` goes into the page's measurements (`cs.signed`).
+    a browser (pictures, input, windows, fullscreen) - with one exception, so that nobody who updates the
+    client app before the host loses anything (the user's decision, 2026-11-16, before 0.8.0 was released):
+    a page with no signature at all, in a window of a PC of the list whose host never sent a signed page (a
+    host from before 0.8.0), keeps what it had before, all but device tokens (`pagecheck.decide`'s `legacy`;
+    `signedPage` gates the tokens). The first signed page from that host pins it (`hosts.markSigned`, kept
+    in tokens.json, implied by a token, forgotten with a new key or the entry): from then on an unsigned page
+    from it runs as in a browser, so someone posing as it with the key gains nothing by leaving the
+    signature out. Until a host is updated its protection is what it was in 0.7.x. `__mrBoot.signed` goes
+    into the page's measurements (`cs.signed`).
     The isolated runs sign with a throwaway key (`testPageKey`) and start the client app with
     `--trust-page-key=` (taken only with `--loader=`); the in-process test windows are attached with `trust`.
   - Still to come (agreed with the user 2026-11-16): a one-time code with acceptance for helping others.

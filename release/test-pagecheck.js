@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { verifyPage } = require('../client/pagecheck');
+const { verifyPage, decide } = require('../client/pagecheck');
 const core = require('../app/core');
 const builder = require('../host/build-client');
 
@@ -29,6 +29,15 @@ check('something else the release key signed (a manifest) is no page statement',
 const otherApp = st.replace('"my-remote"', '"other-app"');
 check('a statement of another program is refused', verifyPage({ statement: otherApp, sig: sign(otherApp, rel), sha256: sha(html) }, [rel.pub]).why === 'sig');
 check('nothing, or what is no statement, is "none"', [{}, { statement: st }, { statement: st, sig: 'x'.repeat(300), sha256: sha(html) }, { ...good, sha256: 'abc' }, null].every((o) => verifyPage(o || {}, [rel.pub]).why === 'none'));
+
+// What a window's page then gets (no disruption for a client app updated before its host).
+const unsigned = verifyPage({ sha256: sha(html) }, [rel.pub]), badSig = verifyPage({ ...good, sig: sign(st, other) }, [rel.pub]), otherPage = verifyPage({ ...good, sha256: sha(html + ' ') }, [rel.pub]);
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+check('a signed page gets everything, and its PC is remembered as one whose host signs', same(decide(verifyPage(good, [rel.pub]), { listed: true }), { trusted: true, legacy: false, pin: true }) && same(decide(verifyPage(good, [rel.pub]), { listed: false }), { trusted: true, legacy: false, pin: false }));
+check('a page with no signature from a PC whose host never signed (before 0.8.0) keeps what it had, without device tokens', same(decide(unsigned, { listed: true, pinned: false }), { trusted: true, legacy: true, pin: false }));
+check('... but not once that host has signed a page (someone posing as it gains nothing by leaving the signature out)', !decide(unsigned, { listed: true, pinned: true }).trusted);
+check('a bad signature, another page\'s, or a window not of the list: as in a browser',
+  !decide(badSig, { listed: true }).trusted && !decide(otherPage, { listed: true }).trusted && !decide(unsigned, { listed: false }).trusted && !decide(null, {}).trusted);
 
 // What release/build.js signs is the page a host of that release builds for the default relay.
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mr-page-test-'));

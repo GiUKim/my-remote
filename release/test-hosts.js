@@ -137,6 +137,21 @@ const crypt = (opts = {}) => ({
     for (const f of fs.readdirSync(dir)) if (f.startsWith('hosts.json.bad-')) fs.rmSync(path.join(dir, f));
     h = mk();
   }
+  // Whether the entry's host has sent a page a release signed: remembered (in tokens.json), implied by a
+  // token, and forgotten with a new key or the entry.
+  {
+    const e2 = (await h.add({ key: key(), name: 'pin' })).id;
+    const before = h.signedSeen(e2);
+    const marked = h.markSigned(e2);
+    const kept = mk().signedSeen(e2) && fs.readFileSync(tokFile, 'utf8').includes(e2);
+    const byToken = h.signedSeen(a.id); // a has a token (set above)
+    await h.setKey(e2, key());
+    const afterKey = mk().signedSeen(e2);
+    h.markSigned(e2);
+    h.remove(e2);
+    check('a host that sent a signed page is remembered, a token implies it, and a new key or removing the entry forgets it',
+      !before && marked && kept && byToken && !afterKey && !fs.readFileSync(tokFile, 'utf8').includes(e2) && !h.markSigned('ffffffffffff'));
+  }
   check('removing an entry removes its token', h.remove(a.id) && !fs.readFileSync(tokFile, 'utf8').includes(devId) && !mk().hasDevice(a.id));
 
   check('an entry is removed, with its key', h.remove(b.id) && !h.get(b.id) && (await h.key(b.id)) === null && !fs.readFileSync(file, 'utf8').includes(b.id) && !h.remove(b.id));

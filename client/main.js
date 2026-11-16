@@ -270,6 +270,9 @@ function listMode() {
     key: (id) => hosts.key(id),
     device: (id) => (hosts.keyKept(id) ? null : hosts.device(id)),
     hello: () => deviceHello(),
+    // Whether that PC's host has sent a page a release signed (client/pagecheck.js decide).
+    signedSeen: (id) => hosts.signedSeen(id),
+    markSigned: (id) => hosts.markSigned(id),
     async paired(id, dev) {
       const ok = await hosts.setDevice(id, dev);
       console.log(`[client] ${ok ? 'a host gave this app a token of its own' : 'a token from a host could not be kept'}`);

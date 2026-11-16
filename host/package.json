@@ -1,6 +1,6 @@
 {
   "name": "my-remote-host",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Personal P2P remote desktop host (WebRTC, multi-monitor)",
   "main": "main.js",
   "private": true,

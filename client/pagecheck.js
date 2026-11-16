@@ -34,6 +34,20 @@ function verifyPage({ statement, sig, sha256 } = {}, keys = []) {
   return { ok: true, version: String(st.version || '') };
 }
 
+// What a window's page gets (client/shell.js), from the check above (the user's decision, 2026-11-16: no
+// disruption for those who update the client app before their host):
+//   signed by a release            everything; its PC of the list is remembered as one whose host signs (`pin`)
+//   no signature at all, from a PC of the list whose host never sent a signed page (a host from before 0.8.0)
+//                                  what it had before 0.8.0: everything but device tokens (`legacy`)
+//   anything else                  as in a browser (a bad or another page's signature; a PC whose host signed
+//                                  before, so that someone posing as it with the key gains nothing by leaving
+//                                  the signature out; a window not of the list)
+function decide(r, { listed = false, pinned = false } = {}) {
+  if (r && r.ok) return { trusted: true, legacy: false, pin: !!listed };
+  if (r && r.why === 'none' && listed && !pinned) return { trusted: true, legacy: true, pin: false };
+  return { trusted: false, legacy: false, pin: false };
+}
+
 // The release keys of the shell this app runs in: the installed app's (next to app/boot.js, which started it:
 // see host/appsync.js shellParts), or a source folder's (app/update-config.json).
 function releaseKeys() {
@@ -47,4 +61,4 @@ function releaseKeys() {
   return [];
 }
 
-module.exports = { verifyPage, releaseKeys, APP };
+module.exports = { verifyPage, decide, releaseKeys, APP };

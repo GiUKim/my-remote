@@ -1,0 +1,16 @@
+{
+  "ko": [
+    "기기 등록: 클라이언트 앱으로 키를 넣어 한 번 접속하면 그 PC가 호스트에 기기로 등록되고, 다음부터는 키 없이 접속합니다. 앱은 보관하던 키를 지웁니다",
+    "호스트 창의 \"접속한 기기\": 기기마다 이름 바꾸기, 차단, 삭제. 잃어버린 PC는 그 기기만 끊으면 되고 키를 바꿀 필요가 없습니다. \"접속 기록\"은 이 PC에만 90일 남습니다",
+    "새 기기 확인(선택): 켜 두면 등록되지 않은 기기는 호스트 창에서 허용해야 들어옵니다. 원하면 휴대폰 인증 앱의 6자리로도 허용합니다. 업데이트한 호스트는 꺼진 채로 두니 필요하면 켜세요",
+    "클라이언트 앱은 릴리스 서명이 있는 화면에만 파일 저장·클립보드 같은 앱 기능을 줍니다. 아직 업데이트하지 않은 호스트에서는 지금처럼 다 됩니다",
+    "브라우저(my-remote-client.html)는 이제 접속 키를 저장하지 않습니다. 접속할 때마다 키를 넣으세요"
+  ],
+  "en": [
+    "Devices: a client app that connected once with the key is registered at the host and connects without the key from then on; the app lets go of the key",
+    "The host window's \"접속한 기기\" (devices): rename, block or remove each one. A lost PC is cut off alone, without a new key. The access log (\"접속 기록\") stays on this PC for 90 days",
+    "New devices confirmed (optional): while on, a device not registered gets in only once allowed in the host window, or with an authenticator app's code. An updated host keeps it off until it is turned on",
+    "The client app gives saving files and the clipboard only to a page the release signed; a host not updated yet keeps working as before",
+    "Browsers no longer keep the access key: give it at every connection"
+  ]
+}

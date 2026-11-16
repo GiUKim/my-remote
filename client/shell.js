@@ -32,7 +32,8 @@ const FULLSCREEN_JS = `document.documentElement.requestFullscreen()
 const shells = new Map(); // main webContents id -> { win, children, host }
 // The app's list of PCs (client/main.js), when there is one: { key(id) -> Promise<key | null>,
 // info(id, what the page says about its session), home(), and for this PC as a device of a host:
-// device(id) -> Promise<{ id, secret } | null>, hello(), paired(id, { id, secret }), verified(id, tokenFp) }.
+// device(id) -> Promise<{ id, secret } | null>, hello(), paired(id, { id, secret }), verified(id, tokenFp),
+// and whether that PC's host has signed a page: signedSeen(id), markSigned(id) (see pagecheck.decide) }.
 // A window opened for a PC of that list (attach(win, { host: id })) gets that PC's key or token from here;
 // see shell:bootKey and shell:bootDevice.
 let list = null;
@@ -52,9 +53,11 @@ function shellOf(sender) {
   return null;
 }
 // The shell of a window whose page a release signed (shell:pageCheck), or of one a test trusts (attach's
-// `trust`): saving files, the clipboard, the click and Ctrl+V after a drop, device tokens. Other pages run as
-// in a browser.
+// `trust`): saving files, the clipboard, the click and Ctrl+V after a drop; also the page of a PC whose host
+// never signed one (a host from before 0.8.0: pagecheck.decide's `legacy`). Device tokens only for a signed
+// page (`signedPage`). Other pages run as in a browser.
 function trusted(e) { const s = shellOf(e.sender); return s && (s.trusted || s.trustAlways) ? s : null; }
+function signedPage(e) { const s = shellOf(e.sender); return s && ((s.trusted && !s.legacy) || s.trustAlways) ? s : null; }
 
 // ---- things dragged out of the remote picture and let go over this PC ---------------
 // The page tells us the moment the pointer is let go (dropPoint); what was dragged arrives a
@@ -292,13 +295,13 @@ function setupIpc() {
   ipcMain.handle('shell:bootDevice', async (e) => { const s = listed(e); return s && list.device ? list.device(s.host) : null; });
   // Only a page a release signed takes part in device tokens (a page from someone posing as the host must not
   // leave this app a token of theirs, nor make it let go of the key).
-  ipcMain.handle('shell:deviceHello', (e) => (listed(e) && trusted(e) && list.hello ? list.hello() : null));
+  ipcMain.handle('shell:deviceHello', (e) => (listed(e) && signedPage(e) && list.hello ? list.hello() : null));
   ipcMain.handle('shell:devicePaired', async (e, dev) => {
     const s = listed(e);
-    if (!s || !trusted(e) || !list.paired || !dev || typeof dev !== 'object') return false;
+    if (!s || !signedPage(e) || !list.paired || !dev || typeof dev !== 'object') return false;
     return list.paired(s.host, { id: String(dev.id || ''), secret: String(dev.secret || '') });
   });
-  ipcMain.handle('shell:deviceVerified', async (e, fp) => { const s = listed(e); return !!(s && trusted(e) && list.verified && (await list.verified(s.host, String(fp || '')))); });
+  ipcMain.handle('shell:deviceVerified', async (e, fp) => { const s = listed(e); return !!(s && signedPage(e) && list.verified && (await list.verified(s.host, String(fp || '')))); });
   // The page about to run in a window (its loader asks before it writes it in): one a release signed? Asked by
   // the window's own top page only, and once per load: the hash is the loader's word for the page it is about
   // to run, and the page that then runs must not ask again with another page's hash for its own code. The
@@ -306,11 +309,20 @@ function setupIpc() {
   ipcMain.handle('shell:pageCheck', (e, o) => {
     const s = shellOf(e.sender);
     if (!s || e.sender !== s.win.webContents || (e.senderFrame && e.senderFrame !== e.sender.mainFrame)) return false;
-    if (s.checked) return s.trusted;
+    if (s.checked) return !!(s.trusted && !s.legacy);
     s.checked = true;
     const r = pagecheck.verifyPage(o && typeof o === 'object' ? o : {}, pageKeys());
-    s.trusted = r.ok;
-    if (!r.ok && !s.toldUnsigned) { s.toldUnsigned = true; console.log(`[client] the host's page is not one a release signed (${r.why}): it runs as in a browser, without saving files, the clipboard or device tokens`); }
+    // A PC of the list whose host never sent a signed page keeps what it had before 0.8.0 (pagecheck.decide).
+    const inList = !!(s.host && list), pinned = inList && !!(list.signedSeen && list.signedSeen(s.host));
+    const d = pagecheck.decide(r, { listed: inList, pinned });
+    s.trusted = d.trusted;
+    s.legacy = d.legacy;
+    if (d.pin && list.markSigned) list.markSigned(s.host);
+    if (!r.ok && !s.toldUnsigned) {
+      s.toldUnsigned = true;
+      console.log(d.legacy ? '[client] the host sent no signed page (a host from before 0.8.0): its page keeps what it had, without device tokens'
+        : `[client] the host's page is not one a release signed (${r.why}): it runs as in a browser, without saving files, the clipboard or device tokens`);
+    }
     return r.ok;
   });
   // What the page says about its session: connected or not, and what the host said it is.
@@ -499,7 +511,7 @@ function attach(win, { host = null, trust = false } = {}) {
   wc.on('did-start-navigation', (d, url, inPlace, mainFrame) => {
     const main = d && typeof d.isMainFrame === 'boolean' ? d.isMainFrame : mainFrame;
     const same = d && typeof d.isSameDocument === 'boolean' ? d.isSameDocument : inPlace;
-    if (main && !same) { state.trusted = false; state.checked = false; }
+    if (main && !same) { state.trusted = false; state.legacy = false; state.checked = false; }
   });
   win.on('closed', () => { shells.delete(wc.id); if (!shells.size) ghostGone(); }); // a window left behind would keep the app from quitting
   reportShown(win);
