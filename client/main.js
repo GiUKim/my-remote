@@ -40,6 +40,8 @@ const LOADER = alt || homeAlt ? path.resolve(alt || homeAlt) : path.join(__dirna
 // asked about an ordinary one; a required one is installed without asking and only the restart is
 // announced. Run from a source folder there is no shell.
 const APP = global.__mrApp || null;
+// The one entry's id, which the host takes too (appsync.APP_ID): the shell gives this face the same one.
+if (APP && process.platform === 'win32') app.setAppUserModelId(appsync.APP_ID);
 // Asks about an update on offer (set by watchUpdates); `again`: the person pressed "업데이트 확인", so one
 // they put off before is asked about once more.
 let offerUpdate = null;
@@ -287,8 +289,15 @@ function listMode() {
     return ok;
   });
 
+  // Packages up to 0.5.x made two shortcuts (host, client): the one entry takes their place, at the start
+  // and when another start reaches this running app (an older shell's first-start dialog makes the two
+  // again when its box is ticked, then starts this face: see oneEntry in host/main.js). Never in a test.
+  function oneEntry() {
+    if (!APP || testDir) return;
+    try { const r = appsync.unifyShortcuts(entryOpts()); if (r.made.length) console.log('[client] shortcuts: one entry ' + r.made.join(', ')); } catch (e) { console.error('[client] shortcuts', e.message); }
+  }
   // Started again: the list comes forward, or the start screen when that is what was started (the entry).
-  app.on('second-instance', (_e, argv) => (Array.isArray(argv) && argv.includes('--launcher') ? showLauncher() : showHome()));
+  app.on('second-instance', (_e, argv) => { oneEntry(); return Array.isArray(argv) && argv.includes('--launcher') ? showLauncher() : showHome(); });
 
   // The host face installed a newer version (one app, see host/appsync.js): with no PC window open the app
   // starts again at once (the list comes back), else it asks first, since the remote windows reconnect.
@@ -307,8 +316,7 @@ function listMode() {
     appUp(win, () => home || launcher); // questions about updates go to whichever list window is open (it can be closed and opened again)
     if (APP && !testDir) {
       appsync.watch({ running: APP.version, onNewer: newerInstalled });
-      // Packages up to 0.5.x made two shortcuts (host, client): the one entry takes their place.
-      try { const r = appsync.unifyShortcuts(entryOpts()); if (r.made.length) console.log('[client] shortcuts: one entry ' + r.made.join(', ')); } catch (e) { console.error('[client] shortcuts', e.message); }
+      oneEntry();
     }
     if (!homeAlt) return;
     // The self-test's PCs (see --list above).

@@ -718,9 +718,25 @@ function restart() { quitting = true; app.relaunch(); app.quit(); }
 // version came up (ok()), or it goes back to the one before. Run from a source folder there is no
 // shell: the version is package.json's and updates come by git.
 const APP = global.__mrApp || null;
+// One app on Windows: the host takes the id of the one "MyRemote" entry, as the client app does (see
+// appsync.APP_ID): its window sits with the client app's under that entry, and its notice of a remote
+// session has an entry to be shown by. Before any window; the shell set the host's own id.
+if (APP && process.platform === 'win32') { app.setAppUserModelId(appsync.APP_ID); console.log('[host] app id ' + appsync.APP_ID); }
 let sessionLive = false;
 const appVersion = () => (APP ? APP.version : require('./package.json').version);
 const updateInfo = () => ({ version: appVersion(), installed: !!APP, rolledBack: APP ? APP.rolledBack : [], ...(APP && APP.update ? APP.update.status() : { state: 'none' }) });
+// Packages up to 0.5.x made two shortcuts (host, client): the one entry takes their place, at the start and
+// whenever another start reaches this running host. The first-start dialog of those packages' shells (their
+// exe started without --host/--client) makes the two again when its box is ticked, its default, and then
+// starts a face that only brings this one forward (seen 2026-11-16: three shortcuts after such a start).
+function oneEntry() {
+  if (ISOLATED || !APP) return;
+  try {
+    const r = appsync.unifyShortcuts({ appData: app.getPath('appData'), dataHome: process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'),
+      execPath: process.execPath, iconDir: path.dirname(require.main.filename), writeLink: (f, op, o) => shell.writeShortcutLink(f, op, o) });
+    if (r.made.length) console.log('[host] shortcuts: one entry ' + r.made.join(', '));
+  } catch (e) { console.error('[host] shortcuts', e.message); }
+}
 
 function createWindow() {
   win = new BrowserWindow({
@@ -837,7 +853,7 @@ if (SHOW_KEY) app.whenReady().then(showKey);
 else if (!ISOLATED && !app.requestSingleInstanceLock()) app.quit();
 else {
   // Started again: after an update restart; while the page waits to be loaded again after a crash, at once.
-  app.on('second-instance', () => { if (codeStamp() !== startedStamp) restart(); else { reloadCrashedPage(); showWindow(); } });
+  app.on('second-instance', () => { oneEntry(); if (codeStamp() !== startedStamp) restart(); else { reloadCrashedPage(); showWindow(); } });
   app.on('before-quit', () => { quitting = true; assist.stop(); input.reset(); setCursorsHidden(false); clearKeyClip(); runningMark(false); });
   process.on('exit', () => { if (cursorsHidden) input.restoreCursors(); });
   app.whenReady().then(async () => {
@@ -1073,12 +1089,7 @@ else {
       if (APP) {
         // The client face installed a newer version: this host follows when no remote session is on (see 'session').
         appsync.watch({ running: APP.version, onNewer: (v) => { newerVersion = v; console.log(`[host] version ${v} was installed by the client app: restarting into it when no session is on`); followNewer(); } });
-        // Packages up to 0.5.x made two shortcuts (host, client): the one entry takes their place.
-        try {
-          const r = appsync.unifyShortcuts({ appData: app.getPath('appData'), dataHome: process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'),
-            execPath: process.execPath, iconDir: path.dirname(require.main.filename), writeLink: (f, op, o) => shell.writeShortcutLink(f, op, o) });
-          if (r.made.length) console.log('[host] shortcuts: one entry ' + r.made.join(', '));
-        } catch (e) { console.error('[host] shortcuts', e.message); }
+        oneEntry();
       }
     }
     if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder });

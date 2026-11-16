@@ -827,6 +827,23 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
     shortcuts with the entry at the start of either face (`host/appsync.js` `unifyShortcuts`; only the
     app's own: a source folder's `setup.sh` makes Linux entries of the same names, which stay). Their
     exe started without arguments still shows the old dialog until a new package is installed.
+  - Seen 2026-11-16 on the person's PC (unpacked from the 0.4.2 package, code 0.6.0 by update; they
+    reported "앱이 하나가 아니라 클라이언트 전용 앱, 호스트 전용 앱으로 나뉩니다"): the exe started directly
+    showed that old dialog, and its box "시작 메뉴에 호스트와 클라이언트 바로가기 만들기" (ticked by default)
+    made `MyRemote-Host`/`MyRemote-Client` again next to the entry while the host ran, so the face it
+    started only brought the host forward and nothing removed them. Each face now puts the entry back
+    alone also when another start reaches it (`oneEntry` on `second-instance`). The dialog stays until the
+    folder holds a new package (the README says so). A shortcut named `Electron` to the same exe (no
+    arguments, so the old dialog) was in the Start menu's top folder too, from 2026-11-14: not one the app
+    makes; probably Windows' when the exe was pinned to Start (the 0.4.2 exe still described itself as
+    Electron). Left alone: the code does not remove shortcuts it did not make.
+  - **One id on Windows** (`appsync.APP_ID`, the entry's `kr.myremote.client`). The shell gives each face
+    its own (`kr.myremote.host`/`.client`). Since the host's shortcut went in 0.6.0, the host's windows sat
+    apart from the client app's on the taskbar, and its "원격 접속이 시작되었습니다" notice had no entry
+    (Windows shows a desktop program's notifications only for an id a Start-menu shortcut carries).
+    Both faces set the entry's id before any window (`[host] app id` in its output; `test-app.js
+    --packaged` checks it, `test-appsync.js` that the code's and the shell's entries carry it). Whether
+    the notice really failed to show in 0.6.0 was not tried.
   - Updates followed: `appsync.watch` reads the shell's `state.json` every 30 s; when `current` is newer
     than what runs and has come up (its trial over, never a bad one), the host restarts into it once no
     session is on, and the client app restarts at once with no PC window open, else asks. A restart keeps
@@ -903,6 +920,16 @@ Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하�
   32.7 ms. The Windows gate passed on GitHub's runner from its first run. Dependabot opened PRs for checkout v7,
   setup-node v7, CodeQL v4 (taken into the workflows) and koffi 3 (a major version under input, capture
   and the clipboard: merge only when CI passes on it, after reading its changes).
+- **koffi 3** (Dependabot's PR #4, 2.16.3 -> 3.3.7, looked at 2026-11-16). Both self-tests passed on it,
+  so the code runs on it. The packaged-app test failed on both systems: koffi 3 ships its binary in a
+  package per platform (`@koromix/koffi-win32-x64`, ..., optional dependencies), and `release/package.js`
+  copies it from `koffi/build/koffi/<platform>_<arch>`, koffi 2's place. And koffi belongs to the shell:
+  an installed app keeps the koffi its package brought, so the code must work on koffi 2 for as long as
+  such apps are in use, with nothing in CI running it there once the source folder moved on. koffi 2 is
+  still maintained (2.16.3 of July 2026 came after 3.0.0 of May).
+- **A flake on GitHub's Linux runner**: "a window the client app reports minimized is not sent ..." and
+  "1:1 mode receives the full resolution" failed once (2026-11-16, commit 7f9fd6c) and passed when the
+  job ran again (`gh run rerun --failed`). Not seen on the Linux PCs.
 
 ## Commands
 

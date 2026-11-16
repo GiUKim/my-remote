@@ -208,6 +208,12 @@ function makeApp(name, builtin, port) {
       `exit ${r.status}; ${fails.slice(0, 3).join(' ; ') || outText.split('\n').filter((l) => /\[app\]|Error|error/.test(l)).slice(0, 5).join(' ; ')}`);
     const cap = (/\[selftest\] INFO {2}screen capture: (.*)/.exec(outText) || [])[1];
     console.log(`      screen capture in the package: ${cap || '?'} (native needs koffi, which the shell brings); ${(outText.match(/\[selftest\] PASS/g) || []).length} checks`);
+    // Windows: the host takes the one entry's id (its window with the client app's on the taskbar, its
+    // notice of a remote session shown by that entry), although the shell gave it an id of its own.
+    if (process.platform === 'win32') {
+      const id = (/\[host\] app id (\S+)/.exec(outText) || [])[1];
+      check('the host takes the id of the one entry (Windows), not the one the shell gave it', id === require('../host/appsync').APP_ID, id || 'no app id said');
+    }
     // The one entry (the start screen), into a folder of the test's (not the Start menu or the app menu).
     const lnk = path.join(tmp, 'shortcuts');
     const sc = spawnSync(exe, [...EXTRA, '--shortcuts=' + lnk], { env, encoding: 'utf8', timeout: 60e3 });

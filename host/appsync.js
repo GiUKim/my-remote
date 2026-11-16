@@ -54,6 +54,13 @@ function watch({ running, onNewer, parts = shellParts(), everyMs = 30000 }) {
 // --launcher (an app whose code is older shows its list instead).
 const ARGS = ['--client', '--launcher'];
 const ABOUT = '원격 데스크톱: 이 PC를 공유하거나(호스트) 다른 PC에 접속합니다(클라이언트)';
+// The entry's id (Windows' AppUserModelID), which both faces take. The taskbar groups windows by the id of
+// their process and pins the Start-menu shortcut that carries it, and Windows shows a desktop program's
+// notifications only for an id such a shortcut carries (Electron's notes on Windows). The shell names the
+// faces apart (kr.myremote.host / .client, app/boot.js); once the host's own shortcut went (0.6.0) nothing
+// carried the host's: its windows stood apart from the client app's, and its notice that a remote session
+// started had no entry. (A process's id may be set again before its windows exist: the faces do so first.)
+const APP_ID = 'kr.myremote.client';
 function places({ platform = process.platform, appData, dataHome }) {
   if (platform === 'win32') {
     const programs = path.join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs'), dir = path.join(programs, 'MyRemote');
@@ -86,7 +93,7 @@ function unifyShortcuts({ platform = process.platform, appData, dataHome, execPa
   fs.mkdirSync(p.dir, { recursive: true });
   if (platform === 'win32') {
     const ok = writeLink(p.entry, fs.existsSync(p.entry) ? 'update' : 'create',
-      { target: execPath, args: ARGS.join(' '), description: ABOUT, icon: path.join(iconDir, 'icon.ico'), iconIndex: 0, appUserModelId: 'kr.myremote.client' });
+      { target: execPath, args: ARGS.join(' '), description: ABOUT, icon: path.join(iconDir, 'icon.ico'), iconIndex: 0, appUserModelId: APP_ID });
     if (ok) made.push(p.entry);
   } else {
     const P = path.posix, launcher = P.join(P.dirname(execPath), 'my-remote.sh'); // the paths inside are the Linux program's
@@ -100,4 +107,4 @@ function unifyShortcuts({ platform = process.platform, appData, dataHome, execPa
   return { made, removed };
 }
 
-module.exports = { dataRoot, shellParts, watch, unifyShortcuts, hasEntry, places, ARGS };
+module.exports = { dataRoot, shellParts, watch, unifyShortcuts, hasEntry, places, ARGS, APP_ID };

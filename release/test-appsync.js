@@ -78,8 +78,23 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mr-appsync-'));
     const created = appsync.unifyShortcuts({ ...o, create: true }); // the start screen's "바로가기 만들기": updated in place
     ok('Windows: one MyRemote shortcut (--client --launcher) in place of the host and client ones; the old folder goes',
       r.made.length === 1 && r.removed.length === 3 && left.join() === 'MyRemote.lnk' && !fs.existsSync(path.join(programs, 'My Remote'))
-        && links[0][2] === '--client --launcher' && links[0][3] === 'kr.myremote.client' && created.made.length === 1 && links[1][1] === 'update',
+        && links[0][2] === '--client --launcher' && created.made.length === 1 && links[1][1] === 'update',
       JSON.stringify({ made: r.made.length, removed: r.removed.length, left, links }));
+    // The taskbar and Windows' notifications go by the id a Start-menu shortcut carries: the entry, whether
+    // the code makes it or the shell (app/boot.js makeShortcuts, --shortcuts), carries the one id both faces
+    // take (host/main.js and client/main.js set appsync.APP_ID).
+    const src = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+    const shellId = (/appUserModelId: '([^']+)'/.exec(src('app/boot.js')) || [])[1];
+    const faces = ['host/main.js', 'client/main.js'].filter((f) => /app\.setAppUserModelId\(appsync\.APP_ID\)/.test(src(f)));
+    ok('Windows: the entry carries the id both faces take, the same whether the code or the shell made it',
+      links[0][3] === appsync.APP_ID && links[1][3] === appsync.APP_ID && shellId === appsync.APP_ID && faces.length === 2,
+      JSON.stringify({ code: links[0][3], shell: shellId, faces }));
+    // An older shell's first-start dialog makes the two shortcuts again (its box is ticked by default) and then
+    // starts a face that only brings the running one forward: that one, asked again, puts the entry back alone.
+    for (const f of ['MyRemote-Host.lnk', 'MyRemote-Client.lnk']) fs.writeFileSync(path.join(programs, 'MyRemote', f), 'made again');
+    const back = appsync.unifyShortcuts(o);
+    ok('Windows: the two shortcuts an older shell makes again go once more, the entry stays',
+      back.removed.length === 2 && fs.readdirSync(path.join(programs, 'MyRemote')).join() === 'MyRemote.lnk', JSON.stringify(back));
   }
 
   fs.rmSync(tmp, { recursive: true, force: true });
