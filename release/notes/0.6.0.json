@@ -1,0 +1,14 @@
+{
+  "ko": [
+    "호스트와 클라이언트를 한 앱으로: MyRemote를 실행하면 큰 버튼 두 개(\"이 PC 공유\" = 호스트, \"다른 PC에 접속\" = 클라이언트)가 있는 시작 화면이 뜹니다. 바로가기도 MyRemote 하나로 바뀝니다",
+    "한쪽에서 업데이트하면 켜져 있는 다른 쪽도 같은 버전으로 다시 시작합니다(호스트는 원격 접속이 없을 때, 클라이언트는 원격 창이 열려 있으면 물어본 뒤)",
+    "설치 묶음의 파일 날짜가 1980-01-01로 보이던 것을 고쳤습니다(새로 받은 묶음부터)",
+    "(0.5.2) 두 앱 모두 이름 옆에 버전과 \"업데이트 확인\" 버튼이 있습니다"
+  ],
+  "en": [
+    "Host and client as one app: MyRemote opens a start screen with two big buttons (\"이 PC 공유\" = host, \"다른 PC에 접속\" = client), and the shortcuts become one, MyRemote",
+    "An update made in one face restarts the other, if it is running, into the same version (the host when no remote session is on; the client app after asking when remote windows are open)",
+    "The files of a package no longer show the date 1980-01-01 (packages from this one on)",
+    "(0.5.2) Both apps show their version and a check-for-updates button next to their name"
+  ]
+}

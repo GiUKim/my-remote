@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const input = require('./input');
 const assist = require('./assist'); // Windows: the lock screen through the assist service (see assist.js)
+const appsync = require('./appsync'); // the installed app's two faces kept one app (see appsync.js)
 
 // The native capturer waits for each monitor's next image on a worker thread of the host page's
 // process; the default of four threads would be used up by three monitors. (Inherited by that process.)
@@ -754,6 +755,25 @@ function createWindow() {
 // "업데이트 확인" found an ordinary update: "지금 업데이트할까요?" (the window's card offers the same, for
 // whoever answers later). A required one installs by itself; one that needs a new package opens the
 // downloads page on yes.
+// While this host runs, running.json in its profile says so (pid and version), for the start screen of the
+// client app (client/launcher.html: "켜져 있음"). Never in the isolated runs (their profile is a throwaway one).
+function runningMark(on) {
+  if (ISOLATED) return;
+  const file = path.join(app.getPath('userData'), 'running.json');
+  try {
+    if (on) fs.writeFileSync(file, JSON.stringify({ pid: process.pid, version: appVersion() }));
+    else if (JSON.parse(fs.readFileSync(file, 'utf8')).pid === process.pid) fs.rmSync(file, { force: true });
+  } catch {}
+}
+// The client face installed a newer version (host/appsync.js): the host starts again into it once no remote
+// session is on (followNewer is asked again when a session ends). A restart by the shell keeps --host.
+let newerVersion = '';
+function followNewer() {
+  if (!newerVersion || quitting || sessionLive) return;
+  console.log(`[host] restarting into version ${newerVersion}`);
+  if (win && !win.isDestroyed()) win.webContents.send('update-changed', { ...updateInfo(), state: 'ready', available: { version: newerVersion, required: false, kind: 'bundle', notes: { ko: [], en: [] }, size: 0 } });
+  setTimeout(restart, 1500);
+}
 async function installUpdate() {
   try { if (APP && APP.update) { quitting = true; await APP.update.install(); return true; } } catch (e) { quitting = false; console.error('[host] update:', e.message); }
   return false;
@@ -818,7 +838,7 @@ else if (!ISOLATED && !app.requestSingleInstanceLock()) app.quit();
 else {
   // Started again: after an update restart; while the page waits to be loaded again after a crash, at once.
   app.on('second-instance', () => { if (codeStamp() !== startedStamp) restart(); else { reloadCrashedPage(); showWindow(); } });
-  app.on('before-quit', () => { quitting = true; assist.stop(); input.reset(); setCursorsHidden(false); clearKeyClip(); });
+  app.on('before-quit', () => { quitting = true; assist.stop(); input.reset(); setCursorsHidden(false); clearKeyClip(); runningMark(false); });
   process.on('exit', () => { if (cursorsHidden) input.restoreCursors(); });
   app.whenReady().then(async () => {
     // The code is newer than the Electron it runs on: it was updated (git pull) without setup.ps1/setup.sh.
@@ -962,6 +982,7 @@ else {
     ipcMain.on('session', (_e, live) => {
       sessionLive = !!live;
       setTray(!!live);
+      if (!live) setTimeout(followNewer, 3000); // a version the client app installed meanwhile: now (the client may reconnect first)
       if (live && !SELFTEST && !BENCH && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: '원격 접속이 시작되었습니다.' }).show();
       // The assist service, when installed: the lock screen for the session's client. Not in the
       // automated runs (the self-test and the bench must not depend on what this PC has installed).
@@ -1047,6 +1068,19 @@ else {
     screen.on('display-removed', displaysChanged);
     screen.on('display-metrics-changed', (_e, _d, changed) => { if (changed.some((c) => c !== 'workArea')) displaysChanged(); });
     if (!ISOLATED) createTray();
+    if (!ISOLATED) {
+      runningMark(true);
+      if (APP) {
+        // The client face installed a newer version: this host follows when no remote session is on (see 'session').
+        appsync.watch({ running: APP.version, onNewer: (v) => { newerVersion = v; console.log(`[host] version ${v} was installed by the client app: restarting into it when no session is on`); followNewer(); } });
+        // Packages up to 0.5.x made two shortcuts (host, client): the one entry takes their place.
+        try {
+          const r = appsync.unifyShortcuts({ appData: app.getPath('appData'), dataHome: process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'),
+            execPath: process.execPath, iconDir: path.dirname(require.main.filename), writeLink: (f, op, o) => shell.writeShortcutLink(f, op, o) });
+          if (r.made.length) console.log('[host] shortcuts: one entry ' + r.made.join(', '));
+        } catch (e) { console.error('[host] shortcuts', e.message); }
+      }
+    }
     if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder });
     if (BENCH) require('./bench').run({ cfg, bench: benchCfg, buildClientHtml, app });
     if (LOCALTEST) {

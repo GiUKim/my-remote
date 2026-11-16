@@ -34,7 +34,7 @@ const PUB = crypto.createPublicKey(privateKey).export({ type: 'spki', format: 'd
 // ---- made-up versions ----
 const HEAD = `const { app } = require('electron'); const fs = require('fs'); const A = global.__mrApp;
 const say = (s) => fs.appendFileSync(process.env.MR_TEST_LOG, s + '\\n');
-say('RUN ' + A.version + ' ' + A.source + ' ' + A.mode + (A.rolledBack.length ? ' back-from ' + A.rolledBack.map((r) => r.version).join(',') : ''));
+say('RUN ' + A.version + ' ' + A.source + ' ' + A.mode + (process.argv.includes('--launcher') ? ' launcher' : '') + (A.rolledBack.length ? ' back-from ' + A.rolledBack.map((r) => r.version).join(',') : ''));
 `;
 const GOOD = HEAD + `app.whenReady().then(() => {
   setTimeout(() => { A.ok(); say('UP ' + A.version); }, 300);
@@ -55,6 +55,7 @@ const KINDS = {
 };
 function release(version, kind, opts = {}) {
   const files = new Map([['host/main.js', Buffer.from(`// ${version} ${kind}\n` + KINDS[kind])], ['client/main.js', Buffer.from(`// ${version} ${kind}\n` + KINDS[kind])], ['host/package.json', Buffer.from(JSON.stringify({ version }))]]);
+  if (opts.launcher) files.set('client/launcher.html', Buffer.from('<!doctype html><title>start</title>\n')); // code with the start screen
   const out = path.join(tmp, `rel-${version}`);
   const r = build({ out, key: keyFile, version, files, notes: { ko: ['시험'], en: ['test'] }, minimum: opts.minimum || '0.0.0', critical: !!opts.critical, needsBase: opts.needsBase || 1, date: '2026-01-01' });
   return { ...r, dir: path.join(out, 'bundle') };
@@ -180,6 +181,16 @@ function makeApp(name, builtin, port) {
     await b.until(/^BYE 1\.0\.0/);
     check('a release signed with another key is refused by the running app', refused && b.state().current === null && !b.log().some((l) => /^RUN 1\.0\.6/.test(l)), b.log().join(' | '));
   }
+  // 8. Started without saying which, with code that has the start screen (client/launcher.html): no dialog;
+  // the app starts again as the client app with --launcher, whose first window is the start screen.
+  {
+    serving = null;
+    const a = makeApp('ask', release('1.1.0', 'good', { launcher: true }), port);
+    a.start([], { MR_TEST_LIFE: '2500' });
+    const ran = await a.until(/^RUN 1\.1\.0 builtin client launcher/);
+    check('started without saying which, the app opens the start screen (the client app with --launcher), no dialog', ran, a.log().join(' | ') + ' // ' + a.output());
+    await a.until(/^BYE 1\.1\.0/);
+  }
   }
   server.close();
 
@@ -197,11 +208,19 @@ function makeApp(name, builtin, port) {
       `exit ${r.status}; ${fails.slice(0, 3).join(' ; ') || outText.split('\n').filter((l) => /\[app\]|Error|error/.test(l)).slice(0, 5).join(' ; ')}`);
     const cap = (/\[selftest\] INFO {2}screen capture: (.*)/.exec(outText) || [])[1];
     console.log(`      screen capture in the package: ${cap || '?'} (native needs koffi, which the shell brings); ${(outText.match(/\[selftest\] PASS/g) || []).length} checks`);
-    // The two shortcuts, into a folder of the test's (not the Start menu or the app menu).
+    // The one entry (the start screen), into a folder of the test's (not the Start menu or the app menu).
     const lnk = path.join(tmp, 'shortcuts');
     const sc = spawnSync(exe, [...EXTRA, '--shortcuts=' + lnk], { env, encoding: 'utf8', timeout: 60e3 });
     const made = fs.existsSync(lnk) ? fs.readdirSync(lnk) : [];
-    check('--shortcuts makes the host and the client shortcut', sc.status === 0 && made.length === 2 && made.every((n) => fs.statSync(path.join(lnk, n)).size > 100), `exit ${sc.status}: ${made.join(', ')}`);
+    const entry = process.platform === 'win32' ? 'MyRemote.lnk' : 'my-remote.desktop';
+    check('--shortcuts makes the one entry, which opens the start screen', sc.status === 0 && made.length === 1 && made[0] === entry && fs.statSync(path.join(lnk, entry)).size > 100
+      && (process.platform === 'win32' || /--client --launcher/.test(fs.readFileSync(path.join(lnk, entry), 'utf8'))), `exit ${sc.status}: ${made.join(', ')}`);
+    // Every file is dated when the package was made: Electron's own come dated 1980-01-01, and Windows keeps
+    // a copied file's date (the unpacked folder showed 1980 for most files).
+    const dated = [];
+    const walkDates = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walkDates(f); else if (e.isFile() && fs.statSync(f).mtimeMs < Date.UTC(2020, 0, 1)) dated.push(e.name); } };
+    walkDates(p.dir);
+    check('every file in the package is dated when the package was made (none from 1980)', dated.length === 0, `${dated.length} old: ${dated.slice(0, 5).join(', ')}`);
     // No file or folder the package holds or the app makes has a space or anything but ASCII in its name
     // (a path with either trips some tools and some systems), and a start that only asks or makes the
     // shortcuts keeps its profile next to the installed versions, not in a folder named after the product.

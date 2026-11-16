@@ -36,6 +36,8 @@ jobs:
         run: node release/ci-run.js node release/test-update.js
       - name: The client app's list of PCs
         run: node release/ci-run.js node release/test-hosts.js
+      - name: Host and client kept one app (updates followed, the one entry)
+        run: node release/ci-run.js node release/test-appsync.js
 
   native:
     name: native binaries rebuilt byte for byte

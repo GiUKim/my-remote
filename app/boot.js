@@ -139,38 +139,35 @@ global.__mrApp = {
   shortcuts: () => makeShortcuts(),
 };
 
-// ---- shortcuts: the Start menu (Windows), the app menu (Linux) ------------------------------
-// `into`: another folder to put them in (--shortcuts=<folder>, for a look at them or a test).
+// ---- the shortcut: the Start menu (Windows), the app menu (Linux) ----------------------------
+// One entry, "MyRemote", for the one app: it opens the start screen (two big buttons, host or client; the
+// code's client/launcher.html, run as the client app's first window). Packages up to 0.5.x made two
+// shortcuts (host, client); they go once the entry is there (the code does the same for apps installed
+// from those packages, see host/appsync.js). `into`: another folder (--shortcuts=<folder>, a test).
 function makeShortcuts(into) {
   const made = [];
+  const about = '원격 데스크톱: 이 PC를 공유하거나(호스트) 다른 PC에 접속합니다(클라이언트)';
   try {
     if (process.platform === 'win32') {
       // File and folder names without spaces and in ASCII only (some tools and some systems' settings
       // trip over either); what the shortcut is for is in its description.
       const programs = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
-      const dir = into || path.join(programs, 'MyRemote');
+      const dir = into || path.join(programs, 'MyRemote'), file = path.join(dir, 'MyRemote.lnk');
       fs.mkdirSync(dir, { recursive: true });
-      const icon = path.join(__dirname, 'icon.ico');
-      for (const [name, arg, about] of [['MyRemote-Host', '--host', '이 PC를 다른 PC에서 원격으로 조종합니다'], ['MyRemote-Client', '--client', '다른 PC에 원격으로 접속합니다']]) {
-        const file = path.join(dir, name + '.lnk');
-        if (shell.writeShortcutLink(file, fs.existsSync(file) ? 'update' : 'create', { target: process.execPath, args: arg, description: about, icon, iconIndex: 0, appUserModelId: 'kr.myremote.' + arg.slice(2) })) made.push(file);
-      }
-      // The shortcuts 0.3.0-0.4.0 made (a folder "My Remote", Korean in the names) go once the new ones
-      // are there; their folder too, when nothing else is in it.
-      if (!into && made.length === 2) {
-        const old = path.join(programs, 'My Remote');
-        for (const n of ['My Remote 호스트.lnk', 'My Remote 클라이언트.lnk']) { try { fs.rmSync(path.join(old, n), { force: true }); } catch {} }
-        try { fs.rmdirSync(old); } catch {}
+      if (shell.writeShortcutLink(file, fs.existsSync(file) ? 'update' : 'create', { target: process.execPath, args: '--client --launcher', description: about, icon: path.join(__dirname, 'icon.ico'), iconIndex: 0, appUserModelId: 'kr.myremote.client' })) made.push(file);
+      if (!into && made.length) {
+        for (const f of [path.join(dir, 'MyRemote-Host.lnk'), path.join(dir, 'MyRemote-Client.lnk'), path.join(programs, 'My Remote', 'My Remote 호스트.lnk'), path.join(programs, 'My Remote', 'My Remote 클라이언트.lnk')]) { try { fs.rmSync(f, { force: true }); } catch {} }
+        try { fs.rmdirSync(path.join(programs, 'My Remote')); } catch {} // only when nothing else is in it
       }
     } else if (process.platform === 'linux') {
       const dir = into || path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'applications');
       fs.mkdirSync(dir, { recursive: true });
-      const launcher = path.join(path.dirname(process.execPath), 'my-remote.sh'), icon = path.join(__dirname, 'icon.png');
-      for (const [id, name, arg, about] of [['my-remote-host', 'My Remote Host', '--host', '이 PC를 다른 PC에서 원격으로 조종합니다'], ['my-remote-client', 'My Remote Client', '--client', '다른 PC에 원격으로 접속합니다']]) {
-        const file = path.join(dir, id + '.desktop');
-        fs.writeFileSync(file, `[Desktop Entry]\nType=Application\nName=${name}\nComment=${about}\nExec="${launcher}" ${arg}\nIcon=${icon}\nTerminal=false\nCategories=Network;RemoteAccess;\n`, { mode: 0o755 });
-        made.push(file);
-      }
+      const launcher = path.join(path.dirname(process.execPath), 'my-remote.sh'), file = path.join(dir, 'my-remote.desktop');
+      fs.writeFileSync(file, `[Desktop Entry]\nType=Application\nName=My Remote\nComment=${about}\nExec="${launcher}" --client --launcher\nIcon=${path.join(__dirname, 'icon.png')}\nTerminal=false\nCategories=Network;RemoteAccess;\n`, { mode: 0o755 });
+      made.push(file);
+      // The two of 0.3.0-0.5.x go; entries of the same names that a source folder's setup.sh made (they start
+      // start-host.sh / start-client.sh) are not this app's and stay.
+      if (!into) for (const n of ['my-remote-host.desktop', 'my-remote-client.desktop']) { try { const f = path.join(dir, n); if (/my-remote\.sh"? --(host|client)\b/.test(fs.readFileSync(f, 'utf8'))) fs.rmSync(f, { force: true }); } catch {} }
     }
   } catch (e) { log('shortcuts: ' + e.message); }
   return made;
@@ -185,8 +182,12 @@ if (shortcutsArg) {
     console.log(made.length ? made.map((f) => '[app] shortcut: ' + f).join('\n') : '[app] no shortcuts were made');
     app.exit(made.length ? 0 : 1);
   });
+} else if (mode === 'ask' && fs.existsSync(path.join(pick.dir, 'client', 'launcher.html'))) {
+  // Started without saying which: the code's start screen (two big buttons) asks, as the client app's
+  // first window; it offers the shortcut too.
+  relaunch([...argv, '--client', '--launcher']);
 } else if (mode === 'ask') {
-  // Started without saying which: ask once, and offer the two shortcuts that say it from then on.
+  // The same with code older than the start screen: ask in a dialog, and offer the shortcuts.
   app.whenReady().then(async () => {
     const r = await dialog.showMessageBox({
       type: 'question', title: 'My Remote', noLink: true, cancelId: 2, defaultId: 0,

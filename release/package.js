@@ -113,12 +113,27 @@ function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(RO
   // On Windows the text starts with a byte order mark, so that every Notepad reads its Korean as UTF-8.
   fs.writeFileSync(path.join(dir, 'README.txt'), (win ? '\uFEFF' : '') + [
     `My Remote ${version}`, '',
-    win ? 'MyRemote.exe를 실행하세요. 처음에 호스트/클라이언트를 고르고, 시작 메뉴에 바로가기를 만들 수 있습니다.'
-      : './my-remote.sh 를 실행하세요 (X11 세션). 처음에 호스트/클라이언트를 고르고, 앱 메뉴에 바로가기를 만들 수 있습니다.',
+    win ? 'MyRemote.exe를 실행하면 시작 화면에서 "이 PC 공유"(호스트) 또는 "다른 PC에 접속"(클라이언트)을 고릅니다. 시작 메뉴에 MyRemote 바로가기를 만들 수 있습니다.'
+      : './my-remote.sh 를 실행하면 (X11 세션) 시작 화면에서 "이 PC 공유"(호스트) 또는 "다른 PC에 접속"(클라이언트)을 고릅니다. 앱 메뉴에 My Remote를 만들 수 있습니다.',
     '한글이나 띄어쓰기가 없는 경로에 풀어 두기를 권합니다 (예: ' + (win ? 'C:\\MyRemote' : '~/MyRemote') + ').',
     '이 폴더는 옮기지 말고 그대로 두세요(바로가기가 이 위치를 가리킵니다). 지우려면 이 폴더와 바로가기를 지우면 됩니다.',
     '새 버전은 앱이 알아서 확인하고 알려 줍니다.', '',
   ].join(win ? '\r\n' : '\n'));
+
+  // Electron's own files come dated 1980-01-01 (its release zips carry no dates) and Windows keeps a copied
+  // file's date, so the unpacked folder showed 1980 for most files (the user saw it, 2026-11-16): everything
+  // the package holds is dated when the package was made.
+  const now = new Date();
+  const touch = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const f = path.join(d, e.name);
+      if (e.isSymbolicLink()) continue;
+      if (e.isDirectory()) touch(f);
+      fs.utimesSync(f, now, now);
+    }
+  };
+  touch(dir);
+  fs.utimesSync(dir, now, now);
 
   let file = '';
   if (archive) {

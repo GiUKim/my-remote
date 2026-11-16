@@ -806,12 +806,39 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
 - **Packages** (`release/package.js`) are made on the platform they are for, from
   `host/node_modules/electron/dist` (nothing else is downloaded): a folder to unpack and run
   (`MyRemote.exe`, `./my-remote.sh`), zipped as `MyRemote-Windows-x64.zip` / `MyRemote-Linux-x64.tar.gz` holding a folder `MyRemote` (on Windows `MyRemote.exe`'s version resource is rewritten in place to say MyRemote instead of "Electron" by "GitHub, Inc.", which the firewall's prompt, Task Manager and a notification without a shortcut showed: `brandExe` in `release/package.js`, same-length UTF-16 values, no outside tool (installing one was refused by the permission check); the exe's icon is still Electron's, the shortcuts carry ours; `test-app.js --packaged` checks the names Windows reads): no version in the names, so the README's download buttons (`.../releases/latest/download/<name>`) always fetch the newest and a self-updating folder is not named after an old version. No installer, no code signing: Windows SmartScreen warns
-  at the first start. macOS is not built (an unsigned app does not run there). Started without `--host`
-  or `--client` the app asks which and offers the two shortcuts (`--shortcuts` makes them without asking).
+  at the first start. macOS is not built (an unsigned app does not run there). Every file in a package
+  is dated when it was made (Electron's own files come dated 1980-01-01 and Windows keeps a copied file's
+  date: the unpacked folder showed 1980, the user saw it on 2026-11-16; `test-app.js --packaged` checks).
+- **One app, a start screen with two big buttons** (the user's wish, 2026-11-16: "호스트와 클라이언트를
+  앱 하나에 통일, 처음 시작할 때 큰 버튼 2개"; reported first: the client app had updated to 0.5.2 and the
+  host, still running in the tray, stayed 0.5.1). The faces stay two programs with two profiles (the
+  host's key and the client's list are encrypted under their own profile: one process could not read
+  both), but:
+  - `client/launcher.html` (bridge `launcher-preload.js` -> `window.mrStart`) is the start screen: "이 PC
+    공유" (host) and "다른 PC에 접속" (client), the host's state ("켜져 있음", from `running.json` that the
+    host keeps in its profile while it runs) and, where there is no entry yet, "바로가기 만들기". It runs as
+    the client app's first window (`--client --launcher`): the client choice turns it into the list, the
+    host choice starts the host as a program of its own (`--host`; Linux through `my-remote.sh`; a
+    second start only brings a running host forward) and the client app ends with it.
+  - One entry, "MyRemote" (Windows `Start menu\Programs\MyRemote\MyRemote.lnk`, Linux
+    `my-remote.desktop`), runs `--client --launcher`. The shell makes it (`makeShortcuts`, `--shortcuts`)
+    and, started without `--host`/`--client`, opens the start screen when the code has one (else the old
+    dialog). Apps installed from 0.3.0-0.5.x packages keep their shell: the code replaces their two
+    shortcuts with the entry at the start of either face (`host/appsync.js` `unifyShortcuts`; only the
+    app's own: a source folder's `setup.sh` makes Linux entries of the same names, which stay). Their
+    exe started without arguments still shows the old dialog until a new package is installed.
+  - Updates followed: `appsync.watch` reads the shell's `state.json` every 30 s; when `current` is newer
+    than what runs and has come up (its trial over, never a bad one), the host restarts into it once no
+    session is on, and the client app restarts at once with no PC window open, else asks. A restart keeps
+    the face (`--host`): a remote host never waits on the start screen.
+  `release/test-appsync.js` checks the watch and the entry (plain Node); `test-app.js` the shell's start
+  screen and entry; the screen itself was looked at in pictures and both buttons pressed in a harness
+  (test mode, no host started). Not tried yet: the real host started from the screen, the update
+  followed by a running host in real use.
 - **Plain names.** No file or folder the package holds or the app makes has a space or anything but
   ASCII in its name (the user's rule, 2026-11-14: a path with Korean or a space fails on some systems
   and with some tools): `MyRemote.exe`, `README.txt` (Korean inside, with a byte order mark on
-  Windows), Start menu `MyRemote\MyRemote-Host.lnk` and `MyRemote-Client.lnk`, the profile of a start
+  Windows), Start menu `MyRemote\MyRemote.lnk` (0.3.0-0.5.x: `MyRemote-Host.lnk`, `MyRemote-Client.lnk`), the profile of a start
   that only asks or makes shortcuts at `<data folder>/../launcher` (Electron's default would be a
   folder named after the product). 0.3.0-0.4.0 had `My Remote.exe`, a Korean read-me name, Korean
   shortcut names and `%APPDATA%\My Remote`; making the new shortcuts removes the old ones.
@@ -836,7 +863,7 @@ that asks host or client and the shortcuts in the real Start menu, the client ap
 Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하는 벤치마크, 버그를 잡는 CI/CD"):
 
 - **`.github/workflows/ci.yml`** on every push to `main`, every pull request, by hand and weekly:
-  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`), `native` (`release/ci-native.js`:
+  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-appsync.js`), `native` (`release/ci-native.js`:
   every committed binary rebuilt from `native/` with Ubuntu 22.04's mingw-w64 and compared byte for byte),
   `Windows` (`test-assist.js`, the self-test, `test-app.js --packaged`), `Linux X11` (the self-test with
   `--input-check --clip-check --client-app-check` under Xvfb, `test-app.js --packaged`) and the `performance
@@ -907,6 +934,7 @@ Run from `host/` with Electron's env var cleared.
 | `node release/test-assist.js` | The host's side of the Windows assist service (`host/assist.js`) against a fake service and helper on test pipes: protocol and version, the pipe-server session checks, input routing per state and its encoding, pictures in pieces, Ctrl+Alt+Del, reconnecting, installing refused during a remote session, the first-start offer. Windows only (skips elsewhere); no input reaches the PC (the sink is recorded, never installed) and nothing runs elevated (`T.elevate`). A few seconds |
 | `host\bin\winassist.exe install`, `uninstall`, `status`, `grab <file.bmp>` | The assist service itself: install/uninstall need an elevated prompt (the host window's card does this through UAC). `grab` writes the current input desktop to a BMP (a secure one only when run as LocalSystem) |
 | `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept. A second |
+| `node release/test-appsync.js` | The two faces kept one app (`host/appsync.js`) in plain Node: a newer version followed once it came up in the other face (not on trial, not a bad one, once), the one entry in place of the two shortcuts (Windows and Linux layouts in folders of its own; a source folder's Linux entries stay). A second |
 | `electron client --loader=<file> --list [--home-shot=<file.png> --home-size=940x480 --home-js=<code>]` | The client app's list on a profile of its own next to `<file>` (any loader file), never the person's. PCs come from `home-import.json` next to it (`[{ name, key, open, loader, seen, lastAt }]`, made-up keys; removed when read). With `--home-shot` no window is shown: a picture of the list is written and the app ends (how `docs/img/home.png` was made) |
 | `node release/test-update.js` | The update logic (`app/core.js`, `app/updater.js`) in plain Node with made-up releases and feeds: signatures, file names, downgrades, the trial and going back, ordinary and required updates. A few seconds |
 | `node release/test-app.js [--packaged]` | The app's shell in real Electron against a feed on this machine (made-up versions; nothing leaves the PC, the real host is not started). `--packaged` also builds this folder's code as the real package (test key, temporary folder) and runs its self-test through the shell: about 4 minutes. On Linux under `xvfb-run`; `MR_TEST_ELECTRON_ARGS=--no-sandbox` where the sandbox cannot run |
@@ -936,6 +964,8 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/linux-launch.sh` | Sourced by those: Electron's path, the first-start setup (`ensure_setup`), X11 session, library and sandbox checks, errors also as a dialog (`fail`: zenity or notify-send, when there is no terminal), starting Electron in the background |
 | `host/icon.svg` | The app's icon for the Linux app menu entries (the tray icon is drawn in `main.js`) |
 | `client/hosts.js`, `client/home.html`, `client/home-preload.js` | The client app's list of PCs: the store (`hosts.json`, keys only encrypted; Electron-free), the list window's page and its bridge `window.mrHome` (see Gotchas) |
+| `client/launcher.html`, `client/launcher-preload.js` | The installed app's start screen (two big buttons: this PC shared as the host, another PC reached as the client), the client app's first window with `--launcher`; its bridge `window.mrStart` |
+| `host/appsync.js`, `release/test-appsync.js` | The two faces kept one app: a running face follows a version the other installed; the one "MyRemote" entry in place of older packages' two shortcuts. Its test, plain Node |
 | `release/test-hosts.js` | The store's test, plain Node |
 | `release/install-local.js` | A built release into this PC's installed app, the updater's way without a feed |
 | `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: the list of PCs and, for each PC, a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js`: Win32 or X11, and `host/files.js`). Exposes `window.mrShell` (`fileAbort`, `pointerOwn`, `clipPoll` and `clipWrite` from 2026-11-13 on), and from 2026-11-13 on marks a minimized or hidden window's document (`data-mr-hidden`, event `mrshown`): its windows run with `backgroundThrottling` off, so `visibilityState` never says hidden there, and the page (`unseen()`) stops asking the host for what such a window shows. `main.js --loader=<file>` shows another loader with a profile of its own (self-test, local trial on Linux). These files are not updated through the loader: the page must feature-detect what an installed app offers |

@@ -5,9 +5,12 @@
 // app. See shell.js for what the app adds to the page.
 const { app, BrowserWindow, dialog, ipcMain, safeStorage, screen, session, shell: openWith } = require('electron');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { spawn } = require('child_process');
 const shell = require('./shell');
 const Hosts = require('./hosts');
+const appsync = require('../host/appsync');
 
 const argOf = (name) => (process.argv.find((a) => a.startsWith(name)) || '').slice(name.length);
 // --loader=<file>: no list; one window on that loader file, with a profile of its own in a folder next
@@ -21,6 +24,9 @@ const argOf = (name) => (process.argv.find((a) => a.startsWith(name)) || '').sli
 // With --home-shot=<file.png> as well, the list is not shown: a picture of it is written there and the
 // app ends (a look at the list with made-up PCs; an entry of home-import.json may then say what its PC
 // "said": seen: { os, name, pc, monitors }, lastAt; --home-size=<w>x<h>, --home-js=<code to run first>).
+// --launcher: the start screen first (launcher.html: two big buttons, this PC shared as the host or
+// another PC reached as the client), which the one "MyRemote" entry opens (host/appsync.js).
+const LAUNCHER = process.argv.includes('--launcher');
 const loaderArg = argOf('--loader='), listTest = !!loaderArg && process.argv.includes('--list');
 const alt = listTest ? '' : loaderArg;
 const homeAlt = listTest ? loaderArg : '';
@@ -139,6 +145,65 @@ function listMode() {
     return home;
   }
 
+  // ---- the start screen (--launcher) ----
+  let launcher = null;
+  function showLauncher() {
+    if (launcher && !launcher.isDestroyed()) { if (launcher.isMinimized()) launcher.restore(); launcher.show(); launcher.focus(); return launcher; }
+    launcher = new BrowserWindow({
+      width: 760, height: 470, minWidth: 640, minHeight: 440, show: false, title: 'My Remote', autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
+      webPreferences: { preload: path.join(__dirname, 'launcher-preload.js') },
+    });
+    launcher.setMenuBarVisibility(false);
+    if (!homeShot) launcher.once('ready-to-show', () => launcher.show());
+    launcher.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    launcher.webContents.on('will-navigate', (e) => e.preventDefault());
+    launcher.on('closed', () => { launcher = null; });
+    launcher.loadFile(path.join(__dirname, 'launcher.html'));
+    return launcher;
+  }
+  const dataHome = () => process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+  const entryOpts = () => ({ appData: app.getPath('appData'), dataHome: dataHome(), execPath: process.execPath, iconDir: APP ? path.dirname(require.main.filename) : path.join(__dirname, '..', 'app'),
+    writeLink: (f, op, o) => openWith.writeShortcutLink(f, op, o) });
+  // The host, as a program of its own (its window, tray and profile; a second start only brings it forward).
+  // The installed app is told --host; on Linux through its launcher script, which brings the checks and the
+  // sandbox switch. From a source folder Electron is given the host folder. Not in a test (--loader).
+  function startHost() {
+    if (testDir) { console.log('[client] start screen: the host would start now'); return; }
+    const env = { ...process.env };
+    delete env.ELECTRON_RUN_AS_NODE;
+    const o = { env, detached: true, stdio: 'ignore' };
+    const sh = path.join(path.dirname(process.execPath), 'my-remote.sh');
+    if (!APP) spawn(process.execPath, [path.join(__dirname, '..', 'host')], o).unref();
+    else if (process.platform === 'linux' && fs.existsSync(sh)) spawn(sh, ['--host'], o).unref();
+    else spawn(process.execPath, ['--host', ...process.argv.filter((a) => a === '--no-sandbox')], o).unref();
+  }
+  // Whether the host runs on this PC now (host/main.js keeps running.json in its profile while it runs).
+  function hostRunning() {
+    try {
+      const r = JSON.parse(fs.readFileSync(path.join(app.getPath('appData'), 'my-remote-host', 'running.json'), 'utf8'));
+      try { process.kill(Number(r.pid), 0); } catch (e) { if (e.code !== 'EPERM') return { running: false }; }
+      return { running: true, version: String(r.version || '').slice(0, 20) };
+    } catch { return { running: false }; }
+  }
+  const fromLauncher = (e) => !!launcher && !launcher.isDestroyed() && e.sender === launcher.webContents;
+  ipcMain.handle('start:info', (e) => (!fromLauncher(e) ? null : {
+    version: APP ? APP.version : require('../host/package.json').version,
+    host: hostRunning(),
+    // The entry for this app in the Start menu (the app menu on Linux): offered where there is none yet.
+    // Never in a test (--loader): the Start menu is the person's (a harness that pressed a button with the
+    // box ticked once replaced this PC's real shortcuts with one to the development folder; put back).
+    shortcut: { can: !!APP && !testDir && (process.platform === 'win32' || process.platform === 'linux'), has: appsync.hasEntry(entryOpts()), where: process.platform === 'linux' ? '앱 메뉴' : '시작 메뉴' },
+  }));
+  ipcMain.handle('start:choose', (e, what, o) => {
+    if (!fromLauncher(e) || (what !== 'host' && what !== 'client')) return false;
+    if (APP) APP.ok(); // the start screen came up and answered: this version is up (the face chosen may end it at once)
+    if (o && o.shortcut && APP && !testDir) { try { appsync.unifyShortcuts({ ...entryOpts(), create: true }); } catch (err) { console.error('[client] shortcut', err.message); } }
+    if (what === 'host') startHost(); else showHome();
+    // Closing it ends this program when nothing else of the client app is open (the host runs on its own).
+    setTimeout(() => { if (launcher && !launcher.isDestroyed()) launcher.close(); }, what === 'host' ? 400 : 0);
+    return true;
+  });
+
   async function openHost(id) {
     const h = hosts.get(id);
     if (!h) return { ok: false, why: 'gone' };
@@ -222,10 +287,29 @@ function listMode() {
     return ok;
   });
 
-  app.on('second-instance', () => showHome()); // started again: the list comes forward
+  // Started again: the list comes forward, or the start screen when that is what was started (the entry).
+  app.on('second-instance', (_e, argv) => (Array.isArray(argv) && argv.includes('--launcher') ? showLauncher() : showHome()));
+
+  // The host face installed a newer version (one app, see host/appsync.js): with no PC window open the app
+  // starts again at once (the list comes back), else it asks first, since the remote windows reconnect.
+  function newerInstalled(v) {
+    const again = () => { app.relaunch({ args: process.argv.slice(1).filter((a) => a !== '--launcher') }); app.quit(); };
+    console.log(`[client] version ${v} was installed by the host: restarting into it${open.size ? ' when the person says so' : ''}`);
+    if (!open.size) return again();
+    const parent = (home && !home.isDestroyed() && home) || [...open.values()].find((w) => !w.isDestroyed());
+    dialog.showMessageBox(parent, { type: 'question', noLink: true, buttons: ['다시 시작', '나중에'], defaultId: 0, cancelId: 1,
+      message: `새 버전 ${v}이 설치되었습니다. 지금 다시 시작할까요?`, detail: '호스트에서 업데이트했습니다. 다시 시작하면 클라이언트 앱도 새 버전이 됩니다. 열려 있는 원격 창은 다시 연결해야 합니다.' })
+      .then((r) => { if (r.response === 0) again(); }, () => {});
+  }
+
   app.whenReady().then(async () => {
-    const win = showHome();
-    appUp(win, () => home); // questions about updates go to whichever list window is open (it can be closed and opened again)
+    const win = LAUNCHER ? showLauncher() : showHome();
+    appUp(win, () => home || launcher); // questions about updates go to whichever list window is open (it can be closed and opened again)
+    if (APP && !testDir) {
+      appsync.watch({ running: APP.version, onNewer: newerInstalled });
+      // Packages up to 0.5.x made two shortcuts (host, client): the one entry takes their place.
+      try { const r = appsync.unifyShortcuts(entryOpts()); if (r.made.length) console.log('[client] shortcuts: one entry ' + r.made.join(', ')); } catch (e) { console.error('[client] shortcuts', e.message); }
+    }
     if (!homeAlt) return;
     // The self-test's PCs (see --list above).
     const file = path.join(testDir, 'home-import.json');
