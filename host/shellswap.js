@@ -422,9 +422,15 @@ async function sweep(appDir, root) {
   const gone = [];
   for (const [p, keepMs] of [[appDir + '.old', 0], [appDir + '.failed', 7 * 86400e3]]) {
     try {
-      if (Date.now() - fs.statSync(p).mtimeMs < keepMs) continue;
+      // The old shell at once, whatever its time says: a folder just made can look a few ms younger than
+      // "now" on Windows (its time from the precise clock, Date.now() from the coarse 15.6 ms one), and a
+      // comparison with 0 then skipped it - on GitHub's runner, every time (2026-11-17), not on a PC where
+      // some program had raised the timer's resolution.
+      const st = fs.statSync(p);
+      if (keepMs > 0 && Date.now() - st.mtimeMs < keepMs) continue;
       // Tried again for a moment: on Windows a virus scanner or the indexer may hold a folder just made or
-      // just moved (seen once on GitHub's runner: the old shell not removed at all by two sweeps).
+      // just moved. (What was seen on GitHub's runner, the old shell not removed at all by two sweeps, was
+      // the time comparison above.)
       await fs.promises.rm(p, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
       gone.push(path.basename(p));
     } catch {}
