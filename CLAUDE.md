@@ -774,7 +774,12 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
   the tray's item; shown only in the installed app) and next to "My Remote vX" in the client app's list
   (`home:checkUpdate`, `offerUpdate`). An update put off before is asked about again then, and the client
   app's question is asked once although a check also tells its listeners. Both windows' titles carry the
-  version. A *required* one (`critical`, or the running version is below the
+  version. Also on the start screen (the user's wish, 2026-11-16: "여기 화면에 업데이트 확인을 넣어서 한번에";
+  `start:checkUpdate`, the same `checkNow` as the list; the question goes over whichever of the two is
+  open): one installed version serves both faces, so one update is both. Its host line says when the
+  running host is older than the app ("원격 접속이 없을 때 새 버전으로 다시 시작합니다", from `running.json`,
+  asked again every 5 s), and a client app that follows the host's update comes back as the start screen
+  when only that was open. Looked at in pictures (a stand-in for the updater, test mode). A *required* one (`critical`, or the running version is below the
   release's `minimum`) is installed without asking and the app restarted when the code says the moment
   fits (`setCanRestart`: the host when no session is on, 30 min at most; the client app after a notice).
   `release/policy.json` carries `minimum` forward, so apps that missed a critical release are still

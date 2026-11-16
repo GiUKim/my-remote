@@ -1,0 +1,12 @@
+{
+  "ko": [
+    "시작 화면에 \"업데이트 확인\"이 생겼습니다. 여기서 한 번 업데이트하면 호스트와 클라이언트가 함께 새 버전이 됩니다(켜져 있는 호스트는 원격 접속이 없을 때 다시 시작합니다)",
+    "작업 표시줄에서 호스트와 클라이언트가 한 앱(MyRemote)으로 묶이고, 호스트의 \"원격 접속이 시작되었습니다\" 알림도 MyRemote 바로가기로 뜹니다",
+    "예전 설치 묶음(0.5.x 이하)의 선택 창이 바로가기 두 개를 다시 만들어도 앱이 MyRemote 하나로 다시 정리합니다. 그 선택 창 자체는 새 설치 묶음을 같은 폴더에 덮어 풀면 사라집니다"
+  ],
+  "en": [
+    "The start screen has \"업데이트 확인\" (check for updates): one update there updates both the host and the client app (a running host restarts into it when no remote session is on)",
+    "On the taskbar the host and the client app are one app, MyRemote, and the host's notice that a remote session started is shown through the MyRemote shortcut",
+    "The two shortcuts that the first-start dialog of packages up to 0.5.x makes again are tidied into the one MyRemote entry once more; that dialog itself goes once a new package is unpacked over the folder"
+  ]
+}

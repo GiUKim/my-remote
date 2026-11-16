@@ -65,7 +65,7 @@ function watchUpdates(win) {
       return;
     }
     const r = await dialog.showMessageBox(parent, { type: 'question', noLink: true, buttons: ['지금 업데이트', '나중에'], defaultId: 0, cancelId: 1,
-      message: `새 버전 ${a.version}이 있습니다. 지금 업데이트할까요?`, detail: `${notes(a)}\n\n업데이트하면 앱이 다시 시작됩니다. 원격 접속 중이면 다시 연결해야 합니다. (현재 v${APP.version})`.trim() });
+      message: `새 버전 ${a.version}이 있습니다. 지금 업데이트할까요?`, detail: `${notes(a)}\n\n업데이트하면 앱이 다시 시작됩니다. 원격 접속 중이면 다시 연결해야 합니다. 이 PC의 호스트도 같은 버전이 됩니다(켜져 있으면 원격 접속이 없을 때 다시 시작합니다). (현재 v${APP.version})`.trim() });
     if (r.response === 0) u.install().catch((e) => dialog.showErrorBox('My Remote', '업데이트하지 못했습니다: ' + e.message));
   };
   u.onChange((s) => { if (s.state === 'available') offerUpdate(s.available, false); });
@@ -179,17 +179,23 @@ function listMode() {
     else if (process.platform === 'linux' && fs.existsSync(sh)) spawn(sh, ['--host'], o).unref();
     else spawn(process.execPath, ['--host', ...process.argv.filter((a) => a === '--no-sandbox')], o).unref();
   }
-  // Whether the host runs on this PC now (host/main.js keeps running.json in its profile while it runs).
+  // Versions are x.y.z (release/build.js); anything else counts as not older.
+  const olderThan = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0; } return false; };
+  // Whether the host runs on this PC now (host/main.js keeps running.json in its profile while it runs), and
+  // whether it runs an older version than this app: it follows a newer one once no remote session is on
+  // (appsync.watch), which the start screen says after an update.
   function hostRunning() {
     try {
       const r = JSON.parse(fs.readFileSync(path.join(app.getPath('appData'), 'my-remote-host', 'running.json'), 'utf8'));
       try { process.kill(Number(r.pid), 0); } catch (e) { if (e.code !== 'EPERM') return { running: false }; }
-      return { running: true, version: String(r.version || '').slice(0, 20) };
+      const version = String(r.version || '').slice(0, 20);
+      return { running: true, version, behind: !!APP && !!version && olderThan(version, APP.version) };
     } catch { return { running: false }; }
   }
   const fromLauncher = (e) => !!launcher && !launcher.isDestroyed() && e.sender === launcher.webContents;
   ipcMain.handle('start:info', (e) => (!fromLauncher(e) ? null : {
     version: APP ? APP.version : require('../host/package.json').version,
+    updates: !!(APP && APP.update), // the installed app: "업데이트 확인", which updates both faces (one installed version)
     host: hostRunning(),
     // The entry for this app in the Start menu (the app menu on Linux): offered where there is none yet.
     // Never in a test (--loader): the Start menu is the person's (a harness that pressed a button with the
@@ -259,15 +265,19 @@ function listMode() {
     rolledBack: APP ? APP.rolledBack : [],
     updates: !!(APP && APP.update), // the installed app: the list has "업데이트 확인"
   }));
-  // "업데이트 확인": the feed now instead of at the next look (20 s after the start, then every 6 h). An
-  // update found is asked about as usual (offerUpdate), also one put off before; the page says the rest.
-  handle('home:checkUpdate', async () => {
+  // "업데이트 확인", in the list and on the start screen: the feed now instead of at the next look (20 s after
+  // the start, then every 6 h). An update found is asked about as usual (offerUpdate, over whichever of the
+  // two windows is open), also one put off before; the page says the rest. The host and the client app run
+  // the same installed versions, so one update is both (a running host follows: appsync.watch).
+  async function checkNow() {
     if (!APP || !APP.update) return { state: 'none' };
     const s = await APP.update.check();
     const a = s.available;
     if (a && s.state === 'available' && offerUpdate) offerUpdate(a, true);
     return { state: s.state, version: APP.version, error: s.error || '', available: a ? { version: a.version, required: !!a.required, kind: a.kind } : null };
-  });
+  }
+  handle('home:checkUpdate', checkNow);
+  ipcMain.handle('start:checkUpdate', (e) => (fromLauncher(e) ? checkNow() : null));
   handle('home:add', async (o) => { const r = await hosts.add({ key: o && o.key, name: o && o.name }); if (r.ok) changed(); return r; });
   handle('home:rename', (id, name) => { const ok = hosts.rename(String(id), name); if (ok) { retitle(String(id)); changed(); } return ok; });
   handle('home:setKey', async (id, key) => {
@@ -300,9 +310,12 @@ function listMode() {
   app.on('second-instance', (_e, argv) => { oneEntry(); return Array.isArray(argv) && argv.includes('--launcher') ? showLauncher() : showHome(); });
 
   // The host face installed a newer version (one app, see host/appsync.js): with no PC window open the app
-  // starts again at once (the list comes back), else it asks first, since the remote windows reconnect.
+  // starts again at once, else it asks first, since the remote windows reconnect. What comes back is what
+  // was open: the start screen when only it was, else the list.
   function newerInstalled(v) {
-    const again = () => { app.relaunch({ args: process.argv.slice(1).filter((a) => a !== '--launcher') }); app.quit(); };
+    const onlyStart = !!launcher && !launcher.isDestroyed() && !(home && !home.isDestroyed());
+    const args = process.argv.slice(1).filter((a) => a !== '--launcher');
+    const again = () => { app.relaunch({ args: onlyStart ? [...args, '--launcher'] : args }); app.quit(); };
     console.log(`[client] version ${v} was installed by the host: restarting into it${open.size ? ' when the person says so' : ''}`);
     if (!open.size) return again();
     const parent = (home && !home.isDestroyed() && home) || [...open.values()].find((w) => !w.isDestroyed());
