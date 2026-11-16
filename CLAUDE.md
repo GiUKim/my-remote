@@ -91,9 +91,15 @@ the client app instead).
   or wherever `--key` / `MY_REMOTE_RELEASE_KEY` points). Whoever has it can send code to every installed
   app. `release/build.js` signs with it and `release/keygen.js` makes it; nothing else touches it, and
   it stays on the machine that makes releases. The tests make keys of their own.
-- **Putting a release where apps fetch it is the user's step**, like starting a host: build it
-  (`release/build.js`), say what is in `dist/release`, and let them upload it. Never mark a release
-  `--critical` (it installs itself on every app, without asking) unless the user said so for that release.
+- **Publish a release only when the user asks for one.** Since 2026-11-16 (the user's decision, from
+  v0.5.2 on) the agent publishes it, which was the user's step before: CI green on the commit
+  (`release/build.js` checks), `release/build.js`, the packages (`release/package.js` on Windows; the
+  Linux one built and self-tested on the Linux PC), tag `v<version>` on that commit, then `gh release
+  create v<version> <latest.json, latest.json.sig, the bundle, both packages> --title "My Remote
+  <version>" --notes-file <from release/notes> --latest` (GitHub CLI, logged in as the user on the
+  Windows PC; never print its token), and check that `releases/latest/download/latest.json` is the new
+  one. Every installed app sees it within 6 h. Never mark a release `--critical` (it installs itself on
+  every app, without asking) unless the user said so for that release.
 - **Keep `app/` small and stable.** It is the part an update cannot replace: a fault in `boot.js`,
   `core.js`, `updater.js` or `guard.js` stays with every installed app until its user installs a new
   package by hand. Change it only with `release/test-update.js` and `release/test-app.js --packaged`

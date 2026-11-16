@@ -740,7 +740,7 @@ node native/build.js 사용자@리눅스PC주소
 3. `node release/build.js`를 실행합니다. 커밋된 내용으로 `dist/release`에 위 세 파일을 만듭니다.
    - 반드시 설치돼야 하는 수정이면 `--critical`을 붙입니다. 그 버전보다 낮은 앱은 묻지 않고 업데이트합니다. 이때 바뀌는 `release/policy.json`도 커밋하세요(이후 릴리스가 계속 그 버전 미만을 강제합니다).
 4. 실행 틀이 바뀌었거나 처음 배포할 때는 설치 묶음도 만듭니다. 운영체제마다 그 운영체제에서 `node release/package.js`를 실행합니다(`dist/pack`에 `MyRemote-Windows-x64.zip` 또는 `MyRemote-Linux-x64.tar.gz`). 파일 이름에 버전이 없어서, 릴리스에 올리면 이 문서 맨 위의 내려받기 단추가 항상 최신 묶음을 가리킵니다.
-5. 이 저장소의 GitHub 릴리스를 태그 `v<버전>`으로 만들고, `dist/release`의 세 파일과 설치 묶음 두 개를 첨부해 게시합니다. Pre-release로 두면 '최신'으로 치지 않아 내려받기 단추와 업데이트가 그 릴리스를 보지 않습니다.
+5. 이 저장소의 GitHub 릴리스를 태그 `v<버전>`으로 만들고, `dist/release`의 세 파일과 설치 묶음 두 개를 첨부해 게시합니다. Pre-release로 두면 '최신'으로 치지 않아 내려받기 단추와 업데이트가 그 릴리스를 보지 않습니다. GitHub CLI로는 `gh release create v<버전> <파일 5개> --title "My Remote <버전>" --notes-file <바뀐 점> --latest` 한 줄이면 됩니다.
 
 올리기 전에 실제 앱에서 먼저 써 보거나, 업데이트 폴더에 닿지 못하는 PC의 앱을 올리려면 그 PC에서 `node release/install-local.js`를 실행합니다. `dist/release`의 릴리스를 앱의 업데이트 기능과 똑같은 절차(서명 확인, 다음 시작 때 시험 실행, 실패하면 되돌리기)로 그 PC의 설치된 앱에 넣습니다.
 
