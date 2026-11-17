@@ -755,7 +755,12 @@ function getClientApp() {
 let testPageKey = null;
 function pageSig(sha) {
   if (ISOLATED) {
-    if (!testPageKey) testPageKey = crypto.generateKeyPairSync('ed25519');
+    if (!testPageKey) {
+      testPageKey = crypto.generateKeyPairSync('ed25519');
+      // Its public half also in the run's profile, for a harness that starts client apps of its own on the run's
+      // loader (two test machines controlling each other): --trust-page-key=<page-key.txt>.
+      try { fs.writeFileSync(path.join(app.getPath('userData'), 'page-key.txt'), testPageKeyPub()); } catch {}
+    }
     const statement = JSON.stringify({ format: 1, app: 'my-remote', kind: 'page', version: 'test', server: cfg.server, sha256: sha }) + '\n';
     return { statement, sig: crypto.sign(null, Buffer.from(statement, 'utf8'), testPageKey.privateKey).toString('base64') };
   }
@@ -1105,8 +1110,9 @@ else {
     // the Linux PC ended a host, and a host was running again 62 s later (measured 2026-11-17 with --localtest
     // --watchdog). Taken here, at ready: a handler set up before that is never called, Electron's own runs instead
     // (measured with a bare Electron 45 script). SIGHUP (the terminal or ssh session it came from went away) stays a
-    // quit nobody named, after which the watchdog brings it back.
-    if (process.platform !== 'win32') for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { quitAs('quit', sig); app.quit(); });
+    // quit nobody named, after which the watchdog brings it back. Once each: with the listener gone, the signal's
+    // default comes back, so a second one ends a host whose quit got stuck, as Electron's own handler allowed.
+    if (process.platform !== 'win32') for (const sig of ['SIGTERM', 'SIGINT']) process.once(sig, () => { quitAs('quit', sig); app.quit(); });
     // The code is newer than the Electron it runs on: it was updated (git pull) without setup.ps1/setup.sh.
     const pkg = require('./package.json'), wanted = Number((/(\d+)/.exec((pkg.devDependencies || {}).electron || (pkg.dependencies || {}).electron || '') || [])[1]) || 0;
     // (Not in the installed app: there a version only runs on a shell it was made for.)

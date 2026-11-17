@@ -1,0 +1,12 @@
+{
+  "ko": [
+    "전체화면에서 마우스를 화면 맨 위에 멈춘 채 잠시 두면 메뉴가 나옵니다(전체화면 끝내기, 모니터 전환, 연결 끊기 등). 맨 위를 지나가거나 가장자리를 따라 움직일 때, 끌 때는 나오지 않습니다",
+    "툴바의 선택 상자에 포커스가 간 사이에 키를 떼면 호스트에서 그 키가 눌린 채로 남던 문제를 고쳤습니다",
+    "Linux 호스트를 kill이나 Ctrl+C로 끄면 감시 프로세스가 1분 뒤 다시 켜던 문제를 고쳤습니다. 이제 직접 끈 것으로 보고 꺼진 채로 둡니다"
+  ],
+  "en": [
+    "In fullscreen, resting the pointer at the very top of the screen brings the menu (out of fullscreen, monitors, disconnect, ...); passing the top or moving along it, or a drag, does not",
+    "A key let go while the focus was on one of the bar's selects no longer stays held on the host",
+    "A Linux host ended with kill or Ctrl+C is no longer started again by its watchdog a minute later: it counts as quit on purpose"
+  ]
+}

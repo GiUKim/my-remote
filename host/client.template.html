@@ -10,6 +10,9 @@
   video { -webkit-user-drag: none; }
   #bar { height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: #1d2229; border-bottom: 1px solid #2c333d; box-sizing: border-box; white-space: nowrap; overflow: hidden; }
   :fullscreen #bar { display: none; }
+  /* fullscreen: the bar over the picture, in the middle, while the pointer rests at the top (attachPeek) */
+  :fullscreen #bar.peek { display: flex; position: fixed; top: 0; left: 50%; transform: translateX(-50%); width: max-content; max-width: 98vw; z-index: 6; border: 1px solid #2c333d; border-top: 0; border-radius: 0 0 8px 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .55); }
+  :fullscreen #bar.peek #stats { display: none; } /* its text changes every 2 s: the centred menu would shift under the pointer */
   /* touch-action: a finger or pen dragged over the picture is input for the host, not a pan or zoom of this page
      (the browser would take the gesture over and cancel the pointer half way) */
   #stage { position: absolute; inset: 34px 0 0 0; overflow: hidden; touch-action: none; }
@@ -326,12 +329,113 @@ function makeView(win, root, isMain) {
   win.addEventListener('resize', relayout);
   win.document.addEventListener('fullscreenchange', () => {
     setTimeout(relayout, 60);
-    if (win.document.fullscreenElement && hotkeysOn) toast(view, HINT, 3500);
+    const say = [hotkeysOn ? HINT : '', TOUCH ? '' : '화면 맨 위에 마우스를 잠시 두면 메뉴'].filter(Boolean).join(' · ');
+    if (win.document.fullscreenElement && say) toast(view, say, 4000);
   });
   win.document.addEventListener('visibilitychange', scheduleView);
   win.document.addEventListener('mrshown', scheduleView); // the client app: see unseen()
+  attachPeek(view);
   views.push(view);
   return view;
+}
+
+// ---- fullscreen: the menu at the top of the screen (the user's wish, 2026-11-17) ---------------------------
+// Fullscreen gives the whole screen to the picture, and the bar goes with it. Resting the pointer at the very top
+// of the screen for a moment (PEEK_DWELL; still, within PEEK_STILL px), no button held, brings a menu over the
+// picture, in the middle: in the main window its own bar, in a window of a monitor of its own a small one (which
+// monitor it shows, the overview, fullscreen, closing it, disconnect). It goes once the pointer has been away from it
+// for a moment (PEEK_LEAVE; also when it left the window), with a press elsewhere, with the focus or with fullscreen.
+// A pass along the top edge (the host's tabs, a title bar) does not bring it, nor a visit to a window the pointer
+// then leaves; the picture is not moved (the menu lies over it), and the pointer's moves over the menu do not go
+// to the host. Not while the picture can still be panned up (1:1 larger than the screen: the top edge pans it), nor
+// while this window shows the lock screen's bar (its Ctrl+Alt+Del button is right there). Not on a phone (its bar
+// stays in fullscreen). In the client app a window of its own is a frameless window the size of its screen: out
+// of fullscreen it has neither bar nor frame, so the menu comes there too and brings fullscreen back.
+const PEEK_DWELL = 400, PEEK_LEAVE = 700, PEEK_NEAR = 24, PEEK_STILL = 6;
+function attachPeek(view) {
+  if (TOUCH) return;
+  const win = view.win, doc = win.document;
+  const st = (view.peek = { shown: false, dwell: 0, leave: 0, el: null, at: null, lastY: 99 });
+  const menu = () => (view.isMain ? $('bar') : st.el);
+  const covering = () => fullscreenNow(doc) || (!view.isMain && !!shell && win.innerWidth >= win.screen.width - 1 && win.innerHeight >= win.screen.height - 1);
+  const blocked = () => {
+    const p = view.panes[0];
+    if (view.fit === '1:1' && typeof view.sel === 'number' && p && p.video.getBoundingClientRect().top < view.root.getBoundingClientRect().top - 0.5) return true;
+    return !!(view.lockBar && view.lockBar.style.display !== 'none');
+  };
+  const stopDwell = () => { clearTimeout(st.dwell); st.dwell = 0; st.at = null; };
+  const show = () => {
+    if (st.shown || !covering() || st.lastY >= 2 || blocked()) return;
+    st.shown = true;
+    window.__rd.peeks = (window.__rd.peeks || 0) + 1;
+    if (view.isMain) { $('fs').textContent = '전체화면 끝내기'; $('bar').classList.add('peek'); return; }
+    if (!st.el) st.el = peekMenu(view);
+    fillPeek(view, st.el);
+    st.el.style.display = 'flex';
+  };
+  const hide = () => {
+    clearTimeout(st.leave); st.leave = 0;
+    if (!st.shown) return;
+    st.shown = false;
+    const m = menu();
+    // The focus left in the menu (a select opened and closed as it was) would keep the keys on this PC.
+    const back = m && m.contains(doc.activeElement);
+    if (view.isMain) m.classList.remove('peek'); else if (m) m.style.display = 'none';
+    if (back && view.panes[0]) view.panes[0].video.focus();
+  };
+  view.peek.hide = hide;
+  win.addEventListener('pointermove', (ev) => {
+    st.lastY = ev.clientY;
+    if (ev.pointerType === 'touch' || !covering()) { stopDwell(); hide(); return; }
+    if (st.shown) {
+      const r = menu().getBoundingClientRect();
+      const near = ev.clientX >= r.left - PEEK_NEAR && ev.clientX <= r.right + PEEK_NEAR && ev.clientY <= r.bottom + PEEK_NEAR;
+      if (near) { clearTimeout(st.leave); st.leave = 0; } else if (!st.leave) st.leave = setTimeout(hide, PEEK_LEAVE);
+      return;
+    }
+    if (ev.clientY >= 2 || ev.buttons || blocked()) { stopDwell(); return; }
+    // At the top: the time counts from where it came to rest; moving along the edge starts it again.
+    if (st.dwell && Math.abs(ev.clientX - st.at.x) <= PEEK_STILL) return;
+    stopDwell();
+    st.at = { x: ev.clientX };
+    st.dwell = setTimeout(() => { st.dwell = 0; st.at = null; show(); }, PEEK_DWELL);
+  }, true);
+  // The pointer left the window (to another screen, another window of ours): nothing comes, and what is shown goes.
+  win.addEventListener('mouseout', (ev) => {
+    if (ev.relatedTarget) return;
+    st.lastY = 99;
+    stopDwell();
+    if (st.shown && !st.leave) st.leave = setTimeout(hide, PEEK_LEAVE);
+  }, true);
+  win.addEventListener('pointerdown', (ev) => { stopDwell(); if (st.shown && !(menu() && menu().contains(ev.target))) hide(); }, true);
+  win.addEventListener('blur', () => { stopDwell(); hide(); });
+  doc.addEventListener('fullscreenchange', () => { if (!covering()) { stopDwell(); hide(); } else if (st.shown && !view.isMain && st.el) fillPeek(view, st.el); });
+}
+// The small menu of a window of its own (its document has none of the main window's styles).
+function peekMenu(view) {
+  const box = view.win.document.createElement('div');
+  box.style.cssText = 'position:fixed;top:0;left:50%;transform:translateX(-50%);z-index:6;display:none;align-items:center;gap:6px;height:34px;padding:0 8px;' +
+    'background:#1d2229;border:1px solid #2c333d;border-top:0;border-radius:0 0 8px 8px;box-shadow:0 6px 18px rgba(0,0,0,.55);white-space:nowrap;font:14px "Segoe UI","Malgun Gothic",sans-serif';
+  view.win.document.body.appendChild(box);
+  return box;
+}
+function fillPeek(view, box) {
+  box.textContent = '';
+  const focus = () => { if (view.panes[0]) view.panes[0].video.focus(); };
+  const add = (text, on, fn, title) => {
+    const b = view.win.document.createElement('button');
+    b.textContent = text;
+    b.title = title || '';
+    b.style.cssText = `font:inherit;border:0;border-radius:5px;padding:3px 10px;cursor:pointer;color:#fff;background:${on ? '#2b6cff' : '#343c48'}`;
+    b.onclick = (e) => { e.stopPropagation(); fn(); };
+    box.append(b);
+  };
+  monitors.forEach((m, i) => add(`모니터 ${i + 1}`, view.sel === i, () => { setSel(view, i); fillPeek(view, box); focus(); }, `${m.width}×${m.height} — 이 창에 표시`));
+  if (monitors.length > 1) add('전체 보기', view.sel === 'all', () => { setSel(view, 'all'); fillPeek(view, box); focus(); }, '모든 모니터를 실제 배치대로 이 창에');
+  const full = !!view.win.document.fullscreenElement;
+  add(full ? '전체화면 끝내기' : '전체화면', false, () => { view.peek.hide(); toggleFullscreen(view); focus(); });
+  add('창 닫기', false, () => view.win.close(), '이 모니터의 창을 닫습니다 (모니터 배치에서 다시 열 수 있습니다)');
+  add('연결 끊기', false, () => $('bye').click());
 }
 // A window nobody sees: hidden or minimized. A browser says so in visibilityState; the client app keeps
 // its windows running and never does, so its preload marks the document instead (from 2026-11-13 on).
@@ -1502,7 +1606,9 @@ function attachKeys(view) {
     send(o);
   };
   const onKey = (ev) => {
-    if (local()) return;
+    // A key whose press went to the host has its release sent, also when the focus moved meanwhile to a field of
+    // this page (a select of the bar, the fullscreen menu): the host would hold it down otherwise.
+    if (local() && !(ev.type === 'keyup' && sentDown.has(ev.code))) return;
     // A release whose press did not go to the host stays here too (a shortcut's that stayed here, a key
     // pressed before this window had the focus): the host would get a key-up it never had the press of.
     if (ev.type === 'keyup' && !sentDown.has(ev.code)) return;
@@ -2656,7 +2762,13 @@ $('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); 
 $('bye').onclick = () => disconnect('연결을 끊었습니다.');
 // In a window opened from the client app's list of PCs: back to that list (other PCs can be opened next to this one).
 if (shell && shell.home) { $('homeBtn').style.display = ''; $('homeBtn').onclick = () => { Promise.resolve(shell.home()).catch(() => {}); }; }
-$('fs').onclick = () => { goFullscreen(window); if (mainView.panes[0]) mainView.panes[0].video.focus(); };
+// In fullscreen (the bar brought back at the top of the screen, attachPeek; a phone's bar stays) the same button ends it.
+$('fs').onclick = () => {
+  if (document.fullscreenElement) { mainView.peek && mainView.peek.hide && mainView.peek.hide(); document.exitFullscreen().catch(() => {}); }
+  else goFullscreen(window);
+  if (mainView.panes[0]) mainView.panes[0].video.focus();
+};
+document.addEventListener('fullscreenchange', () => { $('fs').textContent = document.fullscreenElement ? '전체화면 끝내기' : '전체화면'; });
 $('spread').onclick = spread;
 $('fit').onchange = () => { setFit(mainView, $('fit').value); if (mainView.panes[0]) mainView.panes[0].video.focus(); };
 $('mode').onchange = () => {

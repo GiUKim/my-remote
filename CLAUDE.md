@@ -362,8 +362,13 @@ the client app instead).
   The handler must be set up at `ready` or later: one set up before is never called and Electron's own quits
   instead (a bare Electron 45 script: at the top of the main script, not called; at ready and 1 s after,
   called before `before-quit`). SIGHUP (its terminal or ssh session went away) stays a quit nobody named, and
-  the watchdog brings the host back (61 s, measured). The self-test (not on Windows) starts a local trial
-  host of its own, ends it with SIGTERM once it is up and wants `quitting (quit: SIGTERM)`.
+  the watchdog brings the host back (61 s, measured). The handler is `process.once`: with its listener gone, libuv
+  puts the signal's default back, so a second signal ends a host whose quit got stuck, as Electron's own one-shot
+  handler allowed. What is left of the difference: a main thread stuck in a call never runs the listener, so then
+  only SIGKILL ends the host, where Electron's handler (which resets the signal in the handler itself) let a
+  second signal through. Accepted for a quit that otherwise reads as a crash. The self-test (not on
+  Windows) starts a local trial host of its own, ends it with SIGTERM once it is up and wants `quitting (quit:
+  SIGTERM)`.
   Checked: `release/test-watchdog.js` (11 checks: the old marker, quit, handover, a restart that did and
   one that did not come back, a crash while another host runs, an end without a word, `abort()`, an older
   marker, the limit, old restarts) on Windows; with the real host on this PC (0.7.1, `--localtest
@@ -546,6 +551,8 @@ the client app instead).
     into the page's measurements (`cs.signed`).
     The isolated runs sign with a throwaway key (`testPageKey`) and start the client app with
     `--trust-page-key=` (taken only with `--loader=`); the in-process test windows are attached with `trust`.
+    The key's public half is also written to the run's profile as `page-key.txt` (0.9.2), for a harness that starts
+    client apps of its own on the run's loader, on this PC or another machine.
   - **One-time codes** (0.9.0; agreed 2026-11-16, built 2026-11-17: "남을 도울 때 쓰는 1회용 코드 + 수락").
     The host window's card "1회용 코드로 도움 받기" makes a code (`RD.newCode` in `signal.js`: 12 characters
     of Crockford's base32, 60 random bits, shown XXXX-XXXX-XXXX; typed forgivingly: case, spaces, dashes, O for
@@ -600,8 +607,17 @@ the client app instead).
     trip it; 60 presses of a key and 40 clicks do, 30 s the second time), and with `--client-app-check` three
     runs of the client app: its PC running another host while this PC's client app controls a third (connects;
     its `live.json` names this host while connected, gone after), its PC being that third (`loop`) and this
-    one (`self`): each turned away once, nothing asked. Not tried: two real PCs controlling each other, a real
-    loop through browsers (the guard).
+    one (`self`): each turned away once, nothing asked. A real loop, in the test VM (2026-11-17, scratchpad `kb2`
+    `run3.ps1`): the client app on the VM's own local trial host, not view-only and without `from` (as a browser),
+    its window in front, one A key pressed: on 0.8.0 the key went round host -> page -> host for the whole 14 s
+    watched, until the processes were ended; on 0.9.1 the host logged `input stopped for 5 s` 0.1 s after the press
+    and the key never went down again. Two machines (2026-11-17): local trial host A and client app A in the test
+    VM (Windows), local trial host B and client app B on the Linux PC (a display of its own), the relays joined by
+    ssh tunnels, the media direct. Client app A controlled host B and its `live.json` named B's id from B's offer;
+    copied to host A's `client-live.json` (a trial reads that name), client app B, naming host B as its own PC's
+    host (`--local-host`), was turned away by host A as `loop` (access log `denied` `loop`); with the copy removed,
+    the same app's next hello was let in (the session began; its media then timed out in that direction through
+    the VM's NAT, which has nothing to do with this). Harness: scratchpad `kb2/run6.ps1`, `xm-b.sh`.
   - Checked: `release/test-devices.js` (26: the store, an unreadable file, the log), `release/test-hosts.js`
     (34: the app's side, unreadable and broken files, an older version's rewrite), `release/test-totp.js`
     (RFC 6238's test values), `release/test-qr.js` (the standard's worked example and tables; not yet read by
@@ -915,6 +931,30 @@ the client app instead).
   host lets go of Alt or the Windows key in a `reset` (the client left with Alt+Tab while Alt was
   held), it first presses a key of no meaning (Windows: VK 0xE8; X11: an empty keycode; `maskKey`), or
   the lone release would open the program's menu bar or the Start menu.
+- **The menu at the top in fullscreen** (0.9.2; the user's wish, 2026-11-17). Fullscreen hides the bar and gives
+  the picture the whole screen. `attachPeek` (every view, not on a phone): the pointer resting at the very top of
+  the window (`clientY < 2`, still within `PEEK_STILL` 6 px: moving along the edge starts the time again) for
+  `PEEK_DWELL` (400 ms) with no button held brings a menu over the picture, in the middle: the main window its own
+  `#bar` (`:fullscreen #bar.peek`, fixed and centred, `#stats` hidden so its width does not change under the
+  pointer; the `전체화면` button reads `전체화면 끝내기` in fullscreen, on a phone too, and ends it), a window of a
+  monitor of its own a small one (`peekMenu`/`fillPeek`: its monitors, the overview, fullscreen on or off, closing
+  that window, disconnect). In the client app such a window is frameless and the size of its screen: out of
+  fullscreen it counts as covering, so the menu comes there too and brings fullscreen back. It goes `PEEK_LEAVE`
+  (700 ms) after the pointer left it (24 px around it count as on it) or the window (`mouseout` to nowhere), at a
+  press elsewhere, on blur and with fullscreen; the focus left in it (a select) goes back to the picture. Not while
+  a 1:1 picture can still pan up (pushing against the top edge pans it), not while the window shows the lock
+  screen's bar (its Ctrl+Alt+Del button is there). A pass along the top edge does not bring it (host tabs, title
+  bars); the picture is not moved (the menu lies over it), and moves over the menu are not sent. The fullscreen
+  hint says so. Also from the review of 0.9.2 (a workflow of four reviewers, 2026-11-17): a key whose press went to
+  the host has its release sent even when the focus moved to a field of the page meanwhile (`attachKeys`: before,
+  `local()` swallowed it and the host held the key). Checked by the self-test (`forceFull`: resting brings the bar
+  and it stays on it past `PEEK_LEAVE`, also after leaving and coming back; it goes, the focus goes back; a quick
+  visit, a pass along the edge, leaving the window, a held button, a finger, the lock bar, a picture still panning
+  up and a window do not bring it; the small menu's buttons on a stand-in view; the key release with a select
+  focused) and in the test VM in real fullscreen through the client app's debugging port (shown at the top after
+  0.9 s, still there 0.3 s after moving away, gone at 1.8 s; the same with the pointer moved away in steps; a
+  picture of the screen shows the bar centred over the picture). Not tried: a window of its own in real fullscreen
+  on a second monitor.
 - **Keyboard Lock and modifier keys** (0.9.1). Reported 2026-11-17 from a real session (a Windows client app
   controlling the Linux host): Esc sent the client's windows to the back one by one, a click on a taskbar group
   opened its first window instead of the choice, letters did not type - on the client PC, also after the app had

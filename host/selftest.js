@@ -1162,6 +1162,68 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       const kl = await js(`(() => { const had = !!(window.Keyboard && Keyboard.prototype.__mrSafe); const put = safeKeyboardLock(window, null); return { had, put, safe: !!(window.Keyboard && Keyboard.prototype.__mrSafe), again: safeKeyboardLock(window, null) }; })()`);
       check('Keyboard Lock only through the wrapper that waits for Ctrl, Alt and the Windows key to be up: the page puts it in where the client app did not',
         kl.safe && kl.again === false && (kl.put === true || kl.had), JSON.stringify(kl));
+      // Fullscreen: resting the pointer at the very top brings the bar back over the picture (attachPeek); a quick
+      // visit, a held button or a finger does not; it goes once the pointer has left it. (This hidden window cannot
+      // go fullscreen: forceFull stands in for it, as for the key rule above.)
+      const pk = await js(`(async () => {
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const P = (y, o = {}) => window.dispatchEvent(new PointerEvent('pointermove', { clientX: 300, clientY: y, buttons: 0, pointerType: 'mouse', bubbles: true, ...o }));
+        const bar = document.getElementById('bar'), on = () => bar.classList.contains('peek'), out = {};
+        const peeks = () => window.__rd.peeks || 0;
+        window.__rd.forceFull = true;
+        P(0); await wait(PEEK_DWELL + 150); out.rest = on(); out.label = document.getElementById('fs').textContent;
+        // On it for longer than PEEK_LEAVE: it stays; away and back within PEEK_LEAVE: it stays; away: it goes.
+        P(20); await wait(PEEK_LEAVE + 250); out.onIt = on();
+        P(500); await wait(300); P(20); await wait(PEEK_LEAVE + 250); out.back = on();
+        // The focus left in it (a select of the bar) goes back to the picture when it goes.
+        document.getElementById('mode').focus();
+        P(500); await wait(PEEK_LEAVE + 250); out.left = on();
+        out.focusBack = document.activeElement === (mainView.panes[0] && mainView.panes[0].video);
+        const n0 = peeks();
+        P(0); await wait(150); P(200); await wait(PEEK_DWELL + 150); out.quick = peeks() - n0;
+        // Along the edge (the host's tabs): never; then at rest: yes.
+        for (let x = 100; x <= 900; x += 40) { window.dispatchEvent(new PointerEvent('pointermove', { clientX: x, clientY: 0, buttons: 0, pointerType: 'mouse', bubbles: true })); await wait(60); }
+        out.along = peeks() - n0;
+        await wait(PEEK_DWELL + 150); out.restAfter = on(); P(500); await wait(PEEK_LEAVE + 250);
+        const n1 = peeks();
+        // Left the window (relatedTarget null) while it waited: nothing.
+        P(0); window.dispatchEvent(new MouseEvent('mouseout', { relatedTarget: null, bubbles: true })); await wait(PEEK_DWELL + 150); out.leftWindow = peeks() - n1;
+        P(0, { buttons: 1 }); await wait(PEEK_DWELL + 150); P(300); out.held = peeks() - n1;
+        P(0, { pointerType: 'touch' }); await wait(PEEK_DWELL + 150); P(300); out.finger = peeks() - n1;
+        // The lock screen's bar in this window (its Ctrl+Alt+Del button is at the top): nothing.
+        const keepLock = mainView.lockBar; mainView.lockBar = { style: { display: 'flex' } };
+        P(0); await wait(PEEK_DWELL + 150); P(300); out.lockBar = peeks() - n1;
+        mainView.lockBar = keepLock;
+        // 1:1 with the picture still able to pan up (the top edge pans it): nothing.
+        const v = mainView.panes[0] && mainView.panes[0].video, keepFit = mainView.fit, keepSel = mainView.sel;
+        if (v) { mainView.fit = '1:1'; if (typeof mainView.sel !== 'number') mainView.sel = 0; v.getBoundingClientRect = () => ({ top: -400, bottom: 2000, left: 0, right: 3000, width: 3000, height: 2400 }); }
+        P(0); await wait(PEEK_DWELL + 150); P(300); out.panning = v ? peeks() - n1 : 'no picture';
+        if (v) { delete v.getBoundingClientRect; mainView.fit = keepFit; mainView.sel = keepSel; }
+        window.__rd.forceFull = false;
+        P(0); await wait(PEEK_DWELL + 150); out.window = peeks() - n1;
+        document.getElementById('fs').textContent = '전체화면';
+        // The small menu of a window of its own (no other window is opened here: built for a stand-in view).
+        const fake = { win: window, sel: 0, panes: [], peek: { hide() {} } };
+        const box = peekMenu(fake);
+        fillPeek(fake, box);
+        out.child = [...box.children].map((b) => b.textContent);
+        out.monitors = monitors.length;
+        box.remove();
+        // A key whose press went to the host has its release sent, also with the focus moved to a field here.
+        const K = (type, code) => window.dispatchEvent(new KeyboardEvent(type, { code, key: code, bubbles: true, cancelable: true }));
+        window.__rd.trace = [];
+        K('keydown', 'KeyA'); document.getElementById('mode').focus(); K('keyup', 'KeyA'); K('keydown', 'KeyB'); K('keyup', 'KeyB');
+        document.getElementById('mode').blur();
+        out.release = window.__rd.trace.filter((m) => m.t === 'kd' || m.t === 'ku').map((m) => m.t + ':' + m.c);
+        window.__rd.trace = null;
+        return out;
+      })()`);
+      const wantChild = [...Array.from({ length: pk.monitors }, (_, i) => `모니터 ${i + 1}`), ...(pk.monitors > 1 ? ['전체 보기'] : []), '전체화면', '창 닫기', '연결 끊기'];
+      check('fullscreen: resting the pointer at the very top brings the bar over the picture and it stays while the pointer is on it (a window of its own: a small menu); a pass along the edge, a quick visit, leaving the window, a held button, a finger, the lock screen\'s bar, a picture still panning up or a window do not',
+        pk.rest && pk.label === '전체화면 끝내기' && pk.onIt && pk.back && !pk.left && pk.focusBack && pk.quick === 0 && pk.along === 0 && pk.restAfter && pk.leftWindow === 0 &&
+        pk.held === 0 && pk.finger === 0 && pk.lockBar === 0 && pk.panning === 0 && pk.window === 0 && JSON.stringify(pk.child) === JSON.stringify(wantChild), JSON.stringify(pk));
+      check('a key whose press went to the host has its release sent, also when the focus moved to a field of the page meanwhile (and keys typed into the field stay here)',
+        JSON.stringify(pk.release) === JSON.stringify(['kd:KeyA', 'ku:KeyA']), JSON.stringify(pk.release));
       check('a phone: tap, long press, hold and drag, swipe, pinch; its keyboard (Hangul, Backspace, key-row Ctrl); the host types the characters', ok,
         `tap ${t.tap} | long ${t.long} | drag ${t.drag} | swipe ${t.swipe} | pinch ${t.pinch.join(',') || 'nothing sent'}, zoom ${t.zoom} | kbd ${t.kbd} kept ${t.kept} | ctrl ${t.ctrl} | host typed ${typed ? 'yes' : 'no'}`);
     }
@@ -1429,15 +1491,19 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       child.stdout.on('data', (b) => { out += b; });
       child.stderr.on('data', (b) => { out += b; });
       const ended = new Promise((r) => child.once('exit', (code, sig) => r({ code, sig })));
-      for (let i = 0; i < 60 && !/시그널링 서버|signaling/i.test(out) && child.exitCode === null; i++) await sleep(500);
+      const running = () => child.exitCode === null && child.signalCode === null; // a signal's end sets only signalCode
+      for (let i = 0; i < 60 && !/시그널링 서버|signaling/i.test(out) && running(); i++) await sleep(500);
       await sleep(1500);
-      const up = child.exitCode === null;
+      const up = running();
       if (up) child.kill('SIGTERM');
       const how = await Promise.race([ended, sleep(15000).then(() => null)]);
       if (!how) { try { child.kill('SIGKILL'); } catch {} }
       const said = (/\[host\] quitting \(([^)]*)\)/.exec(out) || [])[1] || '';
-      check('a signal asking the host to end is a quit on purpose (the watchdog leaves it down)', up && !!how && said === 'quit: SIGTERM',
-        `up: ${up}; ended: ${how ? JSON.stringify(how) : 'no, killed'}; the host said: ${said || 'nothing'}`);
+      const pass = up && !!how && said === 'quit: SIGTERM';
+      // Its last lines when it failed (the trial's output names no key).
+      const tail = pass ? '' : '; its last lines: ' + out.trim().split('\n').slice(-3).map((l) => l.slice(0, 120)).join(' | ');
+      check('a signal asking the host to end is a quit on purpose (the watchdog leaves it down)', pass,
+        `up: ${up}; ended: ${how ? JSON.stringify(how) : 'no, killed'}; the host said: ${said || 'nothing'}${tail}`);
     }
 
     if (CLIENT_APP_CHECK) {
