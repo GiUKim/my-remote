@@ -1156,6 +1156,12 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         && same(r.full, ['kd:MetaLeft', 'kd:KeyD', 'ku:KeyD', 'ku:MetaLeft']) && same(r.altSpace, ['kd:AltLeft', 'reset']) && same(r.clip, ['copied here']) && r.sameKept
         && same(masked, ['AltLeft', 'mask', 'AltLeft-up']),
         `window ${r.window} | fullscreen ${r.full} | Alt+Space in a window ${r.altSpace} | clipboard ${JSON.stringify(r.clip)}${r.sameKept ? '' : ', the same text written again'} | reset ${masked}`);
+      // Keyboard Lock without stuck modifier keys (client/keylock.js; release/test-keylock.js has its rules): a lock
+      // taken while Ctrl, Alt or the Windows key was held left that key pressed for the whole client PC (2026-11-17).
+      // This page runs as in a browser: it puts the wrapper in itself, once.
+      const kl = await js(`(() => { const had = !!(window.Keyboard && Keyboard.prototype.__mrSafe); const put = safeKeyboardLock(window, null); return { had, put, safe: !!(window.Keyboard && Keyboard.prototype.__mrSafe), again: safeKeyboardLock(window, null) }; })()`);
+      check('Keyboard Lock only through the wrapper that waits for Ctrl, Alt and the Windows key to be up: the page puts it in where the client app did not',
+        kl.safe && kl.again === false && (kl.put === true || kl.had), JSON.stringify(kl));
       check('a phone: tap, long press, hold and drag, swipe, pinch; its keyboard (Hangul, Backspace, key-row Ctrl); the host types the characters', ok,
         `tap ${t.tap} | long ${t.long} | drag ${t.drag} | swipe ${t.swipe} | pinch ${t.pinch.join(',') || 'nothing sent'}, zoom ${t.zoom} | kbd ${t.kbd} kept ${t.kept} | ctrl ${t.ctrl} | host typed ${typed ? 'yes' : 'no'}`);
     }
@@ -1392,7 +1398,19 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       const fresh = await ask(good), forged = await ask({ ...good, sha256: '1'.repeat(64) });
       await pw.loadURL('data:text/html,<p>page check, a third time</p>');
       const other = await ask({ ...good, sha256: '1'.repeat(64) });
+      // Keyboard Lock without stuck modifier keys (client/keylock.js): the preload puts the wrapper into every page's
+      // own world, whatever the host's version, and it stays when a page is written in place (the loader); a window
+      // without the focus is not told which modifier keys are held. A file of its own: Keyboard Lock exists only in a
+      // secure context, which a file:// page (the loader) is and a data: page is not.
+      const kbFile = path.join(dir, 'keylock-check.html');
+      fs.writeFileSync(kbFile, '<!doctype html><meta charset="utf-8"><p>keyboard lock check</p>');
+      await pw.loadFile(kbFile);
+      const kbSafe = await pw.webContents.executeJavaScript('!!(window.Keyboard && Keyboard.prototype.__mrSafe)');
+      const kbKept = await pw.webContents.executeJavaScript(`new Promise((res) => { document.open(); document.write('<p>written in place, as the loader does</p>'); document.close(); setTimeout(() => res(!!(window.Keyboard && Keyboard.prototype.__mrSafe)), 50); })`);
+      const kbHeld = await pw.webContents.executeJavaScript('window.mrShell.modsHeld()');
       pw.destroy();
+      check('client app: every window gets the safe Keyboard Lock, kept when a page is written in place; an unfocused window is not told which keys are held',
+        kbSafe && kbKept && kbHeld === null, JSON.stringify({ wrapper: kbSafe, afterDocumentOpen: kbKept, modsHeldUnfocused: kbHeld }));
       check('client app: a page is taken as signed only by the first check of its load, with its own hash',
         !!ca.sig && first === false && second === false && fresh === true && forged === true && other === false,
         JSON.stringify({ signedHere: !!ca.sig, first, secondWithAGoodOne: second, freshLoad: fresh, askedAgain: forged, otherPage: other }));

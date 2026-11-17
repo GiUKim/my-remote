@@ -900,12 +900,39 @@ the client app instead).
   sent, and a release whose press was not sent never is. The modifier of such a shortcut did go first
   (Alt of Alt+Space, Ctrl of Ctrl+Esc), and its release may never come (Windows' window menu takes it):
   when a shortcut stays on the client, the page sends `reset` so the host lets go of everything. On a
-  Mac client Option+Tab/F4/Esc/Space and Ctrl+Esc are no system shortcuts and go to the host. Whether
-  Keyboard Lock really holds the Windows key on Windows was not checked (Ctrl+Alt+Del and
-  Win+L cannot be held by anything). The clipboard is the one exception: shared in both modes. When the
+  Mac client Option+Tab/F4/Esc/Space and Ctrl+Esc are no system shortcuts and go to the host. Keyboard
+  Lock holds the Windows key on Windows (seen in the test VM, 2026-11-17; Ctrl+Alt+Del and Win+L cannot
+  be held by anything). The clipboard is the one exception: shared in both modes. When the
   host lets go of Alt or the Windows key in a `reset` (the client left with Alt+Tab while Alt was
   held), it first presses a key of no meaning (Windows: VK 0xE8; X11: an empty keycode; `maskKey`), or
   the lone release would open the program's menu bar or the Start menu.
+- **Keyboard Lock and modifier keys** (0.9.1). Reported 2026-11-17 from a real session (a Windows client app
+  controlling the Linux host): Esc sent the client's windows to the back one by one, a click on a taskbar group
+  opened its first window instead of the choice, letters did not type - on the client PC, also after the app had
+  quit. Windows held Ctrl and Alt down for good. Chromium's Keyboard Lock on Windows
+  (`ui/events/win/modifier_keyboard_hook_win.cc`) swallows Ctrl, Alt and the Windows key, presses and releases,
+  while its window is fullscreen and focused; nothing tells it a press the system saw before the hook began, so
+  that key's release is swallowed too, and taking the hook away only resets its own thread's key state. The page's
+  Ctrl+Alt+Enter (fullscreen) locks while both are held. Reproduced in the test VM with injected input (the hook
+  treats it as real; a scheduled task in the signed-in session, scratchpad `kbtest`): after Ctrl+Alt+Enter the
+  system kept Ctrl+Alt down, after the window had gone too, until each was pressed again. The same happens when
+  the focus comes back to a locked window with one held (Win+1). Fix: `client/keylock.js` `safeKeyboardLock`
+  wraps `Keyboard.prototype.lock/unlock`: the real lock only at an event that shows Ctrl, Alt and Meta up (their
+  releases have reached the system), or at once when the client app says the system holds none
+  (`mrShell.modsHeld`, `GetAsyncKeyState`, answered only to a focused window of ours); given up on blur, at
+  fullscreen's end, at a modifier pressed while it was being taken (until 150 ms after), and when the app still
+  sees one held right after; the page's `lock()`/`unlock()` keep their meaning. The client app puts it into every
+  window's own world from the preload (the text from main, `shell:keylock`: a sandboxed preload cannot require a
+  file), before the page runs, so pages of hosts that are not updated are covered; it survives the loader's
+  `document.open()` (the window and its prototypes stay; its listeners are added again at every `lock()`). The page
+  has the same function as text (for browsers) and locks only through it; `FULLSCREEN_JS` locks only when the
+  wrapper is there (else no lock: losing the system shortcuts in fullscreen is the lesser harm).
+  `release/test-keylock.js` checks the rules with a stand-in window, that the page's copy is the same text, and
+  that no bare `keyboard.lock()` is left; the self-test that the page and every app window have the wrapper. In the
+  test VM, real Chromium: the bare lock left Ctrl+Alt held; the page's copy and the app's preload (with a page
+  written in place and a bare lock, as an old host's page does) left nothing held, and the Windows key pressed
+  afterwards went to the page. A client PC that has the keys stuck: press and let go of each Ctrl, Alt and Windows
+  key. X11 keeps key state in the server (a grab does not hide releases from it): not affected.
 - **The clipboard is shared both ways.** Host to client: text at once (the host page polls main's
   clipboard; the client app writes it with `shell:clipWrite`, a browser when one of its windows has the
   focus), files when the client's own programs get the focus (`clipfiles`/`clipget`). Client to host: in

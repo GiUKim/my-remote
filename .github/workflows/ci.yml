@@ -50,6 +50,8 @@ jobs:
         run: node release/ci-run.js node release/test-watchdog.js
       - name: Connections that come back on themselves (a PC to itself, two PCs controlling each other)
         run: node release/ci-run.js node release/test-cycle.js
+      - name: Keyboard Lock without stuck modifier keys (the wrapper, the page's copy, no bare lock)
+        run: node release/ci-run.js node release/test-keylock.js
 
   native:
     name: native binaries rebuilt byte for byte

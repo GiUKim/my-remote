@@ -510,10 +510,73 @@ function setFit(view, fit) {
   scheduleView();
   saveLayout();
 }
+// Keyboard Lock without stuck modifier keys (2026-11-17): Chromium's lock on Windows swallows the releases of Ctrl,
+// Alt and the Windows key, also of one the system saw pressed before the lock began, so a lock taken while one is
+// held (Ctrl+Alt+Enter below) left it pressed for the whole client PC. The lock is taken only while they are up.
+// The same text as client/keylock.js (see there; release/test-keylock.js checks it). The client app puts it into
+// every window itself, for pages of any host's version; here for a browser.
+function safeKeyboardLock(win, osHeld) {
+  const P = win.Keyboard && win.Keyboard.prototype;
+  if (!P || typeof P.lock !== 'function' || P.__mrSafe) return false;
+  const realLock = P.lock, realUnlock = P.unlock;
+  const MOD = /^(Control|Alt|Meta|OS)/;
+  const st = { want: false, keys: null, locked: false, n: 0, settle: 0, asking: false };
+  const kb = () => win.navigator.keyboard;
+  const ready = () => st.want && !st.locked && !!win.document.fullscreenElement && win.document.hasFocus();
+  const drop = () => {
+    if (!st.locked) return;
+    st.locked = false;
+    st.n++;
+    try { realUnlock.call(kb()); } catch (e) { /* the window may be going */ }
+  };
+  const take = () => {
+    const n = ++st.n;
+    st.locked = true;
+    st.settle = Infinity; // a modifier pressed until 150 ms after the lock is in place gives it up (see onEvent)
+    realLock.apply(kb(), st.keys ? [st.keys] : []).then(() => {
+      if (st.n !== n) return;
+      st.settle = Date.now() + 150;
+      if (osHeld) Promise.resolve(osHeld()).then((held) => { if (held === true && st.n === n) drop(); }, () => {});
+    }, () => { if (st.n === n) { st.locked = false; st.n++; } });
+  };
+  const ask = () => {
+    if (!osHeld || st.asking || !ready()) return;
+    st.asking = true;
+    Promise.resolve(osHeld()).then((held) => { st.asking = false; if (held === false && ready()) take(); }, () => { st.asking = false; });
+  };
+  const onEvent = (ev) => {
+    if (st.locked && ev.type === 'keydown' && MOD.test(ev.code || '') && Date.now() < st.settle) { drop(); return; }
+    if (ready() && !ev.ctrlKey && !ev.altKey && !ev.metaKey) take();
+  };
+  const onFocus = (ev) => { if (ev.target !== win) return; if (ev.type === 'blur') drop(); else ask(); };
+  const onFull = () => { if (!win.document.fullscreenElement) drop(); else ask(); };
+  const listen = () => {
+    // Again at every lock(): document.open() (the loader writing the page in its place) takes the window's
+    // listeners away. The same listener added twice is there once.
+    for (const t of ['keydown', 'keyup', 'pointerdown', 'pointermove']) win.addEventListener(t, onEvent, true);
+    win.addEventListener('blur', onFocus, true);
+    win.addEventListener('focus', onFocus, true);
+    win.document.addEventListener('fullscreenchange', onFull);
+  };
+  P.lock = function lock(keys) {
+    const k = Array.isArray(keys) ? keys.map(String) : null;
+    if (st.locked && String(k) !== String(st.keys)) drop();
+    st.want = true;
+    st.keys = k;
+    listen();
+    ask();
+    return Promise.resolve();
+  };
+  P.unlock = function unlock() { st.want = false; drop(); };
+  Object.defineProperty(P, '__mrSafe', { value: true });
+  return true;
+}
 async function goFullscreen(win) {
   try {
     await win.document.documentElement.requestFullscreen();
-    if (win.navigator.keyboard && win.navigator.keyboard.lock) await win.navigator.keyboard.lock();
+    // Never the bare lock (see safeKeyboardLock): without the wrapper, no lock at all.
+    safeKeyboardLock(win, shell && shell.modsHeld ? () => shell.modsHeld() : null);
+    if (win.navigator.keyboard && win.navigator.keyboard.lock && win.Keyboard && win.Keyboard.prototype.__mrSafe) await win.navigator.keyboard.lock();
     return true;
   } catch (e) { return false; }
 }

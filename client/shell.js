@@ -26,9 +26,14 @@ const ICON = (() => {
 // and files reach it through the paste event, and copied text through shell:clipPoll, which hands over
 // only text that changed while a session is on, never what a password manager marked as private.
 const ALLOWED = new Set(['window-management', 'fullscreen', 'keyboardLock', 'pointerLock', 'clipboard-sanitized-write']);
+// Keyboard Lock only through the safe wrapper the preload put in (keylock.js): a lock taken while Ctrl, Alt or the
+// Windows key is held leaves that key pressed for the whole system. Without the wrapper, no lock (the system's
+// shortcuts then stay on this PC in fullscreen, which is the lesser harm).
 const FULLSCREEN_JS = `document.documentElement.requestFullscreen()
-  .then(() => (navigator.keyboard && navigator.keyboard.lock ? navigator.keyboard.lock() : null))
+  .then(() => (navigator.keyboard && navigator.keyboard.lock && window.Keyboard && Keyboard.prototype.__mrSafe ? navigator.keyboard.lock() : null))
   .then(() => true, () => false)`;
+// The wrapper's text, for the preload to put into the page's own world (a sandboxed preload cannot require it).
+const KEYLOCK_JS = `(${require('./keylock').safeKeyboardLock})(window, () => (window.mrShell && window.mrShell.modsHeld ? window.mrShell.modsHeld() : null));`;
 const shells = new Map(); // main webContents id -> { win, children, host }
 // The app's list of PCs (client/main.js), when there is one: { key(id) -> Promise<key | null>,
 // info(id, what the page says about its session), home(), and for this PC as a device of a host:
@@ -319,6 +324,16 @@ function setupIpc() {
   // in its place, which has the key anyway; the window can go nowhere else (stayOnPage).
   const listed = (e) => { const s = shellOf(e.sender); return s && s.host && list && e.sender === s.win.webContents && (!e.senderFrame || e.senderFrame === e.sender.mainFrame) ? s : null; };
   ipcMain.on('shell:inList', (e) => { e.returnValue = !!listed(e); });
+  // Keyboard Lock without stuck modifier keys (keylock.js): the wrapper for every window of ours, and whether the
+  // system holds Ctrl, Alt or a Windows key now (Windows; null elsewhere). Answered only to a window that has the
+  // focus, which sees those keys itself then: a page must not learn of keys pressed in other programs.
+  // (The wrapper to anyone: a window the page opened asks before it is known as one of ours, and it is our own code.)
+  ipcMain.on('shell:keylock', (e) => { e.returnValue = KEYLOCK_JS; });
+  ipcMain.handle('shell:modsHeld', (e) => {
+    const bw = shellOf(e.sender) ? BrowserWindow.fromWebContents(e.sender) : null;
+    const w = bw && bw.isFocused() && process.platform === 'win32' ? win32() : null;
+    try { return w ? !!w.modifiersHeld() : null; } catch { return null; }
+  });
   ipcMain.handle('shell:bootKey', async (e) => { const s = listed(e); return s ? list.key(s.host) : null; });
   // A window opened for a one-time code (client/main.js home:oneTime): the code, once, to its own top page.
   const coded = (e) => { const s = shellOf(e.sender); return s && s.code && e.sender === s.win.webContents && (!e.senderFrame || e.senderFrame === e.sender.mainFrame) ? s : null; };

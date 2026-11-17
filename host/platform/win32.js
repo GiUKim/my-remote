@@ -443,6 +443,9 @@ function buttonsHeld() {
   for (let b = 0; b < vks.length; b++) if (GetAsyncKeyState(vks[b]) & 0x8000) held |= 1 << b;
   return held;
 }
+// Whether the system holds Ctrl, Alt or a Windows key down right now (what every program sees). Read-only. The
+// client app takes Keyboard Lock only when none is (client/keylock.js).
+const modifiersHeld = () => [0xa2, 0xa3, 0xa4, 0xa5, 0x5b, 0x5c].some((vk) => GetAsyncKeyState(vk) & 0x8000);
 // A left click at a point of the desktop; the pointer then goes back to where it was.
 function clickAt(px, py) {
   const v = { x: GetSystemMetrics(76), y: GetSystemMetrics(77), w: GetSystemMetrics(78), h: GetSystemMetrics(79) };
@@ -521,7 +524,7 @@ module.exports = {
   hidesCursors: true,
   virtualDesktop, move, button, wheel, keyOf, sendKey, typeText, maskKey, setSink, clipboardPrivate,
   cursorState, cursorBitmap, hideCursors, restoreCursors, dragFullWindows, displayColor,
-  captureClass, dragging, cancelDrag, clipboardFiles, underPointer, buttonsHeld, clickAt, dropFilesBuffer, setClipboardFiles, processRunning,
+  captureClass, dragging, cancelDrag, clipboardFiles, underPointer, buttonsHeld, modifiersHeld, clickAt, dropFilesBuffer, setClipboardFiles, processRunning,
   ownFrame, windowPos, moveWindow, frameAction, mainThreadId,
   clipSeq: () => GetClipboardSequenceNumber(),
 };

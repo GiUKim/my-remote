@@ -1,0 +1,12 @@
+{
+  "ko": [
+    "Windows 클라이언트에서 Ctrl+Alt+Enter로 전체화면에 들어가면 이 PC의 Ctrl·Alt가 눌린 채로 남던 문제를 고쳤습니다. Esc를 누르면 창이 하나씩 뒤로 가고, 작업 표시줄을 누르면 바로 창이 뜨고, 글자가 입력되지 않던 증상입니다. 이제 키보드 잠금은 Ctrl·Alt·Win 키를 모두 뗀 뒤에 걸립니다",
+    "클라이언트 앱은 업데이트하지 않은 호스트에 접속해도 이 문제가 생기지 않습니다",
+    "이미 키가 눌린 채로 남았다면 양쪽 Ctrl, Alt, Win 키를 한 번씩 눌렀다 떼면 풀립니다"
+  ],
+  "en": [
+    "Fixed Ctrl and Alt staying pressed on a Windows client PC after Ctrl+Alt+Enter took the picture to fullscreen (Esc sent windows to the back one by one, the taskbar opened windows at once, letters did not type): the keyboard lock now begins only once Ctrl, Alt and the Windows key are all up",
+    "The client app is safe from it also with hosts that are not updated yet",
+    "Keys already stuck come free when each Ctrl, Alt and Windows key is pressed and let go once"
+  ]
+}

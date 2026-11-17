@@ -31,6 +31,7 @@ const NEUTRAL = {
   clipboardFiles: () => [],
   underPointer: () => null,
   buttonsHeld: () => null, // the mouse buttons held right now (bit b = button b of md/mu); null: cannot tell here
+  modifiersHeld: () => null, // whether the system holds Ctrl, Alt or a Windows key (Windows); null: cannot tell here
   clickAt: () => false,
   dropFilesBuffer: () => null,
   setClipboardFiles: () => false,
@@ -361,6 +362,7 @@ module.exports = {
   clipboardFiles: backend.clipboardFiles,
   underPointer: backend.underPointer,
   buttonsHeld: backend.buttonsHeld,
+  modifiersHeld: backend.modifiersHeld,
   clickAt: backend.clickAt,
   dropFilesBuffer: backend.dropFilesBuffer,
   setClipboardFiles: backend.setClipboardFiles,

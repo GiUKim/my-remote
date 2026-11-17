@@ -465,6 +465,8 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 
 `Ctrl+Alt+Del`과 `Win+L`은 Windows가 막아 두어 전체화면에서도 이 PC에서 동작합니다. 전체화면에서 시스템 키를 잡는 것은 브라우저(Chrome·Edge·클라이언트 앱)의 키보드 잠금 기능이 해 줍니다.
 
+키보드 잠금은 `Ctrl`, `Alt`, `Win` 키를 모두 뗀 다음에 걸립니다. 0.9.0까지는 `Ctrl+Alt+Enter`로 전체화면에 들어가면 그 두 키가 이 PC에서 눌린 채로 남을 수 있었습니다. 그러면 `Esc`를 누를 때마다 창이 하나씩 뒤로 가고, 작업 표시줄을 누르면 바로 창이 뜨고, 글자가 입력되지 않습니다. 그런 일이 생기면 양쪽 `Ctrl`, `Alt`, `Win` 키를 한 번씩 눌렀다 떼면 풀립니다.
+
 </details>
 
 <details>

@@ -1,4 +1,9 @@
-const { contextBridge, ipcRenderer, webUtils } = require('electron');
+const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
+
+// Keyboard Lock without stuck modifier keys, in the page's own world, before the page runs (client/keylock.js):
+// whatever the host's version, its page locks the keyboard only while Ctrl, Alt and the Windows key are up. The
+// wrapper is kept when the loader writes the page in its place (the window stays the same).
+try { const js = ipcRenderer.sendSync('shell:keylock'); if (js) webFrame.executeJavaScript(js).catch(() => {}); } catch {}
 
 // The window was minimized or hidden, or is back (shell.js). The app keeps its windows running
 // (backgroundThrottling off), so the page's document.visibilityState never says 'hidden'; this mark on
@@ -84,4 +89,7 @@ contextBridge.exposeInMainWorld('mrShell', {
   // window controls now ('' when the session ended), kept in the app's live.json.
   localHost: () => ipcRenderer.invoke('shell:localHost'),
   liveHost: (id) => ipcRenderer.invoke('shell:liveHost', id),
+  // Whether the system holds Ctrl, Alt or a Windows key now: true, false, or null (cannot tell; a window without
+  // the focus is not told). For the safe Keyboard Lock (client/keylock.js), from 0.9.1.
+  modsHeld: () => ipcRenderer.invoke('shell:modsHeld'),
 });
