@@ -55,6 +55,10 @@ contextBridge.exposeInMainWorld('hostApi', {
   },
   access: (entry) => ipcRenderer.send('access-add', entry),
   accessLog: () => ipcRenderer.invoke('access-read'),
+  // A connection that comes back on itself (host/cycle.js): a hello's `from` -> 'self' | 'loop' | ''.
+  cycleCheck: (from) => ipcRenderer.invoke('cycle-check', from),
+  // Input stopped because the same key or click came again and again (input.js stormed): { ms }.
+  onInputStorm: (fn) => ipcRenderer.on('input-storm', (_e, o) => fn(o || {})),
   // New devices confirmed here (main.js 'gate'), and the opt-in authenticator app.
   gate: {
     info: () => ipcRenderer.invoke('gate-info'), // { confirmNew, firstFree, otp, recoveryLeft }

@@ -79,4 +79,9 @@ contextBridge.exposeInMainWorld('mrShell', {
   clipWrite: (text) => ipcRenderer.invoke('shell:clipWrite', text),
   // Where a file or folder dropped on the page is on this PC (for reading a dropped folder here).
   pathFor: (file) => { try { return webUtils.getPathForFile(file) || ''; } catch { return ''; } },
+  // Connections that come back on themselves (host/cycle.js; from 0.9.0, the page must not rely on them):
+  // localHost -> the id of the host running on this PC ('' if none), for the hello; liveHost(id): the host this
+  // window controls now ('' when the session ended), kept in the app's live.json.
+  localHost: () => ipcRenderer.invoke('shell:localHost'),
+  liveHost: (id) => ipcRenderer.invoke('shell:liveHost', id),
 });

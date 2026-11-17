@@ -563,6 +563,36 @@ the client app instead).
     `code` entries; 끝내기 ends the session; the code no good after; no device made) and its
     `--client-app-check` (the app's "1회용 코드로 접속" through `--home-js`: asked, let in, the picture shown,
     no device). Not tried: a real second PC over the internet, a phone.
+  - **Connections that come back on themselves** (0.9.0; the user's go-ahead 2026-11-17, after a comparison
+    with other remote programs: TeamViewer and AnyDesk refuse an ID of their own PC, Chrome Remote Desktop does
+    not list it, none of them blocks two PCs controlling each other, which only feeds input back). Two cases,
+    refused at the hello on every route (key, device, code) before anything is asked or started, `denied` with
+    `why` `self` or `loop`, logged once a minute, in `access.log` (`접속 기록`: "이 PC 자신에 접속", "서로를 조종"):
+    `self`, a client app on this very PC (the picture shows itself without end, and a key typed lands in the
+    window that sends it, for ever); `loop`, the client app of a PC that this PC's client app controls right now
+    (A controls B while B controls A: input on B's window of A goes back to A, and on A's window of B to B). The
+    host makes an id at every start (`INSTANCE` in `main.js`, random, says nothing): in `running.json` and in the
+    offer (`instance`). The client app puts its own PC's host into its hello (`from`, read from that host's
+    `running.json` with its pid alive: `shell:localHost`), and keeps the hosts its windows control in `live.json`
+    in its profile (`{ pid, at, hosts }`, `shell:liveHost` from the page on connected and when a session is
+    forgotten, written again every 10 s, removed when none is controlled and when the app quits). `cycle.js`
+    decides (`release/test-cycle.js`): `from` equal to this start's id is `self`; `from` among the hosts of a
+    `live.json` whose pid lives and that is under 30 s old is `loop`. A chain (A controls B, B controls C) is no
+    loop. Only pages a release signed get the two calls. A browser can say neither, nor apps and hosts from
+    before 0.9.0 (both sides must have it: the page is the host's); for them the **input guard** in `input.js`
+    (`stormed`) is the net: the same key pressed and let go 45 times within 3 s, or 30 clicks within 3 s (a held
+    key repeats without being let go and does not count; a phone's keyboard marks its keys `s` and does not
+    count: it deletes a word as many Backspaces at once), and input stops for 5 s (30 s again within a minute),
+    what is held is let go, moves still go; `handle()` says `storm` once, main tells the page (`input-storm`),
+    the page the client (`storm`), which says so in a toast. A test run of the client app never reads this PC's
+    `running.json` (`--local-host=<file>` names a stand-in, with `--loader=` only), and an isolated host reads
+    `client-live.json` in its own profile. Checked by the self-test: the guard in a dry run with a clock of its
+    own (fast typing, a held key, a phone's word deleted, one key 40 times in 2.8 s and 25 clicks in 2.5 s do not
+    trip it; 60 presses of a key and 40 clicks do, 30 s the second time), and with `--client-app-check` three
+    runs of the client app: its PC running another host while this PC's client app controls a third (connects;
+    its `live.json` names this host while connected, gone after), its PC being that third (`loop`) and this
+    one (`self`): each turned away once, nothing asked. Not tried: two real PCs controlling each other, a real
+    loop through browsers (the guard).
   - Checked: `release/test-devices.js` (26: the store, an unreadable file, the log), `release/test-hosts.js`
     (34: the app's side, unreadable and broken files, an older version's rewrite), `release/test-totp.js`
     (RFC 6238's test values), `release/test-qr.js` (the standard's worked example and tables; not yet read by
@@ -967,7 +997,8 @@ the client app instead).
   self-test output is English. Keep it that way. Keep `setup.ps1` ASCII-only for the same reason.
   The `.sh` files must keep LF line endings (`.gitattributes` says so for every checkout).
 - **Same-PC control is unusable** (the injected cursor jumps under the viewer window). That is why
-  `--localtest` is view-only.
+  `--localtest` is view-only. From 0.9.0 a client app connecting to its own PC's host is refused (`self`,
+  see "Connections that come back on themselves"); a browser is not, and the input guard is its net.
 
 ## The installed app, releases and updates
 
@@ -1283,6 +1314,7 @@ Run from `host/` with Electron's env var cleared.
 | `node release/test-devices.js` | The host's device tokens (`host/devices.js`) and access log (`host/accesslog.js`) in plain Node: tokens never as text, the same app pairing again, blocking, removal, the limit, a file that cannot be read never written over, a broken file kept; log entries with known fields only, kept 90 days and under 2 MB. A second |
 | `node release/test-pagecheck.js` | The client app's check of a host's page (`client/pagecheck.js`): signed by a release key or not, a changed statement, another page, a manifest that is no statement; and that `release/build.js` signs the page a host builds for the default relay (a real build with a test key). Seconds |
 | `node release/test-qr.js`, `node release/test-totp.js` | The QR codes (`host/qr.js`) against the standard's worked example, format and version information and the layout; the one-time codes (`host/totp.js`) against RFC 6238's test values, base32, recovery codes. For the opt-in authenticator app of "Devices". A second |
+| `node release/test-cycle.js` | Connections that come back on themselves (`host/cycle.js`) in plain Node: a client app on this PC (`self`), the client app of a PC this PC's client app controls (`loop`), a chain, a browser, a stale or dead `live.json`. A second |
 | `node release/test-watchdog.js` | The host's watchdog (`host/watchdog.js`) in plain Node with a fake host that starts it as `main.js` does: a quit on purpose, an end without a word, `abort()`, an older host's marker, the limit of 3 restarts in 30 minutes. Half a minute |
 | `node release/test-shellswap.js` | The shell replaced by a newer package (`host/shellswap.js`) in plain Node with keys, a feed on 127.0.0.1 and app folders of its own: the signed list, which package replaces which shell, staging (and archives that are not the listed one), and the real swap script (PowerShell / sh) on fake folders whose program is a copy of Node: swapped and confirmed, not confirmed (put back), still running (not swapped), nothing to start, the sweep. About a minute |
 | `node release/build.js --sign-packages=<folder>` | `packages.json` and its signature from the packages' records (`<name>.package.json`) and archives in `<folder>`, each archive hashed again; checked with the keys in `app/update-config.json`. Part of every release from 0.7.0 on |
@@ -1338,6 +1370,7 @@ must then be given the new file). Run `npm run selftest` after either.
 | `native/winassist.cpp`, `host/bin/winassist.exe` (+ `.json`) | The Windows assist service and its in-session LocalSystem helper: the lock screen's pictures and the typed password (see "Lock screen / UAC"). Committed like the DLLs; installed into `%ProgramFiles%\MyRemote` by the host window's card |
 | `host/assist.js` | The host's side of that service (main process): installed/current/running, install and remove (elevated), and during a session the overlapped pipe client with its server-session checks, the input sink while locked, frames to the page |
 | `native/shellops.cpp`, `host/bin/shellops.dll` (+ `.json`) | `so_drop`: drops files onto whatever is under the pointer as a real drag-and-drop (see Gotchas). Committed like `capture.dll` |
+| `host/cycle.js`, `release/test-cycle.js` | Whether a hello comes back on itself (`self`: this PC's own client app; `loop`: the client app of a PC this PC's client app controls), from the hello's `from`, this start's id and the client app's `live.json`; its test, plain Node. See "Connections that come back on themselves" |
 | `host/files.js` | Safe names and paths for files from the other side (`stagedPath` never leaves its folder), sweeping old transfers. Used by the host and the client app |
 | `host/profile-cleanup.js` | Removes an isolated run's throwaway profile once the run has ended, and old ones (see Gotchas) |
 | `host/dragcheck.js` | The opt-in real-input checks `--dragout-check` and `--dropin-check` |
@@ -1395,9 +1428,10 @@ lost and the sender retries. Checked with Node tests against a fake EventSource 
 
 Signaling (through the relay, each message deflated, encrypted, chunked to 3000 chars):
 
-1. client -> host topic: `{t:'hello', sid, ts, mode, codec, pk, hsig, pair?}` (`codec` optional: `H264`, `H264HQ`, `VP9`, `AV1`; `pk`: the page's own ECDSA P-256 public key, SPKI base64, `hsig` its signature of `hello\n<sid>\n<ts>\n<pk>`; `pair`: a client app connected with the key asks for a device token, `{ pc, os, osName, app }`)
+1. client -> host topic: `{t:'hello', sid, ts, mode, codec, pk, hsig, pair?, from?}` (`codec` optional: `H264`, `H264HQ`, `VP9`, `AV1`; `pk`: the page's own ECDSA P-256 public key, SPKI base64, `hsig` its signature of `hello\n<sid>\n<ts>\n<pk>`; `pair`: a client app connected with the key asks for a device token, `{ pc, os, osName, app }`; `from` (0.9.0, the client app only): the id of the host running on the client's own PC, for `cycle.js`; refused with `denied` `self` or `loop`, see "Connections that come back on themselves")
    - with new devices confirmed: host -> client `{t:'confirm', sid, ts, code, otp, locked, wait}` (the number both screens show; `otp`: a code may be given; `locked`: the code check is locked for now), client -> host `{t:'otp', sid, ts, code, sig}` and `{t:'cancel', sid, ts, sig}`, host -> client `{t:'otp', sid, ok: false, why: 'code' | 'locked', left}`; allowed: the offer follows; else `{t:'denied', sid, why}` (`refused`, `timeout`, `busy`, `old`, `blocked`)
-2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, codec, cursorHidden, app, os, monitors:[{idx, mid, x, y, width, height, primary, hdr?}]}`
+2. host -> client topic: `{t:'offer', sid, ts, sdp, ice, audio, codec, cursorHidden, app, os, instance, monitors:[{idx, mid, x, y, width, height, primary, hdr?}]}`
+   (`instance`, 0.9.0: this start of the host, random; the client app keeps it in its `live.json` while it controls the host)
    (`os`: `{os: 'windows'|'linux'|'mac', name, pc}`, what the host runs, e.g. `Windows 10` or `Ubuntu 22.04.5 LTS`, and from 0.4.0 the computer's name (`os.hostname()`); the arrangement panel shows them with a logo, the client app's list keeps them)
    (`x`,`y`,`width`,`height` are the monitor's rectangle on the host's virtual desktop, physical pixels)
 3. client -> host topic: `{t:'answer', sid, ts, sdp, sig}` (`sig`: ECDSA over `answer\n<sid>\n<sdp>` with the hello's key; required when the hello had one)
@@ -1415,7 +1449,7 @@ Data channel `input` (JSON text):
 | Direction | Message | Meaning |
 |---|---|---|
 | client -> host | `mm` `md` `mu` `mw` | Mouse move/down/up/wheel; `d` = monitor index, `x`,`y` = 0..1 within that monitor. During a drag they may leave 0..1, which continues onto the neighbouring monitor. `mm` carries `h`: the buttons the client's pointer holds (bit b = button b of `md`/`mu`); the host lets go of any button it holds that is not in `h`, so a lost `mu` cannot leave a button down. A move never presses anything |
-| client -> host | `kd` `ku` | Key down/up; `c` = `KeyboardEvent.code`, `k` = `key` |
+| client -> host | `kd` `ku` | Key down/up; `c` = `KeyboardEvent.code`, `k` = `key`; `s: 1` (0.9.0): a key of the phone's keyboard or key row, which the input guard does not count |
 | client -> host | `reset` | Release every held key and button |
 | client -> host | `view` | `v` = `[{i, w, h}]`: monitors on screen and the size each is shown at, in device pixels (`0` = full size). The host pauses the rest, scales down to the shown size (never up) and splits bitrate by pixels sent |
 | client -> host | `mode` | `sharp` or `smooth` |
@@ -1433,6 +1467,7 @@ Data channel `input` (JSON text):
 | host -> client | `clipfiles` | Files were copied on the host during the session: `seq` (the clipboard's change count), `n` items, `dirs` of them folders, `bytes` of the plain files, `names` (at most 3, no paths). Files already on the clipboard when the session began are not announced, nor files the client sent itself (a paste, or a drop nothing took: they lie in the host's inbox), which it would otherwise fetch back |
 | client -> host | `clipget` | Fetch the files of `clipfiles` `seq`; refused (`dragdata` `none`, `why:'changed'`) when the clipboard changed since. The answer is a `dragdata` with `clip: true`, the bytes on a `file` channel as for dragging out. The client asks when focus leaves all of its windows (the person went to the client's own programs to paste), at most 512 MB, the app only; the files go onto the client's clipboard |
 | host -> client | `others` | `crd`: a Chrome Remote Desktop session is connected to the host as well (`remoting_desktop.exe` runs); `outline`: the host drags windows as an outline only. Checked every 10 s, sent when it changes; the client shows a warning. Both are checked on Windows only (elsewhere always false). The process list is a Toolhelp snapshot taken on a koffi worker thread (`input.processRunning`; about 67 ms for 479 processes on the test PC, so never on the main thread), not `tasklist` |
+| host -> client | `storm` | (0.9.0) Input stopped for `ms` because the same key or click came again and again, faster than a person (the input guard, `input.js` `stormed`); the client says so in a toast |
 | client -> host | `pair` | Right after the channel opened, when the hello asked for a token: `install`, the app's own random id (the host replaces the token of an app that pairs again). Here, not in the hello: key holders can read hellos on the relay |
 | host -> client | `device` | Answer to `hello.pair` (after `pair`): `ok`, `id`, `secret` (the device token: 32 bytes, base64url) or `why` (`full`, `nostore`, `unreadable`). Only over this channel, never through the relay |
 | host -> client | `bye` | Deliberate close; the client must not auto-reconnect |

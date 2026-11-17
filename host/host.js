@@ -801,7 +801,8 @@ async function startSession(hello, route) {
   if (session !== s) return;
   await route.send({
     app: appHash,
-    t: 'offer', sid: s.sid, ts: Date.now(), sdp: pc.localDescription.sdp, ice: cfg.iceServers, audio, codec: s.codec, cursorHidden: s.cursorHidden, os: cfg.hostOs,
+    // `instance`: this start of the host, which a client app keeps in its live.json while it controls this PC (cycle.js).
+    t: 'offer', sid: s.sid, ts: Date.now(), sdp: pc.localDescription.sdp, ice: cfg.iceServers, audio, codec: s.codec, cursorHidden: s.cursorHidden, os: cfg.hostOs, instance: cfg.instance,
     monitors: sources.map((src, i) => ({ idx: i, mid: mids[i], x: src.x, y: src.y, width: src.width, height: src.height, primary: src.primary, hdr: src.hdr || undefined })),
   });
   if (session !== s) return; // ended while the offer was being posted: no timers for it
@@ -1122,6 +1123,8 @@ function showOneTime() {
 // (a rename does not make a new subscription: devNames, filled by showDevices).
 const devNames = new Map();
 const refused = new Map(); // a blocked device -> when it was last answered, and how often it asked since
+const cycleSaid = new Map(); // 'self' | 'loop' -> when it was last logged
+const cycleN = new Map();    // 'self' | 'loop' -> how many hellos were turned away so (the self-test reads it)
 const deviceName = (route) => devNames.get(route.id) || route.name;
 const whoOf = (route, pair) => (route.kind === 'device' ? deviceName(route) : route.kind === 'code' ? '1회용 코드 접속' : pair && pair.pc ? pair.pc + ' (키)' : '키로 접속');
 
@@ -1166,6 +1169,22 @@ async function onMessage(m, route) {
     // 'answer'), and nobody but that page can come back in its name or replace its request.
     m.bind = await importPk(m.pk);
     if (m.bind && !(await verifySig(m.bind, helloText(m), m.hsig))) m.bind = null;
+    // A connection that comes back on itself (cycle.js): the client app on this very PC ('self'), or the client
+    // app of a PC that this PC's own client app controls right now ('loop'). Refused before anything is asked or
+    // started, whatever the route: the picture would show itself without end, and a key or a click would come
+    // back to where it came from. Told and logged at most once a minute (the page does not try again).
+    const cyc = await api.cycleCheck(typeof m.from === 'string' ? m.from.slice(0, 64) : '').catch(() => '');
+    if (cyc) {
+      cycleN.set(cyc, (cycleN.get(cyc) || 0) + 1);
+      route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: cyc }).catch(() => {});
+      if (performance.now() - (cycleSaid.get(cyc) || -1e12) >= 60000) {
+        cycleSaid.set(cyc, performance.now());
+        log(cyc === 'self' ? '이 PC의 클라이언트 앱이 이 PC 자신에 접속하려 해서 막았습니다 (자기 화면을 끝없이 비추고, 입력이 되돌아옵니다)'
+          : '이 PC가 지금 조종하고 있는 PC에서 거꾸로 이 PC에 접속하려 해서 막았습니다 (서로를 조종하면 입력이 두 PC 사이를 끝없이 오갑니다)');
+        api.access({ ev: 'denied', via: route.kind === 'device' ? 'device' : route.kind === 'code' ? 'code' : 'key', dev: route.kind === 'device' ? route.id : undefined, name: whoOf(route, m.pair), why: cyc });
+      }
+      return;
+    }
     if (route.kind === 'code') {
       // A one-time code: the page allowed on it may come back while it lasts; anything else waits for 허용 here.
       if (!oneTime) return;
@@ -1414,7 +1433,7 @@ function renameDevice(d, el) {
 }
 // "접속 기록": what came to this host, the newest first (main.js keeps it in access.log, 90 days).
 const ACCESS_WHAT = { connect: '접속', end: '종료', denied: '거부', paired: '기기 등록', asked: '허용 요청', approved: '허용' };
-const ACCESS_WHY = { blocked: '차단된 기기', refused: '거부함', timeout: '2분 안에 허용하지 않음', busy: '요청이 겹치거나 너무 잦음', locked: '코드를 여러 번 틀림' };
+const ACCESS_WHY = { blocked: '차단된 기기', refused: '거부함', timeout: '2분 안에 허용하지 않음', busy: '요청이 겹치거나 너무 잦음', locked: '코드를 여러 번 틀림', self: '이 PC 자신에 접속', loop: '서로를 조종' };
 async function showAccess() {
   const box = $('accessList');
   if (box.style.display !== 'none') { box.style.display = 'none'; return; }
@@ -1515,6 +1534,13 @@ $('otpCancel').onclick = () => otpForm(false);
   $('otBtn').onclick = () => { makeOneTimeCode().catch((e) => log('1회용 코드를 만들지 못했습니다: ' + e.message)); };
   $('otEnd').onclick = () => endOneTime('ended');
   showOneTime();
+  // The same key or click again and again, faster than a person (input.js): input stopped for a while. The
+  // client is told why its keys and clicks do nothing meanwhile.
+  api.onInputStorm((o) => {
+    const sec = Math.round((Number(o.ms) || 0) / 1000);
+    log(`같은 키나 클릭이 사람보다 빠르게 계속 들어와 입력을 ${sec}초 멈췄습니다 (이 PC를 이 PC에서 보거나, 두 PC가 서로를 조종하고 있지 않은지 확인하세요)`);
+    if (session) txTo(session, { t: 'storm', ms: Number(o.ms) || 0 });
+  });
   api.onHostLock((on) => {
     screenGone.lockFrom = 'event';
     if (screenGone.lock === on) return;

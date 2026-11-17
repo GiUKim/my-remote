@@ -1310,11 +1310,13 @@ let kbdPrev = KBD_KEEP;
 const mods = new Set(); // modifiers held from the key row for the next key (one key, then they let go)
 const kbd = $('kbd');
 kbd.value = KBD_KEEP;
+// `s`: a key of this keyboard, not of a real one. The host's input guard does not count them (host/input.js
+// stormed): a word deleted here goes as many Backspaces at once.
 function tapKey(code, key) {
   const withMods = [...mods];
-  for (const m of withMods) send({ t: 'kd', c: m, k: m.replace(/(Left|Right)$/, '') });
-  send({ t: 'kd', c: code, k: key || code }); send({ t: 'ku', c: code, k: key || code });
-  for (const m of withMods.reverse()) send({ t: 'ku', c: m, k: m.replace(/(Left|Right)$/, '') });
+  for (const m of withMods) send({ t: 'kd', c: m, k: m.replace(/(Left|Right)$/, ''), s: 1 });
+  send({ t: 'kd', c: code, k: key || code, s: 1 }); send({ t: 'ku', c: code, k: key || code, s: 1 });
+  for (const m of withMods.reverse()) send({ t: 'ku', c: m, k: m.replace(/(Left|Right)$/, ''), s: 1 });
   if (withMods.length) { mods.clear(); paintKeyRow(); }
 }
 function typeOut(s) {
@@ -2220,6 +2222,9 @@ const DENIED = {
   locked: '코드를 여러 번 틀려 OTP 확인이 잠시 막혔습니다. 호스트에서 허용하거나 나중에 다시 시도하세요.',
   old: '이 화면이 호스트와 맞지 않습니다. 다시 접속해 보세요.',
   used: '이 1회용 코드는 이미 다른 접속에 쓰였습니다. 호스트 PC에서 새 코드를 받으세요.',
+  // A connection that comes back on itself (host/cycle.js; from 0.9.0).
+  self: '이 PC 자신에는 접속할 수 없습니다. 자기 화면을 끝없이 비추고, 누른 키와 클릭이 이 PC로 되돌아옵니다. 다른 PC의 키나 코드인지 확인하세요.',
+  loop: '이 PC는 지금 접속하려는 PC를 조종하고 있습니다. 두 PC가 서로를 조종하면 키와 클릭이 둘 사이를 끝없이 오가므로 막았습니다. 한쪽 접속을 끊고 다시 시도하세요.',
 };
 
 // ---- this page's own key: the host knows the client it allowed by it ------------------------------------
@@ -2288,6 +2293,9 @@ function codeAnswer(m) {
 // The client app's list of PCs (window.mrShell.hostInfo, there only in a window opened from that list)
 // learns here when this session is up, and what the host said it is: its entry shows that.
 function tellList(connected) {
+  // The client app keeps which hosts its windows control right now (live.json), so that this PC's own host
+  // turns away that host's client app connecting back (host/cycle.js; from 0.9.0, the page must not rely on it).
+  if (shell && shell.liveHost) Promise.resolve(shell.liveHost(connected && offerInfo ? offerInfo.instance : '')).catch(() => {});
   if (!(shell && shell.hostInfo)) return;
   const o = offerInfo && offerInfo.os;
   Promise.resolve(shell.hostInfo({ connected, os: o ? o.os : '', name: o ? o.name : '', pc: o ? o.pc : '', monitors: monitors.length })).catch(() => {});
@@ -2378,6 +2386,13 @@ function onHostMessage(data) {
       : m.outline && !was.outline ? '호스트의 "창을 끄는 동안 내용 표시"가 꺼져 있어, 창을 끄는 동안에는 테두리만 움직입니다' : '';
     if (say) for (const v of liveViews()) toast(v, say, 10000);
   }
+  else if (m.t === 'storm') {
+    // The host stopped taking input for a while: the same key or click came again and again, faster than a
+    // person (host/input.js). Usually a connection that comes back on itself, which a browser cannot be told of.
+    const sec = Math.max(1, Math.round((Number(m.ms) || 5000) / 1000));
+    window.__rd.storms = (window.__rd.storms || 0) + 1;
+    for (const v of liveViews()) toast(v, `같은 키나 클릭이 사람보다 빠르게 계속 들어가 호스트가 입력을 ${sec}초 멈췄습니다 · 이 PC를 이 PC에서 보거나 두 PC가 서로를 조종하고 있지 않은지 확인하세요`, 10000);
+  }
   else if (m.t === 'device') gotDevice(m);
   else if (m.t === 'dragdata') gotDragData(m);
   else if (m.t === 'put') gotPut(m);
@@ -2457,7 +2472,8 @@ async function onOffer(m) {
   if (arr.open) { arr.A = currentAssign(arr.cs); arr.prev = arr.A.slice(); arrBuild(); arrPaint(arr.A); }
   for (const mon of monitors) if (mon.hdr && !hdrTold.has(mon.idx)) { hdrTold.add(mon.idx); toast(mainView, `호스트의 모니터 ${mon.idx + 1}은 HDR이 켜져 있어 색이 실제보다 밝게 보입니다 (호스트 PC의 디스플레이 설정에서 끄면 해결)`, 9000); }
   $('snd').style.display = m.audio ? '' : 'none';
-  offerInfo = { codec: m.codec, cursorHidden: !!m.cursorHidden, os: m.os && typeof m.os === 'object' ? { os: String(m.os.os || ''), name: String(m.os.name || '').slice(0, 60), pc: String(m.os.pc || '').slice(0, 60) } : null };
+  offerInfo = { codec: m.codec, cursorHidden: !!m.cursorHidden, os: m.os && typeof m.os === 'object' ? { os: String(m.os.os || ''), name: String(m.os.name || '').slice(0, 60), pc: String(m.os.pc || '').slice(0, 60) } : null,
+    instance: typeof m.instance === 'string' ? m.instance.slice(0, 64) : '' };
   if (arr.open) paintOs();
 
   my.ontrack = (e) => {
@@ -2535,6 +2551,9 @@ async function begin() {
     const hello = { t: 'hello', sid, ts: Date.now(), mode, codec: codec || (await mobileCodec()), pk: (await myKey()).pub };
     // Signed with the page's own key: no one else can send a hello in its name (see host.js helloText).
     hello.hsig = await signed(`hello\n${hello.sid}\n${hello.ts}\n${hello.pk}`);
+    // The client app says which host runs on its own PC (this start of it): the host turns away a connection
+    // to itself, or from a PC it controls right now (host/cycle.js). A browser cannot tell.
+    if (shell && shell.localHost) { try { const f = await shell.localHost(); if (typeof f === 'string' && f) hello.from = f.slice(0, 64); } catch {} }
     // The app connected with the key: it asks for a token of its own (see gotDevice).
     pairAsk = null;
     if (wantPair()) {

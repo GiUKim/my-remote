@@ -45,6 +45,37 @@ let testPageKey = '';
 function setTestPageKey(k) { testPageKey = typeof k === 'string' && /^[A-Za-z0-9+/=]{40,120}$/.test(k) ? k : ''; }
 const pageKeys = () => [...pagecheck.releaseKeys(), ...(testPageKey ? [testPageKey] : [])];
 
+// ---- connections that come back on themselves (host/cycle.js; from 0.9.0) -----------------------------
+// The page puts into its hello which host runs on this PC (that host's id for this start, from its running.json:
+// localHost, set by client/main.js), and says which host its window controls (liveHost: the id in that host's
+// offer; '' when the session ends). Those ids are kept in live.json in this app's profile while any window
+// controls a host, written again every 10 s (one older than 30 s is from an app that is gone, see cycle.js) and
+// removed when none does. This PC's host reads it and turns away the client app of a PC this app controls.
+let localHostOf = () => '';
+function setLocalHost(fn) { localHostOf = typeof fn === 'function' ? fn : () => ''; }
+const HOST_ID = /^[A-Za-z0-9_-]{8,40}$/;
+let liveTimer = null, liveWritten = false;
+function writeLive() {
+  const hosts = [...new Set([...shells.values()].map((s) => s.liveHost).filter(Boolean))];
+  if (!hosts.length && !liveWritten) return;
+  const file = path.join(app.getPath('userData'), 'live.json');
+  try {
+    if (hosts.length) {
+      fs.writeFileSync(file + '.tmp', JSON.stringify({ pid: process.pid, at: Date.now(), hosts }));
+      fs.renameSync(file + '.tmp', file);
+      liveWritten = true;
+    } else { fs.rmSync(file, { force: true }); liveWritten = false; }
+  } catch (e) { console.error('[client] live.json', e.message); }
+  if (hosts.length && !liveTimer) liveTimer = setInterval(writeLive, 10000);
+  else if (!hosts.length && liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+}
+function setLiveHost(state, id) {
+  const v = typeof id === 'string' && HOST_ID.test(id) ? id : '';
+  if (state.liveHost === v) return;
+  state.liveHost = v;
+  writeLive();
+}
+
 function shellOf(sender) {
   for (const s of shells.values()) {
     if (s.win.webContents === sender) return s;
@@ -331,6 +362,15 @@ function setupIpc() {
   });
   // What the page says about its session: connected or not, and what the host said it is.
   ipcMain.handle('shell:hostInfo', (e, info) => { const s = listed(e); if (!s) return false; list.info(s.host, info && typeof info === 'object' ? info : {}); return true; });
+  // Connections that come back on themselves (see writeLive above): pages a release signed only.
+  ipcMain.handle('shell:localHost', (e) => { if (!trusted(e)) return ''; try { return String(localHostOf() || ''); } catch { return ''; } });
+  ipcMain.handle('shell:liveHost', (e, id) => {
+    const s = trusted(e);
+    if (!s || e.sender !== s.win.webContents) return false;
+    setLiveHost(s, id);
+    return true;
+  });
+  app.on('will-quit', () => { for (const s of shells.values()) s.liveHost = ''; writeLive(); });
   ipcMain.handle('shell:home', (e) => { if (!listed(e)) return false; list.home(); return true; });
   ipcMain.handle('shell:dragGhost', async (e, o) => {
     if (!shellOf(e.sender)) return false;
@@ -515,9 +555,9 @@ function attach(win, { host = null, trust = false, code = '' } = {}) {
   wc.on('did-start-navigation', (d, url, inPlace, mainFrame) => {
     const main = d && typeof d.isMainFrame === 'boolean' ? d.isMainFrame : mainFrame;
     const same = d && typeof d.isSameDocument === 'boolean' ? d.isSameDocument : inPlace;
-    if (main && !same) { state.trusted = false; state.legacy = false; state.checked = false; }
+    if (main && !same) { state.trusted = false; state.legacy = false; state.checked = false; setLiveHost(state, ''); }
   });
-  win.on('closed', () => { shells.delete(wc.id); if (!shells.size) ghostGone(); }); // a window left behind would keep the app from quitting
+  win.on('closed', () => { shells.delete(wc.id); if (state.liveHost) writeLive(); if (!shells.size) ghostGone(); }); // a window left behind would keep the app from quitting
   reportShown(win);
 
   wc.session.setPermissionRequestHandler((_wc, permission, cb) => cb(ALLOWED.has(permission)));
@@ -548,4 +588,4 @@ function attach(win, { host = null, trust = false, code = '' } = {}) {
   return state;
 }
 
-module.exports = { attach, setList, setTestPageKey, PRELOAD, ICON, _drop: { safeName, freePath, placeFiles, explorerFolder, stagedPath, moveInto, mayClick, NO_CLICK } };
+module.exports = { attach, setList, setTestPageKey, setLocalHost, PRELOAD, ICON, _drop: { safeName, freePath, placeFiles, explorerFolder, stagedPath, moveInto, mayClick, NO_CLICK } };

@@ -1,0 +1,12 @@
+{
+  "ko": [
+    "1회용 코드로 도움 받기: 호스트 창의 새 카드에서 코드를 만들어 알려 주면, 상대는 접속 키 없이 그 코드로 한 번 접속합니다. 내 PC 창에서 매번 허용해야 들어오고, 10분 안에 한 번만 쓸 수 있으며, 접속이 끝나면 코드도 사라집니다. 클라이언트 앱에는 '1회용 코드로 접속' 버튼이 생겼습니다",
+    "이 PC의 클라이언트 앱으로 이 PC 자신에 접속하거나, 서로를 조종하는 두 PC(A가 B를 조종하는 중에 B에서 A로 접속)는 호스트가 거절합니다. 화면이 끝없이 겹치고 입력이 되돌아와 반복되기 때문입니다",
+    "같은 키나 클릭이 사람보다 빠르게 계속 들어오면(브라우저로 그런 연결을 만든 경우 등) 호스트가 입력을 잠시 멈추고 클라이언트에 알립니다"
+  ],
+  "en": [
+    "One-time codes: the host window's new card makes a code to give to someone, who connects once with it instead of the access key. Each time it must be allowed in the host window, it works once within 10 minutes and ends with the session. The client app has a button '1회용 코드로 접속'",
+    "The host turns away a client app on its own PC, and two PCs controlling each other (B's client app connecting to A while A's controls B): the picture would repeat without end and input would come back again and again",
+    "When the same key or click keeps arriving faster than a person could (such a connection made with a browser), the host stops taking input for a moment and tells the client"
+  ]
+}

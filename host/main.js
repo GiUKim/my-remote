@@ -10,6 +10,10 @@ const shellswap = require('./shellswap'); // the installed app's shell replaced 
 const Devices = require('./devices'); // client apps with a token of their own instead of the access key (see devices.js)
 const AccessLog = require('./accesslog'); // what came to this host, kept on this PC (see accesslog.js)
 const totp = require('./totp'); // an authenticator app's codes, for those who turn them on (see totp.js)
+const cycle = require('./cycle'); // connections that come back on themselves (see cycle.js)
+// This start of the host, for cycle.js: in running.json (a client app on this PC names it in its hello) and in
+// every offer (a client app keeps it in its live.json while it controls this PC). Random, so it says nothing.
+const INSTANCE = crypto.randomBytes(12).toString('base64url');
 
 // The native capturer waits for each monitor's next image on a worker thread of the host page's
 // process; the default of four threads would be used up by three monitors. (Inherited by that process.)
@@ -448,8 +452,22 @@ async function putDone(gid, at, mode) {
 let clipWriting = 0, clipWrites = 0; // the write the input waits for (0: none)
 let inputWaiting = [];
 function injectInput(text) {
-  timed('input ' + ((/"t":"(\w{1,8})"/.exec(String(text)) || [])[1] || '?'), () => { try { input.handle(String(text)); } catch (e) { console.error('input', e); } });
+  let r;
+  timed('input ' + ((/"t":"(\w{1,8})"/.exec(String(text)) || [])[1] || '?'), () => { try { r = input.handle(String(text)); } catch (e) { console.error('input', e); } });
+  // The same key or click again and again, faster than a person (input.js stormed): input stopped for a while.
+  if (r === 'storm') {
+    const ms = input.stormPause();
+    console.log(`[host] input stopped for ${ms / 1000} s: the same key or click came again and again, faster than a person types or clicks (a connection that comes back on itself?)`);
+    if (win && !win.isDestroyed()) win.webContents.send('input-storm', { ms });
+  }
 }
+// The client app's live.json (see cycle.js): which hosts this PC's client app controls right now. A test run
+// (its profile is a throwaway one) reads a file of its own there, which the self-test writes.
+function clientLive() {
+  const file = ISOLATED ? path.join(app.getPath('userData'), 'client-live.json') : path.join(app.getPath('appData'), 'my-remote-client', 'live.json');
+  try { const r = JSON.parse(fs.readFileSync(file, 'utf8')); return r && typeof r === 'object' ? r : null; } catch { return null; }
+}
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return !!e && e.code === 'EPERM'; } };
 function releaseInput(id) {
   if (clipWriting !== id) return; // a later write: the input waits for that one
   clipWriting = 0;
@@ -929,12 +947,13 @@ function createWindow() {
 // whoever answers later). A required one installs by itself; one that needs a new package opens the
 // downloads page on yes.
 // While this host runs, running.json in its profile says so (pid and version), for the start screen of the
-// client app (client/launcher.html: "켜져 있음"). Never in the isolated runs (their profile is a throwaway one).
+// client app (client/launcher.html: "켜져 있음"), and this start's id (`instance`), which the client app on this
+// PC names in its hellos (see cycle.js). Never in the isolated runs (their profile is a throwaway one).
 function runningMark(on) {
   if (ISOLATED) return;
   const file = path.join(app.getPath('userData'), 'running.json');
   try {
-    if (on) fs.writeFileSync(file, JSON.stringify({ pid: process.pid, version: appVersion() }));
+    if (on) fs.writeFileSync(file, JSON.stringify({ pid: process.pid, version: appVersion(), instance: INSTANCE }));
     else if (JSON.parse(fs.readFileSync(file, 'utf8')).pid === process.pid) fs.rmSync(file, { force: true });
   } catch {}
 }
@@ -1091,7 +1110,8 @@ else {
     if (!cfg.key && APP && !ISOLATED) APP.ok();
     if (!cfg.key && !(await askForKey())) { quitAs('quit', 'no key: the person chose to quit'); quitting = true; app.quit(); return; }
     cfg.hostOs = hostOs();
-    cfg.updateNote = oldElectron ? `업데이트가 덜 끝났습니다: 코드는 Electron ${wanted}용인데 ${oldElectron}에서 돌고 있습니다. 호스트를 끄고 ${process.platform === 'win32' ? 'setup.ps1' : './setup.sh'}을 실행한 뒤 다시 시작하세요.` : '';
+    cfg.instance = INSTANCE;
+    cfg.updateNote =oldElectron ? `업데이트가 덜 끝났습니다: 코드는 Electron ${wanted}용인데 ${oldElectron}에서 돌고 있습니다. 호스트를 끄고 ${process.platform === 'win32' ? 'setup.ps1' : './setup.sh'}을 실행한 뒤 다시 시작하세요.` : '';
     cfg.viewOnly = input.viewOnlyReason(); // '' = input from the client is injected here
     if (cfg.viewOnly) console.warn(`[host] WARNING: the host is view-only, input from the client is not injected: ${cfg.viewOnly}`);
     if (BENCH) Object.assign(cfg, benchCfg.cfg || {});
@@ -1315,6 +1335,8 @@ else {
     });
     ipcMain.on('access-add', (_e, entry) => accessLog.add(entry));
     ipcMain.handle('access-read', () => accessLog.read(300));
+    // A hello's `from` (the host of the client app's own PC): 'self', 'loop' or '' (see cycle.js).
+    ipcMain.handle('cycle-check', (_e, from) => cycle.decide({ from, mine: INSTANCE, live: clientLive(), alive: pidAlive }));
 
     // ---- new devices confirmed at this PC (the user's go-ahead 2026-11-16) ----
     // With `confirmNew` a connection with the access key waits in the page until the person here presses

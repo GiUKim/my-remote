@@ -38,6 +38,19 @@ if (testDir) app.setPath('userData', path.join(testDir, 'client-app-profile'));
 // --trust-page-key=<public key> (a test only, with --loader=): the self-test's host signs its page with a key of
 // its own, which no release has (see client/pagecheck.js).
 if (testDir) shell.setTestPageKey(argOf('--trust-page-key='));
+// The host on this PC, while it runs (its running.json): its id for this start, which the page puts into its
+// hellos so that it turns away a connection to itself (host/cycle.js). A test (--loader=) never reads this PC's:
+// --local-host=<file> names a stand-in ({ pid, instance }), else there is none.
+const localHostArg = testDir ? argOf('--local-host=') : '';
+shell.setLocalHost(() => {
+  const file = testDir ? (localHostArg ? path.resolve(localHostArg) : '') : path.join(app.getPath('appData'), 'my-remote-host', 'running.json');
+  if (!file) return '';
+  try {
+    const r = JSON.parse(fs.readFileSync(file, 'utf8'));
+    try { process.kill(Number(r.pid), 0); } catch (e) { if (e.code !== 'EPERM') return ''; }
+    return typeof r.instance === 'string' && /^[A-Za-z0-9_-]{8,40}$/.test(r.instance) ? r.instance : '';
+  } catch { return ''; }
+});
 const LOADER = alt || homeAlt ? path.resolve(alt || homeAlt) : path.join(__dirname, '..', 'my-remote-client.html');
 
 // The installed app (started by app/boot.js, see host/main.js): the shell finds and installs updates of

@@ -48,6 +48,8 @@ jobs:
         run: node release/ci-run.js node release/test-shellswap.js
       - name: The host started again after a crash (the watchdog)
         run: node release/ci-run.js node release/test-watchdog.js
+      - name: Connections that come back on themselves (a PC to itself, two PCs controlling each other)
+        run: node release/ci-run.js node release/test-cycle.js
 
   native:
     name: native binaries rebuilt byte for byte

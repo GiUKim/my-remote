@@ -193,11 +193,49 @@ function typed(p) {
 // place (a drop where the client let go) must not run ahead of the move that takes the pointer there.
 const idle = () => (typing ? typing.then(idle) : Promise.resolve());
 
+// ---- input that runs away (a connection that comes back on itself) ------------------------------
+// A client app on this very PC, or the client app of a PC that this PC's own client app controls, is refused
+// at its hello (host/cycle.js). A browser cannot say where it runs, nor can apps and hosts from before 0.9.0:
+// a key or a click injected here then lands in the window that sends it back, and comes again without end,
+// as fast as the connection carries it. What no person does: the same key pressed and let go 45 times within
+// 3 s, or 30 clicks within 3 s (a held key repeats without being let go, and does not count). Then input
+// stops for 5 s (30 s when it happens again within a minute), everything held is let go, and handle() says
+// 'storm' once: main tells the page, the page the client. Moves still go (they press nothing; a lost button
+// is let go by them). Keys of a phone's keyboard (`s` on kd/ku: the page's key row and text field, which
+// deletes a word as many Backspaces at once) do not count: a phone is no host, so nothing comes back to it.
+const STORM = { window: 3000, keys: 45, clicks: 30, pause: 5000, again: 30000, within: 60000 };
+let storm = { keys: new Map(), clicks: [], until: 0, last: -1e15, pause: 0 };
+let clock = Date.now; // the dry run's is its own (simulate: { t: 'wait', ms } moves it on)
+const recent = (list, now) => { while (list.length && now - list[0] > STORM.window) list.shift(); return list; };
+// -> true when this message trips the guard
+function stormed(m, now) {
+  let list = null;
+  if (m.t === 'ku' && !m.s && down.has(String(m.c))) {
+    const c = String(m.c).slice(0, 40);
+    list = storm.keys.get(c);
+    if (!list) { if (storm.keys.size > 200) storm.keys.clear(); storm.keys.set(c, (list = [])); }
+  } else if (m.t === 'mu' && buttonsDown & (1 << (m.b | 0))) list = storm.clicks;
+  if (!list) return false;
+  list.push(now);
+  if (recent(list, now).length < (list === storm.clicks ? STORM.clicks : STORM.keys)) return false;
+  storm.pause = now - storm.last < STORM.within ? STORM.again : STORM.pause;
+  storm.until = now + storm.pause;
+  storm.last = now;
+  storm.keys.clear();
+  storm.clicks = [];
+  return true;
+}
+// How long input stops after the guard tripped (ms), for main's word to the page.
+const stormPause = () => storm.pause;
+
 function handle(text) {
   if (typing) { if (queued.length < 5000) queued.push(text); return; }
   let m;
   try { m = JSON.parse(text); } catch { return; }
   if (!m || typeof m !== 'object') return;
+  const now = clock();
+  if (storm.until > now && m.t !== 'mm' && m.t !== 'reset') return;
+  if (stormed(m, now)) { reset(); return 'storm'; }
   switch (m.t) {
     case 'mm': {
       const t = target(m.d | 0, +m.x, +m.y);
@@ -273,20 +311,29 @@ function tap(codes) {
 // run (to see what tap() and buttonUp() would do). The real state is put back afterwards.
 // opts.ownFrame: a stand-in for the platform's (px, py) -> { hwnd, hit } | null, to try the frame presses.
 function simulate(rects, msgs, then, opts = {}) {
-  const saved = { monitors, buttonsDown, released, down: [...down], ownFrame, framePress, frameButtons, lastCaption };
+  const saved = { monitors, buttonsDown, released, down: [...down], ownFrame, framePress, frameButtons, lastCaption, storm };
   dry = [];
   monitors = rects; buttonsDown = 0; released = 0; down.clear();
   framePress = null; frameButtons = 0; lastCaption = null;
+  storm = { keys: new Map(), clicks: [], until: 0, last: -1e15, pause: 0 }; // the dry run's guard is its own,
+  let t = 1e12;                                                              // and so is its clock
+  clock = () => t;
   ownFrame = opts.ownFrame || (() => null); // never the real windows of this PC in a dry run
   try {
-    for (const m of msgs) handle(JSON.stringify(m));
+    const said = []; // what handle() answered ('storm')
+    for (const m of msgs) {
+      if (m.t === 'wait') { t += Number(m.ms) || 0; continue; }
+      const r = handle(JSON.stringify(m));
+      if (r) said.push(r);
+    }
     if (then) then();
-    return { log: dry, held: buttonsDown, released };
+    return { log: dry, held: buttonsDown, released, said, pause: storm.pause };
   } finally {
     dry = null;
     monitors = saved.monitors; buttonsDown = saved.buttonsDown; released = saved.released;
     down.clear(); for (const [c, k] of saved.down) down.set(c, k);
     ownFrame = saved.ownFrame; framePress = saved.framePress; frameButtons = saved.frameButtons; lastCaption = saved.lastCaption;
+    storm = saved.storm; clock = Date.now;
   }
 }
 function takeReleased() { const n = released; released = 0; return n; }
@@ -294,7 +341,7 @@ function takeReleased() { const n = released; released = 0; return n; }
 const isDown = (code) => down.has(code);
 
 module.exports = {
-  handle, reset, setMonitors, target, simulate, takeReleased, isDown, MF, buttonUp, tap,
+  handle, reset, setMonitors, target, simulate, takeReleased, isDown, MF, buttonUp, tap, stormPause, STORM,
   // From the platform module, or the neutral value. See platform/win32.js and platform/linux.js.
   viewOnlyReason: backend.viewOnlyReason, // '' when input can be injected here, else why not
   hidesCursors: backend.hidesCursors,

@@ -235,6 +235,38 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       `injected presses and releases on the frame: ${pressed(min) + pressed(away) + pressed(drag) + pressed(dbl) + pressed(right) + pressed(both)}; a click in the page after a lost release: ${pressed(lost)}; in the page: ${pressed(page)}`);
   }
 
+  // Input that runs away (input.js stormed): a connection that comes back on itself, which a browser cannot be
+  // told of, sends the same key or click again and again, as fast as the connection carries it. A person typing
+  // fast, a held key (it repeats without being let go) and a phone's keyboard (a word deleted as many Backspaces at
+  // once) must not trip it; 45 presses of one key or 30 clicks within 3 s do: input stops for 5 s (30 s the next
+  // time within a minute), what is held is let go, moves still go. The dry run has a clock of its own ('wait').
+  {
+    const R = [{ x: 0, y: 0, width: 1920, height: 1080 }], MF = input.MF;
+    const at = (t, x, extra) => ({ t, d: 0, x, y: 0.5, ...extra });
+    const pair = (c, extra) => [{ t: 'kd', c, k: c, ...extra }, { t: 'ku', c, k: c, ...extra }];
+    const rep = (n, f) => Array.from({ length: n }, (_, i) => f(i)).flat();
+    const downs = (r, c) => r.log.filter((e) => e.key && !e.up && (!c || e.key === c)).length;
+    const ups = (r, c) => r.log.filter((e) => e.key && e.up && e.key === c).length;
+    const count = (r, bits) => r.log.filter((e) => e.mouse & bits).length;
+    const typing = input.simulate(R, rep(300, (i) => [...pair('Key' + String.fromCharCode(65 + (i % 26))), { t: 'wait', ms: 10 }])); // 100 keys a second
+    const held = input.simulate(R, [...rep(200, () => [{ t: 'kd', c: 'KeyA', k: 'a' }, { t: 'wait', ms: 15 }]), { t: 'ku', c: 'KeyA', k: 'a' }]);
+    const phone = input.simulate(R, rep(120, () => pair('Backspace', { s: 1 })));
+    const fastKey = input.simulate(R, rep(40, () => [...pair('KeyA'), { t: 'wait', ms: 70 }]));
+    const fastClicks = input.simulate(R, rep(25, () => [at('md', 0.5, { b: 0 }), at('mu', 0.5, { b: 0 }), { t: 'wait', ms: 100 }]));
+    const people = [typing, held, phone, fastKey, fastClicks];
+    const keyStorm = input.simulate(R, [{ t: 'kd', c: 'ShiftLeft', k: 'Shift' }, ...rep(60, () => [...pair('KeyA'), { t: 'wait', ms: 5 }]), at('mm', 0.3), ...pair('KeyB')]);
+    const clickStorm = input.simulate(R, [...rep(40, () => [at('md', 0.5, { b: 0 }), at('mu', 0.5, { b: 0 }), { t: 'wait', ms: 5 }]), at('md', 0.5, { b: 0 })]);
+    const again = input.simulate(R, [...rep(45, () => pair('KeyA')), { t: 'wait', ms: 6000 }, ...pair('KeyB'), ...rep(45, () => pair('KeyA'))]);
+    check('input that runs away (the same key or click again and again) stops input for a while; a person\'s typing, a held key, a phone\'s keyboard and fast clicking do not',
+      people.every((r) => r.said.length === 0) && downs(typing) === 300 && downs(held) === 200 && downs(phone) === 120 && downs(fastKey) === 40 && count(fastClicks, MF.LD) === 25 &&
+      keyStorm.said.join() === 'storm' && keyStorm.pause === 5000 && downs(keyStorm, 'KeyA') === 45 && downs(keyStorm, 'KeyB') === 0 && ups(keyStorm, 'ShiftLeft') === 1 && ups(keyStorm, 'KeyA') === 45 && count(keyStorm, MF.MOVE) === 1 &&
+      clickStorm.said.join() === 'storm' && count(clickStorm, MF.LD) === 30 && count(clickStorm, MF.LU) === 30 && clickStorm.held === 0 &&
+      again.said.join() === 'storm,storm' && again.pause === 30000 && downs(again, 'KeyB') === 1,
+      `a person: ${people.map((r) => r.said.length).join('/')} trips (typing ${downs(typing)} keys, held ${downs(held)}, phone ${downs(phone)}, one key 40 times ${downs(fastKey)}, clicks ${count(fastClicks, MF.LD)}); ` +
+      `key storm: ${keyStorm.said.join() || 'none'}, ${keyStorm.pause} ms, KeyA pressed ${downs(keyStorm, 'KeyA')} and let go ${ups(keyStorm, 'KeyA')}, KeyB ${downs(keyStorm, 'KeyB')}, Shift let go ${ups(keyStorm, 'ShiftLeft')}, moves ${count(keyStorm, MF.MOVE)}; ` +
+      `click storm: ${clickStorm.said.join() || 'none'}, ${count(clickStorm, MF.LD)} down/${count(clickStorm, MF.LU)} up; again within a minute: ${again.said.join()}, ${again.pause} ms, a key between ${downs(again, 'KeyB')}`);
+  }
+
   // Picture of an app-specific cursor (read-only; uses the standard arrow as a stand-in).
   if (process.platform === 'linux') {
     // X11: the picture of the cursor shown right now, through XFixes (named or not).
@@ -1524,6 +1556,68 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
             asked7 && !!seen7 && live7 && viaCode7.includes('approved') && devices.list().length === 0,
             `asked: ${asked7}; ${seen7 ? 'picture shown' : 'no measurements from the app arrived'}; live on the code: ${live7}; access log (code): ${viaCode7.join(',')}; devices: ${devices.list().length}`);
           await quitGently(child6);
+        }
+      }
+
+      // Connections that come back on themselves (host/cycle.js). The client app names the host of its own PC in
+      // its hello (--local-host=: a stand-in for that host's running.json), and this host reads the client app's
+      // live.json of this PC (a test: client-live.json in its own profile). Three runs of the app on the key:
+      //  1. its PC's host is another one (A), and this PC's client app controls a third (B): it connects, and its
+      //     own live.json says it controls this host (the case of everyone who runs both faces);
+      //  2. its PC's host is B, the PC this PC's client app controls: turned away ('loop');
+      //  3. its PC's host is this one: turned away ('self').
+      {
+        const A = 'SelfTestPCA_' + require('crypto').randomBytes(6).toString('hex'), B = 'SelfTestPCB_' + require('crypto').randomBytes(6).toString('hex');
+        const liveHere = path.join(app.getPath('userData'), 'client-live.json'), stand = path.join(dir, 'local-host.json');
+        const appLive = path.join(dir, 'client-app-profile', 'live.json');
+        fs.writeFileSync(liveHere, JSON.stringify({ pid: process.pid, at: Date.now(), hosts: [B] }));
+        const keepFresh = setInterval(() => { try { fs.writeFileSync(liveHere, JSON.stringify({ pid: process.pid, at: Date.now(), hosts: [B] })); } catch {} }, 5000);
+        const accessSince = (t0, f) => accessLog.read(100).filter((e) => e.t >= t0 && f(e));
+        const runAs = (instance) => {
+          fs.writeFileSync(stand, JSON.stringify({ pid: process.pid, instance }));
+          return require('child_process').spawn(process.execPath, [...args, '--local-host=' + stand], { env, stdio: 'ignore' });
+        };
+        try {
+          const t1 = Date.now(), from1 = fs.existsSync(diag) ? fs.statSync(diag).size : 0;
+          const c1 = runAs(A);
+          let seen = null, live = null;
+          for (let i = 0; i < 45 && !(seen && live); i++) {
+            await sleep(1000);
+            let log = '';
+            try { log = fs.readFileSync(diag, 'utf8').slice(from1); } catch {}
+            for (const line of log.split('\n')) { let e = null; try { e = JSON.parse(line); } catch {} if (e && e.client && e.client.shell === true && Object.values(e.client.fps || {}).some((f) => f > 0)) seen = e.client; }
+            try { live = JSON.parse(fs.readFileSync(appLive, 'utf8')); } catch { live = null; }
+          }
+          const liveOk = !!live && Array.isArray(live.hosts) && live.hosts.length === 1 && live.hosts[0] === cfg.instance && live.pid === c1.pid && Date.now() - live.at < 30000;
+          await quitGently(c1);
+          // Removed when its windows close (Windows' taskkill closes them); where the end comes as a signal the
+          // file may stay, and then counts for nothing: its process is gone (cycle.js).
+          let alive1 = false;
+          try { process.kill(c1.pid, 0); alive1 = true; } catch (e) { alive1 = !!e && e.code === 'EPERM'; }
+          const gone = !fs.existsSync(appLive) || (process.platform !== 'win32' && !alive1);
+          check('connections back on themselves: a client app whose PC runs another host connects, and keeps the host it controls in its live.json (gone when it quits)',
+            !!seen && liveOk && gone && accessSince(t1, (e) => e.ev === 'denied').length === 0,
+            `${seen ? 'picture shown' : 'no measurements from the app arrived'}; live.json while connected: ${live ? JSON.stringify({ hosts: (live.hosts || []).map((h) => (h === cfg.instance ? 'this host' : 'other')), itsPid: live.pid === c1.pid, fresh: Date.now() - live.at < 30000 }) : 'none'}; after quitting: ${gone ? 'removed' : 'still there'}; refusals: ${accessSince(t1, (e) => e.ev === 'denied').length}`);
+
+          const turnedAway = async (instance, why) => {
+            const t0 = Date.now();
+            const c = runAs(instance);
+            let d = [];
+            for (let i = 0; i < 40 && !d.length; i++) { await sleep(1000); d = accessSince(t0, (e) => e.ev === 'denied' && e.why === why); }
+            await sleep(4000); // a page that tried again would be heard meanwhile
+            const said = await hostWin.webContents.executeJavaScript(`cycleN.get(${JSON.stringify(why)}) || 0`);
+            const conn = accessSince(t0, (e) => e.ev === 'connect' || e.ev === 'asked').length;
+            await quitGently(c);
+            return { d: d.length, said, conn };
+          };
+          const before = await hostWin.webContents.executeJavaScript('({ loop: cycleN.get("loop") || 0, self: cycleN.get("self") || 0 })');
+          const loop = await turnedAway(B, 'loop'), self = await turnedAway(cfg.instance, 'self');
+          check('connections back on themselves: the client app of the PC this PC\'s client app controls is turned away (loop), and so is one on this very PC (self), once, without asking',
+            loop.d === 1 && loop.conn === 0 && loop.said - before.loop === 1 && self.d === 1 && self.conn === 0 && self.said - before.self === 1,
+            `loop: logged ${loop.d}, hellos ${loop.said - before.loop}, connected or asked ${loop.conn}; self: logged ${self.d}, hellos ${self.said - before.self}, connected or asked ${self.conn}`);
+        } finally {
+          clearInterval(keepFresh);
+          fs.rmSync(liveHere, { force: true });
         }
       }
     }
