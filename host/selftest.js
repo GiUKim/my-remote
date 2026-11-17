@@ -1416,6 +1416,30 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         JSON.stringify({ signedHere: !!ca.sig, first, secondWithAGoodOne: second, freshLoad: fresh, askedAgain: forged, otherPage: other }));
     }
 
+    // Linux (and macOS): a signal asking the host to end is a quit on purpose, which the watchdog leaves down
+    // (main.js, taken at ready: a handler set up earlier is never called, and Electron quits naming nobody; then the
+    // watchdog had a host running again a minute later, 2026-11-17). A local trial host of its own, ended with
+    // SIGTERM once it is up, must say so. (What the watchdog does with each kind: release/test-watchdog.js.)
+    if (process.platform !== 'win32') {
+      const env = { ...process.env };
+      delete env.ELECTRON_RUN_AS_NODE;
+      const hostArgs = [global.__mrApp ? '--host' : __dirname, '--localtest', '--no-client', ...process.argv.filter((a) => a === '--no-sandbox' || a === '--disable-gpu')];
+      const child = require('child_process').spawn(process.execPath, hostArgs, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '';
+      child.stdout.on('data', (b) => { out += b; });
+      child.stderr.on('data', (b) => { out += b; });
+      const ended = new Promise((r) => child.once('exit', (code, sig) => r({ code, sig })));
+      for (let i = 0; i < 60 && !/시그널링 서버|signaling/i.test(out) && child.exitCode === null; i++) await sleep(500);
+      await sleep(1500);
+      const up = child.exitCode === null;
+      if (up) child.kill('SIGTERM');
+      const how = await Promise.race([ended, sleep(15000).then(() => null)]);
+      if (!how) { try { child.kill('SIGKILL'); } catch {} }
+      const said = (/\[host\] quitting \(([^)]*)\)/.exec(out) || [])[1] || '';
+      check('a signal asking the host to end is a quit on purpose (the watchdog leaves it down)', up && !!how && said === 'quit: SIGTERM',
+        `up: ${up}; ended: ${how ? JSON.stringify(how) : 'no, killed'}; the host said: ${said || 'nothing'}`);
+    }
+
     if (CLIENT_APP_CHECK) {
       // The client app as a program of its own, on a loader that knows this test's relay and key (view-only).
       // It counts as working when its measurements (sent to the host every 2 s, kept in the diagnostics

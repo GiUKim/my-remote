@@ -6,7 +6,8 @@
 // The host holds the write end of this process's stdin: it closes when the host ends, however it ends.
 //
 // Before it quits, the host writes the quit marker: { pid, kind, why } (main.js markQuit).
-//   quit       the person quit it (the tray's 종료, the key dialog), or the system goes down: left down
+//   quit       the person quit it (the tray's 종료, the key dialog), the system goes down, or a signal asked it
+//              to end (SIGTERM, SIGINT: kill, pkill, Ctrl+C; Linux and macOS): left down
 //   handover   another program starts it again (the shell swap's script, which needs this program's
 //              files free): this steps aside at once
 //   restart    anything else (an update, a restart, a quit nobody named): a host must come back; when none

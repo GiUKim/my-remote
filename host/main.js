@@ -86,7 +86,7 @@ const cursorCache = new Map(); // handle -> { img, hx, hy } | null
 // moment a new version also says it is up), that starts the host again when it ends without quitting.
 // Every quit writes the quit marker first (before-quit; also when Windows ends the session or the system
 // shuts down): { pid, kind, why }. Only `quit` (the person quit it: the tray's 종료, the key dialog; the
-// system goes down) leaves the host down. Every other quit (an update, a restart, a shell swap, a quit
+// system goes down; a signal asked it to end: SIGTERM, SIGINT) leaves the host down. Every other quit (an update, a restart, a shell swap, a quit
 // nobody planned) is one after which a host must come back: the watchdog waits for it and starts one when
 // none came (the user's report of 2026-11-16: the host quit 20 s after an update, the marker said "on
 // purpose", nothing started it again, and the PC could be reached only through another remote tool).
@@ -1099,6 +1099,14 @@ else {
   });
   process.on('exit', () => { if (cursorsHidden) input.restoreCursors(); });
   app.whenReady().then(async () => {
+    // A signal asking the host to end (Linux, macOS: kill, pkill, the session or the system going down, Ctrl+C in
+    // its terminal) is a quit on purpose, as the tray's 종료 is: the watchdog leaves the host down. Electron quits on
+    // it by itself, naming nobody, which the watchdog took for a quit after which a host must come back: stop.sh on
+    // the Linux PC ended a host, and a host was running again 62 s later (measured 2026-11-17 with --localtest
+    // --watchdog). Taken here, at ready: a handler set up before that is never called, Electron's own runs instead
+    // (measured with a bare Electron 45 script). SIGHUP (the terminal or ssh session it came from went away) stays a
+    // quit nobody named, after which the watchdog brings it back.
+    if (process.platform !== 'win32') for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { quitAs('quit', sig); app.quit(); });
     // The code is newer than the Electron it runs on: it was updated (git pull) without setup.ps1/setup.sh.
     const pkg = require('./package.json'), wanted = Number((/(\d+)/.exec((pkg.devDependencies || {}).electron || (pkg.dependencies || {}).electron || '') || [])[1]) || 0;
     // (Not in the installed app: there a version only runs on a shell it was made for.)

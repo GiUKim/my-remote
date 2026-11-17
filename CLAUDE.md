@@ -355,6 +355,15 @@ the client app instead).
   quit, with a stack when nobody named it). It never starts one while another host runs. At most 3
   restarts in 30 minutes (`watchdog.json`), each noted in `watchdog.log` there. A host ended from Task
   Manager counts as a crash (use the tray's 종료).
+  Signals (Linux, macOS; 0.9.2): SIGTERM and SIGINT (kill, pkill, the session or the system going down,
+  Ctrl+C in a terminal) are `quit: SIGTERM`/`SIGINT`, left down. Before, Electron quit on them by itself,
+  naming nobody: `stop.sh --host-only` on the Linux PC (kill of the host's pid) and a host was running again
+  62 s later (measured 2026-11-17 on .200 with `--localtest --no-client --watchdog` on a display of its own).
+  The handler must be set up at `ready` or later: one set up before is never called and Electron's own quits
+  instead (a bare Electron 45 script: at the top of the main script, not called; at ready and 1 s after,
+  called before `before-quit`). SIGHUP (its terminal or ssh session went away) stays a quit nobody named, and
+  the watchdog brings the host back (61 s, measured). The self-test (not on Windows) starts a local trial
+  host of its own, ends it with SIGTERM once it is up and wants `quitting (quit: SIGTERM)`.
   Checked: `release/test-watchdog.js` (11 checks: the old marker, quit, handover, a restart that did and
   one that did not come back, a crash while another host runs, an end without a word, `abort()`, an older
   marker, the limit, old restarts) on Windows; with the real host on this PC (0.7.1, `--localtest
@@ -931,8 +940,14 @@ the client app instead).
   that no bare `keyboard.lock()` is left; the self-test that the page and every app window have the wrapper. In the
   test VM, real Chromium: the bare lock left Ctrl+Alt held; the page's copy and the app's preload (with a page
   written in place and a bare lock, as an old host's page does) left nothing held, and the Windows key pressed
-  afterwards went to the page. A client PC that has the keys stuck: press and let go of each Ctrl, Alt and Windows
-  key. X11 keeps key state in the server (a grab does not hide releases from it): not affected.
+  afterwards went to the page. Then the real client app on a local trial host in the VM (view-only; scratchpad
+  `kb2`: `keys2.ps1` presses, `keystate.ps1` logs the system's key state every 20 ms), the 0.8.0 copy against
+  0.9.1: Ctrl+Alt+Enter into fullscreen left Ctrl+Alt held on 0.8.0, nothing on 0.9.1; coming back to the
+  fullscreen picture from Notepad by a click with Ctrl held left Ctrl held on 0.8.0 (the second way in, as
+  foreseen), nothing on 0.9.1; Ctrl+Alt+Enter out of fullscreen left nothing on either; the Windows key pressed
+  after each way in never reached the system on 0.9.1 (the lock was back). A client PC that has the keys stuck:
+  press and let go of each Ctrl, Alt and Windows key. X11 keeps key state in the server (a grab does not hide
+  releases from it): not affected.
 - **The clipboard is shared both ways.** Host to client: text at once (the host page polls main's
   clipboard; the client app writes it with `shell:clipWrite`, a browser when one of its windows has the
   focus), files when the client's own programs get the focus (`clipfiles`/`clipget`). Client to host: in
