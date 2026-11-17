@@ -222,6 +222,13 @@ function teardown(reason, silent) {
     api.access({ ev: 'end', via: s.route.kind, dev: s.route.id, name: s.who, ip: s.ip, dur: (Date.now() - s.connectedAt) / 1000, in: s.filesIn, out: s.filesOut, why: reason });
     showDevices(); // no longer "접속 중"
   }
+  // A session on a one-time code: the code ends a moment later, unless its page comes back (see oneTime).
+  if (s.route.kind === 'code' && oneTime && oneTime.pk) {
+    const o = oneTime;
+    clearTimeout(o.timer);
+    o.timer = setTimeout(() => { if (oneTime === o && !(session && session.route.kind === 'code')) endOneTime('done'); }, ONE_TIME_GRACE_MS);
+    showOneTime();
+  }
 }
 
 // Ends the session and has the client come back at once with a new hello, keeping its windows: the
@@ -906,6 +913,11 @@ async function subscribe() {
       send: (o) => chan.send(o, { pubTopic: k.topicClient, txKey: k.h2c }),
     });
   }
+  // A one-time code while it lasts (see oneTime).
+  if (oneTime) {
+    const k = oneTime.keys;
+    next.set(k.topicHost, { kind: 'code', key: 'code', keys: k, send: (o) => chan.send(o, { pubTopic: k.topicClient, txKey: k.h2c }) });
+  }
   if (my !== subSeq) return; // a newer list is on its way
   routes = next;
   const c = RD.channel({
@@ -962,7 +974,8 @@ async function verifySig(pk, text, sig) {
   try { return await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pk, s, new TextEncoder().encode(text)); } catch { return false; }
 }
 function ask(m, route, g) {
-  const name = m.pair && typeof m.pair.pc === 'string' && m.pair.pc ? m.pair.pc.slice(0, 60) + ' (앱)' : '브라우저';
+  const via = route.kind === 'code' ? 'code' : 'key';
+  const name = via === 'code' ? '1회용 코드로 접속' : m.pair && typeof m.pair.pc === 'string' && m.pair.pc ? m.pair.pc.slice(0, 60) + ' (앱)' : '브라우저';
   if (!m.bind) {
     // A page from before this host's update (no key of its own): told the host's page is newer, it reloads
     // and comes back with the new one (an offer with only the page's hash: the old page looks at that first).
@@ -979,7 +992,7 @@ function ask(m, route, g) {
     if (now - busy.said >= 10000) { busy.said = now; route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: 'busy' }).catch(() => {}); }
     if (now - busy.logged >= 60000) {
       busy.logged = now;
-      api.access({ ev: 'denied', via: 'key', name, why: 'busy' });
+      api.access({ ev: 'denied', via, name, why: 'busy' });
       log(`새 기기 요청이 겹치거나 너무 잦아 받지 않았습니다${busy.n > 1 ? ` (지난 1분 ${busy.n}번)` : ''}. 모르는 요청이 계속되면 키가 샌 것일 수 있습니다: 새 키 발급(등록된 기기도 모두 삭제)`);
       busy.n = 0;
     }
@@ -992,8 +1005,8 @@ function ask(m, route, g) {
   route.send({ t: 'confirm', sid: m.sid, ts: Date.now(), code, otp: p.otp, locked: !!g.locked, wait: GATE_WAIT }).catch(() => {});
   showAsk(p);
   api.gate.alert(name);
-  log(`새 기기가 접속을 요청했습니다: ${name} · 확인 숫자 ${code} — 이 창에서 허용하거나 거부하세요`);
-  api.access({ ev: 'asked', via: 'key', name });
+  log(`${via === 'code' ? '1회용 코드로 접속을 요청했습니다' : '새 기기가 접속을 요청했습니다: ' + name} · 확인 숫자 ${code} — 이 창에서 허용하거나 거부하세요`);
+  api.access({ ev: 'asked', via, name });
 }
 function endAsk() {
   const p = pending;
@@ -1006,14 +1019,21 @@ function refuse(why) {
   const p = endAsk();
   if (!p) return;
   p.route.send({ t: 'denied', sid: p.m.sid, ts: Date.now(), why }).catch(() => {});
-  api.access({ ev: 'denied', via: 'key', name: p.name, why });
+  api.access({ ev: 'denied', via: p.route.kind === 'code' ? 'code' : 'key', name: p.name, why });
+  if (p.route.kind === 'code') { log(`${p.name}: ${why === 'timeout' ? '2분 안에 허용하지 않아 끝냈습니다' : '거부했습니다'}`); return; }
   log(`${p.name}: ${why === 'refused' ? '거부했습니다. 내가 보낸 요청이 아니라면 키가 샌 것일 수 있습니다: 새 키 발급(등록된 기기도 모두 삭제)' : why === 'timeout' ? '2분 안에 허용하지 않아 끝냈습니다' : '막았습니다'}`);
 }
 async function allow(how) {
   const p = endAsk();
   if (!p) return;
-  allowPk(p.m.pk);
-  api.access({ ev: 'approved', via: 'key', name: p.name, how });
+  if (p.route.kind === 'code') {
+    // One request per code: only this page may come back on it (never through the key's gate), for as long as it lasts.
+    if (!oneTime || p.route.keys !== oneTime.keys) return;
+    oneTime.pk = p.m.pk;
+    clearTimeout(oneTime.timer);
+    showOneTime();
+  } else allowPk(p.m.pk);
+  api.access({ ev: 'approved', via: p.route.kind === 'code' ? 'code' : 'key', name: p.name, how });
   log(`${p.name}: 허용했습니다 (${GATE_HOW[how] || how})`);
   try { await startSession(p.m, p.route); } catch (e) {
     log('오류: ' + e.message);
@@ -1023,7 +1043,11 @@ async function allow(how) {
 }
 // The waiting request in this window: who, the number its screen shows too, 허용 / 거부, the time left.
 let askTick = 0;
+const ASK_TEXT = $('askText').textContent;
 function showAsk(p) {
+  const byCode = p.route.kind === 'code';
+  $('askTitle').textContent = byCode ? '1회용 코드로 접속하려고 합니다' : '새 기기가 접속하려고 합니다';
+  $('askText').textContent = byCode ? '상대 화면에도 같은 숫자가 보입니다. 내가 코드를 알려 준 사람이 맞을 때만 허용하세요. 허용하면 그 사람이 이 PC를 보고 조작할 수 있습니다(기기로 등록되지는 않습니다).' : ASK_TEXT;
   $('askWho').textContent = p.name;
   $('askCode').textContent = p.code;
   $('ask').style.display = '';
@@ -1037,12 +1061,69 @@ function showAsk(p) {
 }
 function hideAsk() { clearInterval(askTick); $('ask').style.display = 'none'; }
 
+// ---- one-time codes: help from someone who has no key (the user's go-ahead, 2026-11-17) ----------------------
+// The person at this PC has this window make a code (signal.js newCode) and gives it to whoever is to help. The
+// code opens a route of its own (keys and topics from the code: RD.deriveCode) for ONE_TIME_MS. A request on it
+// always waits for 허용 in this window (never the authenticator app, whatever "새 기기 확인" says), one request
+// is let in, and its session gets no device token (pairDevice takes key routes only). The helper's page may come
+// back while the session lasts (a renew, a short loss of the network: its own key, `pk`, as with the gate);
+// ONE_TIME_GRACE_MS after the session ended the code ends too. 끝내기 ends code and session at once.
+const ONE_TIME_MS = 10 * 60e3, ONE_TIME_GRACE_MS = 2 * 60e3;
+let oneTime = null; // { code, keys, until, timer, pk: '' once a request was allowed }
+async function makeOneTimeCode() {
+  endOneTime('replaced');
+  const code = RD.newCode(), k = await RD.deriveCode(code);
+  const o = (oneTime = { code, keys: k, until: Date.now() + ONE_TIME_MS, pk: '' });
+  o.timer = setTimeout(() => { if (oneTime === o && !o.pk) endOneTime('expired'); }, ONE_TIME_MS);
+  await subscribe();
+  showOneTime();
+  log('1회용 코드를 만들었습니다: 10분 안에 한 번 쓸 수 있고, 들어오기 전에 이 창에서 허용해야 합니다');
+}
+function endOneTime(why) {
+  const o = oneTime;
+  if (!o) return;
+  oneTime = null;
+  clearTimeout(o.timer);
+  if (pending && pending.route.kind === 'code') refuse(why === 'expired' ? 'timeout' : 'refused');
+  if (session && session.route.kind === 'code') teardown('1회용 접속 끝냄');
+  subscribe();
+  showOneTime();
+  if (why !== 'replaced') log({ expired: '1회용 코드가 쓰이지 않고 만료되었습니다', done: '1회용 접속이 끝나 코드도 끝났습니다', ended: '1회용 코드를 끝냈습니다' }[why] || '1회용 코드를 끝냈습니다');
+}
+let otTick = 0;
+function showOneTime() {
+  const o = oneTime;
+  clearInterval(otTick);
+  $('ot').classList.toggle('on', !!o);
+  $('otBox').style.display = o ? '' : 'none';
+  $('otNote').style.display = o ? 'none' : '';
+  $('otBtn').textContent = o ? '새 코드' : '코드 만들기';
+  $('otBtn').style.display = o && o.pk ? 'none' : ''; // a new code would end the session the person allowed
+  if (!o) { $('otState').textContent = ''; return; }
+  $('otCode').textContent = RD.showCode(o.code);
+  const tick = () => {
+    if (oneTime !== o) return;
+    const live = session && session.route.kind === 'code';
+    if (o.pk) {
+      $('otState').textContent = live ? '— 접속 중' : '— 접속 끝남';
+      $('otText').textContent = live ? '도와주는 사람이 이 PC에 접속해 있습니다. 끝내기를 누르면 바로 끊기고 코드도 사라집니다.'
+        : '접속이 끊겼습니다. 잠시 안에 다시 붙지 않으면 코드가 사라집니다.';
+    } else {
+      const s = Math.max(0, Math.round((o.until - Date.now()) / 1000));
+      $('otState').textContent = `— ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} 남음`;
+      $('otText').textContent = '이 코드를 도와줄 사람에게 알려 주세요. 그 사람이 My Remote 클라이언트(앱 또는 my-remote-client.html)의 접속 키 칸에 이 코드를 넣으면 이 창에 허용 카드가 뜹니다.';
+    }
+  };
+  tick();
+  otTick = setInterval(tick, 1000);
+}
+
 // Who is on the other end, for the log and the access log. A device's name as the host window has it now
 // (a rename does not make a new subscription: devNames, filled by showDevices).
 const devNames = new Map();
 const refused = new Map(); // a blocked device -> when it was last answered, and how often it asked since
 const deviceName = (route) => devNames.get(route.id) || route.name;
-const whoOf = (route, pair) => (route.kind === 'device' ? deviceName(route) : pair && pair.pc ? pair.pc + ' (키)' : '키로 접속');
+const whoOf = (route, pair) => (route.kind === 'device' ? deviceName(route) : route.kind === 'code' ? '1회용 코드 접속' : pair && pair.pc ? pair.pc + ' (키)' : '키로 접속');
 
 async function onMessage(m, route) {
   if (!m || typeof m.sid !== 'string' || !(Math.abs(Date.now() - m.ts) <= MAX_AGE)) return; // also without a ts
@@ -1085,7 +1166,13 @@ async function onMessage(m, route) {
     // 'answer'), and nobody but that page can come back in its name or replace its request.
     m.bind = await importPk(m.pk);
     if (m.bind && !(await verifySig(m.bind, helloText(m), m.hsig))) m.bind = null;
-    if (route.kind === 'key') {
+    if (route.kind === 'code') {
+      // A one-time code: the page allowed on it may come back while it lasts; anything else waits for 허용 here.
+      if (!oneTime) return;
+      if (m.bind && oneTime.pk && m.pk === oneTime.pk) m.allowed = 'again';
+      else if (oneTime.pk) { route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: 'used' }).catch(() => {}); return; }
+      else { ask(m, route, { otp: false, locked: false }); return; }
+    } else if (route.kind === 'key') {
       // New devices confirmed here (see ask): a page allowed a moment ago may come again without asking.
       if (m.bind && (allowedPks.get(m.pk) || 0) > performance.now()) m.allowed = 'again';
       else {
@@ -1107,7 +1194,7 @@ async function onMessage(m, route) {
       // that would tell the client not to try again.
       if (session && session.sid === m.sid) teardown('오류', true);
     }
-  } else if (m.t === 'otp' && pending && m.sid === pending.m.sid && route.key === pending.route.key) {
+  } else if (m.t === 'otp' && pending && m.sid === pending.m.sid && route.key === pending.route.key && pending.route.kind !== 'code') {
     // The code of the client's authenticator app, signed with that page's own key. A code already checked
     // (heard twice, typed twice) gets the same answer again and is not checked twice.
     const p = pending, code = String(m.code || '').slice(0, 20);
@@ -1335,7 +1422,7 @@ async function showAccess() {
   box.textContent = '';
   if (!list.length) { const p = document.createElement('small'); p.textContent = '기록이 없습니다.'; box.append(p); }
   for (const e of list) {
-    const parts = [fmtTime(e.t), ACCESS_WHAT[e.ev] || e.ev, e.name || (e.via === 'device' ? '기기' : '키로 접속')];
+    const parts = [fmtTime(e.t), ACCESS_WHAT[e.ev] || e.ev, e.name || (e.via === 'device' ? '기기' : e.via === 'code' ? '1회용 코드' : '키로 접속')];
     if (e.ip) parts.push(e.ip);
     if (e.ev === 'end') {
       parts.push(`${Math.max(1, Math.round((e.dur || 0) / 60))}분`);
@@ -1425,6 +1512,9 @@ $('otpCancel').onclick = () => otpForm(false);
   $('regen').onclick = () => api.regenKey();
   $('kick').onclick = () => teardown('사용자가 끊음');
   api.onKick(() => teardown('사용자가 끊음'));
+  $('otBtn').onclick = () => { makeOneTimeCode().catch((e) => log('1회용 코드를 만들지 못했습니다: ' + e.message)); };
+  $('otEnd').onclick = () => endOneTime('ended');
+  showOneTime();
   api.onHostLock((on) => {
     screenGone.lockFrom = 'event';
     if (screenGone.lock === on) return;

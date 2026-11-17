@@ -105,6 +105,7 @@
   </div>
   <input id="search" type="search" placeholder="이름, 컴퓨터 이름으로 찾기" spellcheck="false" autocomplete="off">
   <button id="add" class="primary" title="Ctrl+N">＋ PC 추가</button>
+  <button id="code" class="plain" title="다른 사람의 호스트 창에서 받은 1회용 코드로 한 번만 접속합니다(목록에 넣지 않습니다)">1회용 코드로 접속</button>
   <button id="exitStart" class="plain" hidden title="처음 화면(이 PC 공유 / 다른 PC에 접속)으로 돌아갑니다. 열려 있는 원격 PC 창은 그대로 둡니다">나가기</button>
 </header>
 <main>
@@ -143,6 +144,20 @@
       <button type="button" class="plain" id="addCancel">취소</button>
       <button type="button" class="plain" id="addOnly">추가만</button>
       <button type="submit" class="primary" id="addGo">추가하고 접속</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="codeDlg">
+  <form method="dialog">
+    <h3>1회용 코드로 접속</h3>
+    <p>도와줄 PC의 My Remote 호스트 창에서 <b>1회용 코드로 도움 받기 → 코드 만들기</b>로 만든 코드를 넣으세요. 그 PC에서 허용해야 연결되고, 목록에는 넣지 않습니다.</p>
+    <label for="codeIn">1회용 코드</label>
+    <input id="codeIn" type="text" maxlength="20" placeholder="XXXX-XXXX-XXXX" spellcheck="false" autocomplete="off" style="font-family: Consolas, monospace; letter-spacing: .08em">
+    <div class="hint" id="codeHint"></div>
+    <div class="btns">
+      <button type="button" class="plain" id="codeCancel">취소</button>
+      <button type="submit" class="primary" id="codeGo">접속</button>
     </div>
   </form>
 </dialog>
@@ -400,6 +415,16 @@ async function doAdd(thenOpen) {
   if (thenOpen) connect(r.id);
 }
 $('add').onclick = $('add2').onclick = openAdd;
+// A one-time code from someone's host window: a window of its own, not in the list (client/main.js openCode).
+if (!api.oneTime) $('code').hidden = true; // an app from before 0.9.0 under this page cannot happen, but its main could be older
+$('code').onclick = () => { $('codeIn').value = ''; $('codeHint').textContent = ''; $('codeDlg').showModal(); $('codeIn').focus(); };
+$('codeCancel').onclick = () => $('codeDlg').close();
+$('codeDlg').querySelector('form').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const r = await api.oneTime($('codeIn').value).catch(() => ({ ok: false }));
+  if (r && r.ok) { $('codeDlg').close(); return; }
+  $('codeHint').textContent = r && r.why === 'format' ? '코드는 영문과 숫자 12자입니다(예: 7KQ2-M9TX-4HPC).' : '창을 열지 못했습니다.';
+};
 $('addCancel').onclick = () => { addKey.reset(); $('addDlg').close(); };
 $('addOnly').onclick = () => doAdd(false);
 $('addDlg').querySelector('form').onsubmit = (ev) => { ev.preventDefault(); doAdd(true); };

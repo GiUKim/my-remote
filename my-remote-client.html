@@ -18,8 +18,8 @@
 <body>
 <div class="box">
   <h2 style="margin:0 0 6px">My Remote</h2>
-  <small id="hint">호스트 프로그램에 표시된 접속 키를 입력하세요.</small>
-  <input id="key" type="password" placeholder="접속 키" autocomplete="off" spellcheck="false">
+  <small id="hint">호스트 프로그램의 접속 키, 또는 호스트에서 받은 1회용 코드를 입력하세요.</small>
+  <input id="key" type="password" placeholder="접속 키 또는 1회용 코드" autocomplete="off" spellcheck="false">
   <div style="margin-top:12px"><button id="go">접속</button></div>
   <div id="msg"></div>
 </div>
@@ -35,7 +35,8 @@
 //   host -> loader: { t: 'app', sid, ts, hash, html? }   html omitted when have === hash
 // In the client app a PC of its list may have a token of its own instead of the key (from 2026-11-16,
 // window.mrShell.bootDevice): the same exchange on the token's own topics (RD.DEVICE). A host refuses a
-// blocked token: { t: 'denied', sid, why }.
+// blocked token: { t: 'denied', sid, why }. From 0.9.0 the field also takes a one-time code the host window
+// made (RD.codeOf): the same exchange on the code's own topics (RD.deriveCode); the page gets the code as `key`.
 // Everything is wrapped in a function so nothing here collides with the page it loads.
 (() => {
 // Shared by host and client.
@@ -253,7 +254,33 @@ const RD = (() => {
     });
   }
 
-  return { derive, channel, waitIce, rand, DEVICE };
+  // A one-time code: the person at the host has the host window make one and gives it to someone who is to
+  // help (host.js oneTime). 12 characters of Crockford's base32 (no I, L, O, U), 60 random bits, shown as
+  // XXXX-XXXX-XXXX; what is typed is read forgivingly (case, spaces and dashes, O for 0, I and L for 1). It is
+  // stretched (PBKDF2, 200 000 rounds) into a secret of the access key's size, which gives keys and topics of
+  // their own (CODE). With 60 bits and a life of minutes, guessing it from what the relay sees is out of reach;
+  // and a person at the host must still allow the request it brings. Loaders from before 0.9.0 take keys only.
+  const CODE = 'my-remote-code-v1';
+  const CODE_ALPHA = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  function newCode() {
+    const b = crypto.getRandomValues(new Uint8Array(12));
+    let s = '';
+    for (let i = 0; i < 12; i++) s += CODE_ALPHA[b[i] & 31];
+    return s;
+  }
+  // What was typed, as a code; '' when it is none (an access key: 43 characters).
+  function codeOf(text) {
+    const s = String(text || '').toUpperCase().replace(/[\s-]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
+    return /^[0-9A-HJKMNP-TV-Z]{12}$/.test(s) ? s : '';
+  }
+  const showCode = (code) => String(code).replace(/(.{4})(?=.)/g, '$1-');
+  async function deriveCode(code) {
+    const base = await crypto.subtle.importKey('raw', te.encode(code), 'PBKDF2', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: te.encode(CODE), iterations: 200000 }, base, 256);
+    return derive(b64u(bits), CODE);
+  }
+
+  return { derive, channel, waitIce, rand, DEVICE, CODE, newCode, codeOf, showCode, deriveCode };
 })();
 
 const SERVER = 'https://ntfy.sh';
@@ -296,8 +323,10 @@ async function go(fresh) {
   const fail = (text) => { busy = false; $('go').disabled = false; msg(text); };
   const key = $('key').value.trim();
   store.set('mr_key', null); // browsers no longer keep the key (2026-11-16): what an older loader kept goes
+  // The field takes an access key or a one-time code the host window made (signal.js codeOf; from 0.9.0).
+  const code = device ? '' : RD.codeOf(key);
   let keys;
-  try { keys = device ? await RD.derive(device.secret, RD.DEVICE) : await RD.derive(key); } catch (e) { fail('오류: ' + e.message); return; }
+  try { keys = device ? await RD.derive(device.secret, RD.DEVICE) : code ? await RD.deriveCode(code) : await RD.derive(key); } catch (e) { fail(/형식/.test(e.message) ? '접속 키나 1회용 코드의 형식이 올바르지 않습니다' : '오류: ' + e.message); return; }
   const cached = fresh ? null : store.get('mr_app_html');
   const have = cached ? store.get('mr_app_hash') || '' : '';
   const sid = RD.rand(16);
@@ -342,6 +371,7 @@ async function go(fresh) {
       done = true;
       chan.close();
       fail(device ? '호스트가 응답하지 않습니다. 호스트가 꺼져 있거나, 호스트에서 이 PC의 등록을 지웠을 수 있습니다. 지웠다면 PC 목록의 "키 바꾸기"로 접속 키를 다시 넣으면 다시 등록됩니다.'
+        : code ? '응답이 없습니다. 1회용 코드가 틀렸거나, 만료되었거나(10분), 이미 쓰였을 수 있습니다. 호스트 PC에서 새 코드를 받아 다시 넣어 보세요.'
         : '호스트가 응답하지 않습니다. 호스트 프로그램이 켜져 있는지와 접속 키를 확인하세요.');
     }, 15000);
   } catch (e) {

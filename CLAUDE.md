@@ -537,7 +537,32 @@ the client app instead).
     into the page's measurements (`cs.signed`).
     The isolated runs sign with a throwaway key (`testPageKey`) and start the client app with
     `--trust-page-key=` (taken only with `--loader=`); the in-process test windows are attached with `trust`.
-  - Still to come (agreed with the user 2026-11-16): a one-time code with acceptance for helping others.
+  - **One-time codes** (0.9.0; agreed 2026-11-16, built 2026-11-17: "남을 도울 때 쓰는 1회용 코드 + 수락").
+    The host window's card "1회용 코드로 도움 받기" makes a code (`RD.newCode` in `signal.js`: 12 characters
+    of Crockford's base32, 60 random bits, shown XXXX-XXXX-XXXX; typed forgivingly: case, spaces, dashes, O for
+    0, I and L for 1: `RD.codeOf`). The code is stretched (PBKDF2-SHA256, 200 000 rounds) into a secret of the
+    key's size that gives keys and topics of their own (`RD.deriveCode`, salt `my-remote-code-v1`), and the
+    host listens on it for 10 minutes as one more route (`kind: 'code'`) on its one subscription. A hello on
+    it always waits for 허용 in the host window, whatever "새 기기 확인" says (the card says it is a one-time
+    code); the authenticator app does not let it in (refused even when a page sends a code), and `pairDevice`
+    takes key routes only, so no device token. One page is let in (its `pk`; never added to `allowedPks`, so no
+    way past the key's gate either); another page with the code gets `denied` `used`; the page let in may come
+    back while the code lasts (a renew). The code ends 2 minutes after its session ended, at 끝내기 (which
+    ends the session too), or unused after 10 minutes; ended, nobody listens on it (the loader's timeout then
+    says the code may be wrong, expired or used). `access.log` writes `via: 'code'`. Why this is enough: the
+    relay sees topics and ciphertexts of a secret that has 60 bits stretched 200 000 times and lives minutes,
+    so guessing it is out of reach, and a person at the host still has to allow the request and sees the
+    same 4-digit number as the other screen. The field of the loader and of the page takes a key or a code
+    (loaders from before 0.9.0 take keys only: their `derive` wants 32 bytes); the page gets the code as
+    `__mrBoot.key`, connects with `RD.deriveCode`, never asks for a device token (`ONE_TIME`). The client
+    app's list has "1회용 코드로 접속": a window of its own on the loader, not in the list, with storage that is
+    not kept (partition `onetime-<n>`), the code typed in once by the app (`shell:hasCode`/`shell:bootCode`,
+    as `bootKey` does for a listed PC); a window not of the list has no device features. Checked by the
+    self-test (the code shown in its form, typed in lower case with spaces; asked even with new devices off,
+    the card's number the page's; let in; a second page with the code turned away `used`; the access log's
+    `code` entries; 끝내기 ends the session; the code no good after; no device made) and its
+    `--client-app-check` (the app's "1회용 코드로 접속" through `--home-js`: asked, let in, the picture shown,
+    no device). Not tried: a real second PC over the internet, a phone.
   - Checked: `release/test-devices.js` (26: the store, an unreadable file, the log), `release/test-hosts.js`
     (34: the app's side, unreadable and broken files, an older version's rewrite), `release/test-totp.js`
     (RFC 6238's test values), `release/test-qr.js` (the standard's worked example and tables; not yet read by
@@ -1262,7 +1287,7 @@ Run from `host/` with Electron's env var cleared.
 | `node release/test-shellswap.js` | The shell replaced by a newer package (`host/shellswap.js`) in plain Node with keys, a feed on 127.0.0.1 and app folders of its own: the signed list, which package replaces which shell, staging (and archives that are not the listed one), and the real swap script (PowerShell / sh) on fake folders whose program is a copy of Node: swapped and confirmed, not confirmed (put back), still running (not swapped), nothing to start, the sweep. About a minute |
 | `node release/build.js --sign-packages=<folder>` | `packages.json` and its signature from the packages' records (`<name>.package.json`) and archives in `<folder>`, each archive hashed again; checked with the keys in `app/update-config.json`. Part of every release from 0.7.0 on |
 | `node release/test-appsync.js` | The two faces kept one app (`host/appsync.js`) in plain Node: a newer version followed once it came up in the other face (not on trial, not a bad one, once), the one entry in place of the two shortcuts (Windows and Linux layouts in folders of its own; a source folder's Linux entries stay). A second |
-| `electron client --loader=<file> --list [--home-shot=<file.png> --home-size=940x480 --home-js=<code>]` | The client app's list on a profile of its own next to `<file>` (any loader file), never the person's. PCs come from `home-import.json` next to it (`[{ name, key, open, loader, seen, lastAt }]`, made-up keys; removed when read). With `--home-shot` no window is shown: a picture of the list is written and the app ends (how `docs/img/home.png` was made) |
+| `electron client --loader=<file> --list [--home-shot=<file.png> --home-size=940x480 --home-js=<code>]` | The client app's list on a profile of its own next to `<file>` (any loader file), never the person's. PCs come from `home-import.json` next to it (`[{ name, key, open, loader, seen, lastAt }]`, made-up keys; removed when read). With `--home-shot` no window is shown: a picture of the list is written and the app ends (how `docs/img/home.png` was made). Without it, `--home-js` runs in the list once it is up, as a person's click would (the self-test's one-time code: `mrHome.oneTime('<code>')`) |
 | `node release/test-update.js` | The update logic (`app/core.js`, `app/updater.js`) in plain Node with made-up releases and feeds: signatures, file names, downgrades, the trial and going back, ordinary and required updates. A few seconds |
 | `node release/test-app.js [--packaged]` | The app's shell in real Electron against a feed on this machine (made-up versions; nothing leaves the PC, the real host is not started). `--packaged` also builds this folder's code as the real package (test key, temporary folder) and runs its self-test through the shell: about 4 minutes. On Linux under `xvfb-run`; `MR_TEST_ELECTRON_ARGS=--no-sandbox` where the sandbox cannot run |
 | `node release/build.js [--critical]` | Builds a release from the checked-out commit into `dist/release` (`latest.json`, its signature, the bundle, and `bundle/` for packaging). Signs with the key outside the repository |
@@ -1353,7 +1378,8 @@ In the client app a PC with a device token (see "Devices") runs the same exchang
 topics and keys (`RD.derive(token, RD.DEVICE)`); a host answers a blocked token's `ver` or `hello` with
 `{t:'denied', sid, ts, why:'blocked'}`. The host subscribes to its own topic and every token's at once
 (`/<t1>,<t2>/sse`), answers each message on the topics it came by, and takes an `answer` only on its
-session's.
+session's. From 0.9.0 the same goes for a one-time code while it lasts (`RD.deriveCode(code)`, see
+"One-time codes"): its hello always waits for 허용 at the host; a second page gets `denied` `used`.
 The host builds the page once at start, so page and host always match. Loaders built from 2026-11-13
 on check a stored page's SHA-256 against the hash the host confirmed (at least 20 hex digits) and
 otherwise fetch it again (Chrome and Edge share one localStorage among all `file://` pages); older

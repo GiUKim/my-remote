@@ -194,8 +194,8 @@
 </div></div>
 <div id="panel"><div class="box">
   <h2 style="margin:0 0 6px">My Remote</h2>
-  <small id="keyHint">호스트 프로그램에 표시된 접속 키를 입력하세요.</small>
-  <input id="key" type="password" placeholder="접속 키" autocomplete="off" spellcheck="false">
+  <small id="keyHint">호스트 프로그램의 접속 키, 또는 호스트에서 받은 1회용 코드를 입력하세요.</small>
+  <input id="key" type="password" placeholder="접속 키 또는 1회용 코드" autocomplete="off" spellcheck="false">
   <div style="margin-top:12px"><button id="go">접속</button></div>
   <div id="msg"></div>
 </div></div>
@@ -232,6 +232,7 @@ let want = false, ever = false, retry = 0, retryTimer = 0, helloTimer = 0;
 // given to it once when it connected with the key) instead of the key: see "Devices" in CLAUDE.md.
 const DEVICE = boot && boot.device && typeof boot.device.secret === 'string' ? boot.device : null;
 let paired = false; // this page was given a token for this app (it asks once per page)
+let ONE_TIME = false; // connected with a one-time code (no device token; the host must allow it each time)
 let monitors = [];          // host monitors: [{idx, mid, x, y, width, height, primary, stream}]
 const views = [];           // one per client window: what it shows and how
 let mainView = null, winSeq = 0;
@@ -2163,7 +2164,7 @@ function showLock() {
 // it (window.mrShell: devicePaired, deviceVerified). It drops the key once the token has been seen to
 // work: here, by asking the host for its page over the token's own topics (the host listens there once it
 // has taken the new token).
-const wantPair = () => !DEVICE && !paired && !!shell && typeof shell.devicePaired === 'function' && typeof shell.deviceHello === 'function';
+const wantPair = () => !DEVICE && !ONE_TIME && !paired && !!shell && typeof shell.devicePaired === 'function' && typeof shell.deviceHello === 'function';
 // What this app says about itself when it asks: shown at the host. Its `install` (the app's own name, by
 // which the host replaces the token of an app that pairs again) goes over the connection once it is open
 // ('pair'), not in the hello, which everyone holding the key can read on the relay.
@@ -2218,6 +2219,7 @@ const DENIED = {
   busy: '다른 기기가 호스트의 허용을 기다리고 있거나, 요청이 너무 잦습니다. 잠시 뒤 다시 접속해 보세요.',
   locked: '코드를 여러 번 틀려 OTP 확인이 잠시 막혔습니다. 호스트에서 허용하거나 나중에 다시 시도하세요.',
   old: '이 화면이 호스트와 맞지 않습니다. 다시 접속해 보세요.',
+  used: '이 1회용 코드는 이미 다른 접속에 쓰였습니다. 호스트 PC에서 새 코드를 받으세요.',
 };
 
 // ---- this page's own key: the host knows the client it allowed by it ------------------------------------
@@ -2545,7 +2547,7 @@ async function begin() {
     await c.send(hello);
     if (!ever) msg('호스트 응답 대기 중…');
     helloTimer = setTimeout(() => {
-      if (sid === mySid && (!pc || pc.connectionState !== 'connected')) lost('호스트가 응답하지 않습니다. 호스트 프로그램 실행 여부와 키를 확인하세요.');
+      if (sid === mySid && (!pc || pc.connectionState !== 'connected')) lost(ONE_TIME ? '호스트가 응답하지 않습니다. 1회용 코드가 만료되었거나 호스트에서 끝냈을 수 있습니다.' : '호스트가 응답하지 않습니다. 호스트 프로그램 실행 여부와 키를 확인하세요.');
     }, 20000);
   } catch (e) {
     if (sid === mySid) lost('오류: ' + e.message);
@@ -2555,7 +2557,11 @@ async function begin() {
 async function connect() {
   // Browsers no longer keep the key (2026-11-16): a slot that a loader before that filled is emptied.
   store.set('mr_key', null);
-  try { keys = DEVICE ? await RD.derive(DEVICE.secret, RD.DEVICE) : await RD.derive($('key').value.trim()); } catch (e) { msg('오류: ' + e.message); return; }
+  // The field holds an access key or a one-time code the host window made (signal.js codeOf; see host.js oneTime).
+  const typed = $('key').value.trim();
+  ONE_TIME = !DEVICE && !!RD.codeOf(typed);
+  try { keys = DEVICE ? await RD.derive(DEVICE.secret, RD.DEVICE) : ONE_TIME ? await RD.deriveCode(RD.codeOf(typed)) : await RD.derive(typed); }
+  catch (e) { msg(/형식/.test(e.message) ? '접속 키나 1회용 코드의 형식이 올바르지 않습니다' : '오류: ' + e.message); return; }
   want = true; ever = false; retry = 0;
   $('audio').play().catch(() => {}); // unlock audio playback while we have a user gesture
   begin();

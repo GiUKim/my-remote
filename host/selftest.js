@@ -1212,9 +1212,9 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         const hjs = (code) => hostWin.webContents.executeJavaScript(code);
         await sleep(1500);
         const on = await hjs('hostApi.gate.set(true)');
-        const page = async () => {
+        const page = async (k = cfg.key) => {
           const gw = new BrowserWindow({ show: false, width: 1280, height: 720, webPreferences: { backgroundThrottling: false } });
-          await gw.loadFile(file, { hash: `k=${cfg.key}&auto&ro` });
+          await gw.loadFile(file, { hash: `k=${k}&auto&ro` });
           const g = (code) => gw.webContents.executeJavaScript(code);
           const gstate = () => g(`({ state: window.__rd.state, frames: window.__rd.frames, connects: window.__rd.connects, asked: window.__rd.asked || null, denied: window.__rd.denied || '', askMsg: document.getElementById('askMsg').textContent })`);
           const guntil = async (pred, secs) => { let x; for (let i = 0; i < secs * 2; i++) { await sleep(500); try { x = await gstate(); if (pred(x)) return [true, x]; } catch {} } return [false, x]; };
@@ -1285,6 +1285,38 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         check('new devices confirmed: turning it off is refused during a remote session and for a moment after, and works then',
           offLive && !offLive.ok && offLive.why === 'remote' && offJustAfter && !offJustAfter.ok && off && off.ok && !off.confirmNew && otpOff && otpOff.ok,
           JSON.stringify({ offLive: offLive && offLive.why, offJustAfter: offJustAfter && (offJustAfter.ok || offJustAfter.why), off: off && off.ok, otpOff: otpOff && otpOff.ok }));
+
+        // One-time codes (host.js oneTime): a code the host window makes lets one page in, after 허용 here even
+        // with "새 기기 확인" off, gives it no device token and no way past the key's gate; another page with
+        // the same code is turned away; ending the code ends its session, and the code is no good afterwards.
+        await idle();
+        const devicesBefore = await hjs('hostApi.devices.list().then((r) => (r && r.list ? r.list : []).length)');
+        await hjs('makeOneTimeCode()');
+        const code = await hjs('oneTime ? oneTime.code : ""');
+        const otShown = await hjs(`document.getElementById('otCode').textContent`);
+        const q1 = await page(code.toLowerCase().replace(/(.{4})(?=.)/g, '$1 ')); // as typed by someone reading it out: lower case, spaces
+        let [askedQ, aq] = await q1.guntil((x) => !!x.asked, 30);
+        const cq = await card(), titleQ = await hjs(`document.getElementById('askTitle').textContent`);
+        await hjs(`document.getElementById('askYes').click()`);
+        let [inQ, bq] = await q1.guntil((x) => x.state === 'connected' && x.frames > 10, 30);
+        const q2 = await page(code);
+        let [usedQ, uq] = await q2.guntil((x) => x.denied === 'used', 25);
+        await q2.close();
+        const viaCode = await hjs('hostApi.accessLog().then((l) => (Array.isArray(l) ? l : []).filter((e) => e.via === "code").map((e) => e.ev).join(","))');
+        await hjs('endOneTime("ended")');
+        let [outQ, oq] = await q1.guntil((x) => x.state !== 'connected', 15);
+        await q1.close();
+        await idle();
+        const q3 = await page(code);
+        await sleep(9000);
+        const s3 = await q3.g('({ state: window.__rd.state, asked: !!window.__rd.asked, connects: window.__rd.connects })');
+        await q3.close();
+        const devicesAfter = await hjs('hostApi.devices.list().then((r) => (r && r.list ? r.list : []).length)');
+        check('one-time code: it waits for 허용 even with new devices off, lets one page in without a device token, turns a second away, ends with its session and is no good after',
+          /^[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(otShown) && askedQ && cq.shown && cq.code === aq.asked.code && /1회용/.test(titleQ) && inQ && usedQ &&
+          /approved/.test(viaCode) && outQ && !s3.asked && s3.state !== 'connected' && devicesAfter === devicesBefore,
+          `shown ${otShown}; asked ${askedQ} (card ${JSON.stringify(cq)}, title "${titleQ}"); in ${inQ}; second page: ${uq && uq.denied}; access log (code): ${viaCode}; ended: ${outQ} (${oq && oq.state}); ` +
+          `after: ${JSON.stringify(s3)}; devices ${devicesBefore} -> ${devicesAfter}`);
       }
 
       if (SHELL_CHECK) {
@@ -1465,6 +1497,34 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         const heard = accessSince(t6, () => true);
         check('devices: a device removed at the host is not heard any more (no session, no answer)', devices.list().length === 0 && heard.length === 0, `access log since: ${JSON.stringify(heard.map((e) => e.ev))}`);
         await quitGently(child5);
+
+        // A one-time code given to the app's "1회용 코드로 접속" (home.html; the app types it into the loader of a
+        // window of its own, not in its list): the host asks, 허용 lets it in, the app shows the picture, no device.
+        {
+          const hjs = (code) => hostWin.webContents.executeJavaScript(code);
+          await hjs('makeOneTimeCode()');
+          const code = await hjs('oneTime ? oneTime.code : ""');
+          const t7 = Date.now(), from7 = fs.existsSync(diag) ? fs.statSync(diag).size : 0;
+          const child6 = require('child_process').spawn(process.execPath, [args[0], '--loader=' + lloader, '--list', `--home-js=mrHome.oneTime(${JSON.stringify(code.replace(/(.{4})(?=.)/g, '$1-'))})`, ...args.slice(2)], { env, stdio: 'ignore' });
+          let asked7 = false;
+          for (let i = 0; i < 40 && !asked7; i++) { await sleep(1000); asked7 = await hjs('!!(pending && pending.route.kind === "code")'); }
+          if (asked7) await hjs(`document.getElementById('askYes').click()`);
+          let seen7 = null;
+          for (let i = 0; i < 40 && !seen7; i++) {
+            await sleep(1000);
+            let log = '';
+            try { log = fs.readFileSync(diag, 'utf8').slice(from7); } catch {}
+            for (const line of log.split('\n')) { let e = null; try { e = JSON.parse(line); } catch {} if (e && e.client && e.client.shell === true && Object.values(e.client.fps || {}).some((f) => f > 0)) seen7 = e.client; }
+          }
+          const viaCode7 = accessSince(t7, (e) => e.via === 'code').map((e) => e.ev);
+          const live7 = await hjs('!!(session && session.route.kind === "code" && session.connectedAt)');
+          await hjs('endOneTime("ended")');
+          await sleep(1000);
+          check('one-time code in the client app ("1회용 코드로 접속"): the host asks, 허용 lets it in, the picture is shown, and no device is made',
+            asked7 && !!seen7 && live7 && viaCode7.includes('approved') && devices.list().length === 0,
+            `asked: ${asked7}; ${seen7 ? 'picture shown' : 'no measurements from the app arrived'}; live on the code: ${live7}; access log (code): ${viaCode7.join(',')}; devices: ${devices.list().length}`);
+          await quitGently(child6);
+        }
       }
     }
   } catch (e) {

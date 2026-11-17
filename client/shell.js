@@ -289,6 +289,10 @@ function setupIpc() {
   const listed = (e) => { const s = shellOf(e.sender); return s && s.host && list && e.sender === s.win.webContents && (!e.senderFrame || e.senderFrame === e.sender.mainFrame) ? s : null; };
   ipcMain.on('shell:inList', (e) => { e.returnValue = !!listed(e); });
   ipcMain.handle('shell:bootKey', async (e) => { const s = listed(e); return s ? list.key(s.host) : null; });
+  // A window opened for a one-time code (client/main.js home:oneTime): the code, once, to its own top page.
+  const coded = (e) => { const s = shellOf(e.sender); return s && s.code && e.sender === s.win.webContents && (!e.senderFrame || e.senderFrame === e.sender.mainFrame) ? s : null; };
+  ipcMain.on('shell:hasCode', (e) => { e.returnValue = !!coded(e); });
+  ipcMain.handle('shell:bootCode', (e) => { const s = coded(e); if (!s) return null; const c = s.code; s.code = ''; return c; });
   // This PC as a device of that host (see "Devices" in CLAUDE.md): the token the loader connects with
   // instead of the key, what the host is told about this PC, the token the host gave, and that it worked.
   // The relay a token's loader talks to is its own (the one it is built for), never one a page names.
@@ -502,10 +506,10 @@ function reportShown(bw) {
 
 // host: the id of the PC of the app's list this window is for (see setList), if any. trust: a test's own page
 // (the self-test's in-process windows), which no release signed.
-function attach(win, { host = null, trust = false } = {}) {
+function attach(win, { host = null, trust = false, code = '' } = {}) {
   setupIpc();
   const wc = win.webContents;
-  const state = { win, children: new Set(), host, trusted: false, trustAlways: !!trust };
+  const state = { win, children: new Set(), host, trusted: false, trustAlways: !!trust, code: String(code || '') };
   shells.set(wc.id, state);
   // Whatever the window loads next (a reload, the page fetching its new version) is checked anew by its loader.
   wc.on('did-start-navigation', (d, url, inPlace, mainFrame) => {

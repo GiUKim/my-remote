@@ -213,5 +213,31 @@ const RD = (() => {
     });
   }
 
-  return { derive, channel, waitIce, rand, DEVICE };
+  // A one-time code: the person at the host has the host window make one and gives it to someone who is to
+  // help (host.js oneTime). 12 characters of Crockford's base32 (no I, L, O, U), 60 random bits, shown as
+  // XXXX-XXXX-XXXX; what is typed is read forgivingly (case, spaces and dashes, O for 0, I and L for 1). It is
+  // stretched (PBKDF2, 200 000 rounds) into a secret of the access key's size, which gives keys and topics of
+  // their own (CODE). With 60 bits and a life of minutes, guessing it from what the relay sees is out of reach;
+  // and a person at the host must still allow the request it brings. Loaders from before 0.9.0 take keys only.
+  const CODE = 'my-remote-code-v1';
+  const CODE_ALPHA = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  function newCode() {
+    const b = crypto.getRandomValues(new Uint8Array(12));
+    let s = '';
+    for (let i = 0; i < 12; i++) s += CODE_ALPHA[b[i] & 31];
+    return s;
+  }
+  // What was typed, as a code; '' when it is none (an access key: 43 characters).
+  function codeOf(text) {
+    const s = String(text || '').toUpperCase().replace(/[\s-]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
+    return /^[0-9A-HJKMNP-TV-Z]{12}$/.test(s) ? s : '';
+  }
+  const showCode = (code) => String(code).replace(/(.{4})(?=.)/g, '$1-');
+  async function deriveCode(code) {
+    const base = await crypto.subtle.importKey('raw', te.encode(code), 'PBKDF2', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: te.encode(CODE), iterations: 200000 }, base, 256);
+    return derive(b64u(bits), CODE);
+  }
+
+  return { derive, channel, waitIce, rand, DEVICE, CODE, newCode, codeOf, showCode, deriveCode };
 })();

@@ -18,14 +18,16 @@ ipcRenderer.on('shell:shown', (_e, shown) => {
 // place is not touched). So the key is never part of an address and is not kept in this window's
 // storage. A PC that gave this app a token of its own (bootDevice below) has no key here: the app hands
 // out none for it, and the loader connects with the token.
-let inList = false;
+let inList = false, hasCode = false;
 try { inList = ipcRenderer.sendSync('shell:inList') === true; } catch {}
-if (inList) {
+// A window the app opened for a one-time code (from 0.9.0): the code goes into the loader's field the same way.
+try { hasCode = !inList && ipcRenderer.sendSync('shell:hasCode') === true; } catch {}
+if (inList || hasCode) {
   window.addEventListener('DOMContentLoaded', async () => {
     const field = document.getElementById('key'), go = document.getElementById('go'), keep = document.getElementById('remember');
     if (!field || !go) return; // not the loader
     let key = null;
-    try { key = await ipcRenderer.invoke('shell:bootKey'); } catch {}
+    try { key = await ipcRenderer.invoke(inList ? 'shell:bootKey' : 'shell:bootCode'); } catch {}
     if (!key || document.getElementById('key') !== field) return; // no key to be had, or the loader has gone on meanwhile
     field.value = key;
     if (keep) keep.checked = false;

@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('mrHome', {
   rename: (id, name) => ipcRenderer.invoke('home:rename', id, name),
   setKey: (id, key) => ipcRenderer.invoke('home:setKey', id, key),
   open: (id) => ipcRenderer.invoke('home:open', id),     // -> { ok, why }
+  oneTime: (code) => ipcRenderer.invoke('home:oneTime', code), // a one-time code from someone's host window -> { ok, why }: a window of its own, not in the list
   close: (id) => ipcRenderer.invoke('home:close', id),
   remove: (id) => ipcRenderer.invoke('home:remove', id),
   checkUpdate: () => ipcRenderer.invoke('home:checkUpdate'), // -> { state, version, error, available: { version, required, kind } | null }

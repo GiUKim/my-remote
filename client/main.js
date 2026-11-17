@@ -333,6 +333,25 @@ function listMode() {
     return r;
   });
   handle('home:open', (id) => openHost(String(id)));
+  // A one-time code someone's host window made (host/host.js oneTime): a window of its own on the loader, with
+  // storage of its own that is not kept (a partition without "persist:"), not in the list; the app types the
+  // code into the loader once (shell:bootCode), as it does a listed PC's key. No device features there.
+  let codeWins = 0;
+  handle('home:oneTime', (code) => {
+    const c = String(code || '').toUpperCase().replace(/[\s-]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
+    if (!/^[0-9A-HJKMNP-TV-Z]{12}$/.test(c)) return { ok: false, why: 'format' };
+    const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+    const width = Math.min(1280, area.width), height = Math.min(800, area.height);
+    const win = new BrowserWindow({
+      width, height, x: area.x + Math.max(0, Math.round((area.width - width) / 2)), y: area.y + Math.max(0, Math.round((area.height - height) / 2)),
+      title: '1회용 접속 · My Remote', autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
+      webPreferences: { preload: shell.PRELOAD, backgroundThrottling: false, partition: 'onetime-' + (++codeWins) },
+    });
+    win.on('page-title-updated', (e) => e.preventDefault());
+    shell.attach(win, { code: c });
+    win.loadFile(LOADER);
+    return { ok: true };
+  });
   handle('home:close', (id) => { const w = open.get(String(id)); if (w && !w.isDestroyed()) w.close(); return true; });
   handle('home:remove', async (id) => {
     id = String(id);
@@ -451,6 +470,12 @@ function listMode() {
       fs.writeFileSync(path.resolve(homeShot), (await win.webContents.capturePage()).toPNG());
       console.log('[client] wrote ' + path.resolve(homeShot));
       app.exit(0);
+    } else if (argOf('--home-js=')) {
+      // A test only (this branch needs --list with --loader=): what the self-test does in the list, as a person
+      // would (its one-time code check: "1회용 코드로 접속").
+      if (win.webContents.isLoading()) await new Promise((r) => win.webContents.once('did-finish-load', r));
+      await new Promise((r) => setTimeout(r, 700));
+      await win.webContents.executeJavaScript(argOf('--home-js='), true).catch((e) => console.log('[client] home-js: ' + e.message));
     }
   });
   app.on('window-all-closed', () => app.quit());
