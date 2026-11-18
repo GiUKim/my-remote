@@ -168,7 +168,7 @@ function nativeChannel() {
     const m = e.data;
     if (m.t === 'frame') {
       const n = session && session.native && session.native[m.i];
-      if (n) n.writer.write(m.frame).catch(() => {}); else m.frame.close();
+      if (n) { n.written = (n.written || 0) + 1; n.writer.write(m.frame).catch(() => {}); } else m.frame.close(); // `written`: see stalled()
       if (n && session.soundLater) soundSoon(session); // started on the lock screen: the screen is readable now
     } else if (m.t === 'opened') {
       const done = nativeOpening.get(m.i);
@@ -855,14 +855,16 @@ async function startSession(hello, route) {
   s.timers.push(setInterval(async () => {
     if (session !== s || pc.connectionState !== 'connected') return;
     const rep = await pc.getStats();
+    if (session !== s) return;
     let bytes = 0, fps = [], impl = '', codecId = '', rtt = null, kind = '', limit = '', avail = 0, target = 0;
-    const mons = {};
+    const mons = {}, encoded = {};
     rep.forEach((r) => {
       if (r.type === 'outbound-rtp' && r.kind === 'video') {
         const idx = s.mids.indexOf(r.mid), src = r.mediaSourceId && rep.get(r.mediaSourceId);
         if (idx >= 0 && r.active !== false) {
           mons[idx] = { cap: src ? Math.round(src.framesPerSecond || 0) : null, enc: Math.round(r.framesPerSecond || 0), res: (r.frameWidth || 0) + 'x' + (r.frameHeight || 0), limit: r.qualityLimitationReason || 'none', impl: r.encoderImplementation || '' };
           target += r.targetBitrate || 0;
+          encoded[idx] = r.framesEncoded || 0;
         }
         bytes += r.bytesSent; fps.push([Number(r.mid) || 0, r.active === false ? '–' : Math.round(r.framesPerSecond || 0)]);
         impl = r.encoderImplementation || impl; codecId = r.codecId || codecId;
@@ -874,9 +876,10 @@ async function startSession(hello, route) {
     });
     const codec = codecId && rep.get(codecId) ? rep.get(codecId).mimeType.replace('video/', '') : '';
     const now = performance.now();
+    if (stalled(s, encoded)) return; // the session is made anew (see stalled)
     // Host-side numbers for the client's diagnostics report.
     s.lastHs = { codec, from: s.codecFrom, enc: impl, availMbps: +(avail / 1e6).toFixed(1), targetMbps: +(target / 1e6).toFixed(1), rtt: rtt != null ? Math.round(rtt * 1000) : null, mons,
-      cap: s.native ? 'native' : 'engine', ...(s.native ? {} : { capWhy: String(s.capWhy || '').slice(0, 120) }) };
+      cap: s.native ? 'native' : 'engine', ...(s.native ? {} : { capWhy: String(s.capWhy || '').slice(0, 120) }), ...(stallRenews ? { stalls: stallRenews } : {}) };
     try { if (s.dc.readyState === 'open') s.dc.send(JSON.stringify({ t: 'hs', ...s.lastHs })); } catch {}
     if (last) {
       const mbps = ((bytes - last.bytes) * 8) / ((now - last.t) / 1000) / 1e6;
@@ -889,6 +892,39 @@ async function startSession(hello, route) {
     }
     last = { bytes, t: now };
   }, 2000));
+}
+
+// An encoder that takes no frames while frames keep going into its track (native capture). Seen in CI on
+// Linux (6 of 25 runs, H.264 from OpenH264, mostly right after the encoder was set up anew for a new size):
+// the engine took every frame from then on for one out of order ("Incoming frame timestamp is not
+// monotonically increasing", its own clock against ours, frame_cadence_adapter.cc) and dropped it, so the
+// picture stood still for the rest of the session; once the first check of a self-test failed on it. The
+// cause is inside the engine (our timestamps rise; 50 runs on a fast Linux server never showed it), so the
+// host notices it here: two readings in a row (4 s) with frames written (4 or more each: a still screen's
+// keep-alive is one a second) and none encoded. A new session starts the engine's side afresh: the client
+// reconnects at once and keeps its windows (renew). At most once a minute; counted (`stalls` in the host's
+// numbers, the diagnostics log). `encoded`: framesEncoded by monitor, of the monitors being sent.
+const STALL_READINGS = 2, STALL_FRAMES = 4, STALL_RENEW_MS = 60e3;
+let stallRenews = 0, stallRenewAt = -1e9;
+function stalled(s, encoded) {
+  if (!s.native) return false;
+  let stuck = -1;
+  for (const [k, enc] of Object.entries(encoded)) {
+    const i = Number(k), n = s.native[i];
+    if (!n) continue;
+    const w = n.written || 0, p = n.seen;
+    n.stuck = p && enc === p.enc && w - p.w >= STALL_FRAMES ? (n.stuck || 0) + 1 : 0;
+    n.seen = { enc, w };
+    if (n.stuck >= STALL_READINGS) stuck = i;
+  }
+  if (stuck < 0) return false;
+  s.native[stuck].stuck = 0;
+  if (performance.now() - stallRenewAt < STALL_RENEW_MS) return false; // it came back at once: not again and again
+  stallRenewAt = performance.now();
+  stallRenews++;
+  log(`모니터 ${stuck + 1}: 화면을 보내는데 인코더가 4초째 받지 않습니다 — 연결을 새로 맺습니다`);
+  renew(s, '인코더 멈춤');
+  return true;
 }
 
 // Without hints the bandwidth estimate starts near 300 kbps and climbs slowly, so a

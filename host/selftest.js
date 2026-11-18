@@ -1016,6 +1016,24 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       const open = await hostWin.webContents.executeJavaScript('session && session.native && api.nativeOpen ? api.nativeOpen() : -1');
       if (open >= 0) check('X11: the capturers of the session before are let go', open === s.monitors, `${open} open for ${s.monitors} monitor(s)`);
     }
+    // An encoder that stops taking frames (stalled() in host.js; what CI saw on Linux, where the engine took
+    // every frame for one out of order and dropped it), acted out: the encoder is given an empty track of its
+    // own, so the frames the capturer goes on writing reach it no more. The host notices within a few seconds
+    // and makes the session anew; the picture comes back.
+    if (await hostWin.webContents.executeJavaScript('!!(session && session.native && session.native[0] && session.videoSenders && session.videoSenders[0])')) {
+      const framesNow = () => js(`(async () => { let n = 0; if (pc) (await pc.getStats()).forEach((r) => { if (r.type === 'inbound-rtp' && r.kind === 'video') n += r.framesDecoded || 0; }); return n; })()`);
+      const before2 = s.connects, r0 = await hostWin.webContents.executeJavaScript('stallRenews');
+      await hostWin.webContents.executeJavaScript(`session.videoSenders[0].replaceTrack(new MediaStreamTrackGenerator({ kind: 'video' })).then(() => 1)`);
+      let back2 = false, f0 = -1, f1 = -1;
+      for (let i = 0; i < 25 && !back2; i++) {
+        await sleep(1000);
+        s = await state();
+        if (s.connects > before2 && s.state === 'connected') { if (f0 < 0) f0 = await framesNow(); else { f1 = await framesNow(); back2 = f1 > f0 + 5; } }
+      }
+      const r1 = await hostWin.webContents.executeJavaScript('stallRenews');
+      check('an encoder that stops taking frames is noticed: the host makes the session anew and the picture comes back',
+        back2 && r1 === r0 + 1, `stall renews ${r0} -> ${r1}; reconnected ${s.connects > before2}; frames decoded after ${f0 < 0 || f1 < 0 ? '-' : f1 - f0}`);
+    }
     // The host's screen locked and unlocked (what main sends on Windows' lock events), and a screen the
     // native capturer cannot read for a while (a UAC prompt): the client says so over the picture.
     {

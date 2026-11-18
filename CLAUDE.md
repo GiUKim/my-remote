@@ -159,6 +159,18 @@ the client app instead).
     client's `view`) re-sends it with a full series: the encoder drops frames before it runs, and a
     `MediaStreamTrackGenerator` cannot answer its refresh request. A monitor nobody looks at is not
     captured at all.
+  - **An encoder that stops taking frames** (`stalled()` in `host.js`, 2026-11-18). In CI on Linux (H.264
+    from OpenH264, the runner having fewer than 8 cores) the engine now and then took every frame for one out
+    of order and dropped it ("Incoming frame timestamp is not monotonically increasing", frame_cadence_adapter.cc;
+    in 6 of 25 CI runs, from before 0.8.0 on, mostly right after the encoder was set up anew for a new size):
+    the first such line compared one of our timestamps (page time, 3.9 s) with one of the engine's own clock
+    (about 60 s), and the picture stood still for the rest of the session; once it failed the self-test's
+    first check. Our timestamps rise (logged frame by frame); 50 runs of that first check on the build
+    server (fast, and on 2 cores) never showed it; one frame stamped far ahead did not bring it about on
+    Windows. So the host watches for it: two stats readings in a row (4 s) with 4 or more frames written each
+    and none encoded -> `renew` (the client reconnects at once and keeps its windows), at most once a minute,
+    counted as `stalls` in the host's numbers (diagnostics log). The self-test acts it out by giving the
+    encoder an empty track of its own.
   - **Why the keep-alive** (2026-11-18): before it, nothing at all was sent while the screen stayed the
     same, and a receiver that gets no picture for 3 s asks for a key frame (WebRTC's frame time-out: a
     PLI, counted as `pli` in the diagnostics log); the encoder then makes the next picture one, so the
