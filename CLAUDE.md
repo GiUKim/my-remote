@@ -1121,6 +1121,22 @@ the client app instead).
   CPU 4.5% against 5.3%, but more gaps over 50 ms (72-76 against 27-56). So not the default; turning it
   on by itself for H.264 sessions would need runs between two machines, several monitors and other
   graphics cards first. No self-test covers it (the bench does: `--tries-file` with `{ "cfg": { "capture": "gpu" } }`).
+  Looked into again the same day (after the keep-alive), H.264 on the graphics card, eight runs: scroll p50
+  40-53 ms against 53-79, 60-61 fps shown against 55-60, encode 7-8 ms against 12-13, host CPU 3.8-4.4%
+  against 5.1-5.6%. The gaps: the bench's `gaps` count a frame the probe did not read (some 20% of those
+  shown) as a gap; counted per frame presented (`shownGap`), the GPU runs still have about twice the gaps of
+  50-67 ms (32-64 against 16-27 in 20 s of scrolling; none over 100 ms, the read-back runs up to 200 ms).
+  Where: not at the capture (gaps at the encoder's input, `--capture-probe`: 0 against 1), and nearly all
+  of them frames that were received on time and drawn late (`sure50rx`: 1-5 of 33-39 received that far
+  apart), with the client decoding in hardware or in software alike; the host's own screen is not
+  disturbed (`--native-probe`: on screen 18.9 against 18.2 ms after it is drawn, 74.2 against 74.5 fps). So
+  the gaps come from the client's drawing on the same graphics card as the host's GPU work - which a client
+  on another PC does not share - but that is not shown yet: the two-machine run is still the step before a default.
+- **The client's side of the delay** (2026-11-18): the receiver already shows each frame as soon as it is
+  decoded (`ForceSendPlayoutDelay` 0/0 in `ENGINE_TRIALS`, and `jitterBufferTarget`/`playoutDelayHint` 0
+  in the page); received to screen is about 14 ms on this PC (decode about 1 ms). Keeping the client page
+  drawing every frame (a `requestAnimationFrame` loop touching a 2 px element, so the compositor never
+  sleeps) was worse, not better: typing 79 against 66 ms, scroll 93 against 67, more gaps. Not adopted.
 - **Cursor and the captured video.** Chromium always paints the cursor into captured frames
   (`cursor: 'never'` is ignored, and hiding it with the Magnification API does not affect capture). The
   host therefore swaps the system cursors for a transparent one (`SetSystemCursor`) *before* capture

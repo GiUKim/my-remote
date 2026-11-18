@@ -121,10 +121,12 @@ function format(r) {
   if (!r.ok) return L;
   const h = r.host, s = r.scroll, sp = r.sparse, c = r.client || {}, q = r.quality;
   L.push(`  setup    ${r.captureKind || ''} ${h.codec} ${h.encoder} ${h.res}, picture ${r.setup.picture} on display ${r.setup.display} (${r.setup.monitor}), link ${r.config.net ? JSON.stringify(r.config.net) : 'direct'}`);
-  if (s.lat.n) L.push(`  scroll   shown ${s.shownFps} of ${s.drawnFps} fps drawn | delay ms p50/p95/max ${d(s.lat)} (first 0.5 s ${d(s.latHead)}) | gaps >25/>50/>100 ms: ${s.gap.over25}/${s.gap.over50}/${s.gap.over100}, longest ${s.gap.max} ms`);
+  if (s.lat.n) L.push(`  scroll   shown ${s.shownFps} of ${s.drawnFps} fps drawn | delay ms p50/p95/max ${d(s.lat)} (first 0.5 s ${d(s.latHead)}) | gaps >25/>50/>100 ms: ${s.gap.over25}/${s.gap.over50}/${s.gap.over100}, longest ${s.gap.max} ms`
+    + (s.shownGap ? ` | per presented frame >50/>100: ${s.shownGap.over50}/${s.shownGap.over100} (with none presented between: ${s.shownGap.sure50}/${s.shownGap.sure100}, received that far apart too: ${s.shownGap.sure50rx}), p95 ${s.shownGap.p95} ms` : ''));
   if (sp.events) L.push(`  sparse   delay ms p50/p95/max ${d(sp.lat)} over ${sp.events} changes, ${sp.missed} never shown`);
   if (s.lat.n || sp.events) L.push(`  where    until received p50 ${s.toRecv.p50} ms (scroll) ${sp.toRecv.p50} ms (sparse) | received to screen p50 ${s.clientSide.p50} / ${sp.clientSide.p50} ms | jitter buffer ${c.jitterBufferMs} ms, decode ${c.decodeMs} ms, sound packets ${c.audioPackets}`);
-  if (r.capture) L.push(`  split    drawn to "frame reaches the encoder" p50/p95: scroll ${r.capture.scroll.p50}/${r.capture.scroll.p95} ms, typing ${r.capture.sparse.p50}/${r.capture.sparse.p95} ms (${r.capture.fps} frames/s, ${r.capture.fmt}) | from there until received: scroll ${r.capture.restScroll} ms, typing ${r.capture.restSparse} ms`);
+  if (r.capture) L.push(`  split    drawn to "frame reaches the encoder" p50/p95: scroll ${r.capture.scroll.p50}/${r.capture.scroll.p95} ms, typing ${r.capture.sparse.p50}/${r.capture.sparse.p95} ms (${r.capture.fps} frames/s, ${r.capture.fmt}) | from there until received: scroll ${r.capture.restScroll} ms, typing ${r.capture.restSparse} ms`
+    + (r.capture.scrollGap ? ` | gaps at the encoder while scrolling >50/>100: ${r.capture.scrollGap.over50}/${r.capture.scrollGap.over100}, p95 ${r.capture.scrollGap.p95} ms` : ''));
   if (r.native) {
     const n = r.native, pp = (x) => (x && x.n ? x.p50 + '/' + x.p95 : '-');
     L.push(`  native   on the host's own screen ${pp(n.toScreen.scroll)} ms after it is drawn (typing ${pp(n.toScreen.sparse)}) | a native capturer has the frame ${pp(n.handed.scroll)} ms after that (p50/p95), ${n.scrollFps} frames/s of ${r.scroll.drawnFps} drawn | the capturer in use hands it to the encoder ${pp(n.chromium.scroll)} ms after the screen (typing ${pp(n.chromium.sparse)})`);

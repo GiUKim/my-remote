@@ -195,14 +195,18 @@ function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon, 
     const byBurst = new Map();
     for (const t of frames) { const cyc = info.get(t).cyc; if (!byBurst.has(cyc)) byBurst.set(cyc, []); byBurst.get(cyc).push(t); }
     let secs = 0, presented = 0, presentedSecs = 0;
-    const lat = [], head = [], tail = [], toRecv = [], clientSide = [], gaps = [];
+    // gaps: between the frames the probe read. shownGaps: the same per frame the <video> presented in between
+    // (presentedFrames): a frame the probe did not read was on screen all the same, and some 20% go unread, so
+    // `gaps` counts a missed reading as a gap; `sure` counts only gaps with no frame presented in between.
+    const lat = [], head = [], tail = [], toRecv = [], clientSide = [], gaps = [], shownGaps = [];
+    let sure50 = 0, sure100 = 0, sure50rx = 0; // sure50rx: of the sure50, those received that far apart too (not the client's doing)
     for (const [cyc, list] of byBurst) {
       if (list.length < 2) continue;
       secs += (info.get(list[list.length - 1]).at - info.get(list[0]).at) / 1000 * (list.length / (list.length - 1));
       // Frames the <video> put on screen during this burst, whether or not the probe read each one.
       const got = list.map((t) => seen.get(t)).filter(Boolean);
       if (got.length > 1) { presented += got[got.length - 1].pres - got[0].pres; presentedSecs += (got[got.length - 1].disp - got[0].disp) / 1000; }
-      let prev = null;
+      let prev = null, prevPres = null, prevRecv = null;
       for (const t of list) {
         const s = seen.get(t);
         if (!s) continue;
@@ -210,8 +214,14 @@ function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon, 
         lat.push(l);
         (s.e.at - burstStart.get(cyc) < 500 ? head : tail).push(l);
         if (s.recv != null) { toRecv.push(s.recv - s.e.at); clientSide.push(s.disp - s.recv); }
-        if (prev != null) gaps.push(s.disp - prev);
-        prev = s.disp;
+        if (prev != null) {
+          const g = s.disp - prev, k = typeof s.pres === 'number' && typeof prevPres === 'number' ? Math.max(1, s.pres - prevPres) : 1;
+          gaps.push(g);
+          shownGaps.push(g / k);
+          if (k === 1 && g > 50) { sure50++; if (s.recv != null && prevRecv != null && s.recv - prevRecv > 50) sure50rx++; }
+          if (k === 1 && g > 100) sure100++;
+        }
+        prev = s.disp; prevPres = s.pres; prevRecv = s.recv;
       }
     }
     const shown = frames.filter((t) => seen.has(t)).length;
@@ -219,6 +229,7 @@ function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon, 
       drawn: frames.length, shown, drawnFps: r1(secs ? frames.length / secs : 0), readFps: r1(secs ? shown / secs : 0), shownFps: r1(presentedSecs ? presented / presentedSecs : 0),
       lat: dist(lat), latHead: dist(head), latTail: dist(tail), toRecv: dist(toRecv), clientSide: dist(clientSide),
       gap: { ...dist(gaps), over25: gaps.filter((x) => x > 25).length, over50: gaps.filter((x) => x > 50).length, over100: gaps.filter((x) => x > 100).length },
+      shownGap: { ...dist(shownGaps), over50: shownGaps.filter((x) => x > 50).length, over100: shownGaps.filter((x) => x > 100).length, sure50, sure100, sure50rx },
     };
   }
   // sparse: how long one small change on a still screen takes to appear
@@ -246,10 +257,18 @@ function analyze({ rows, drawn, started, hs, cs0, cs1, m0, m1, offP, offC, mon, 
       n++;
     }
     const sp = dist(lat[0]), sc = dist(lat[1]);
+    // Gaps at the encoder's input while scrolling (host clock): between the picture frames that reached it,
+    // within a burst. Gaps already there come from the capture; gaps only on the client come after it.
+    const burstOf = new Map(drawn.filter(([t, ph]) => ph === 1 && inWin(info.get(t).at)).map(([t]) => [t, info.get(t).cyc]));
+    const atEnc = new Map();
+    for (const [t, at] of first) { const c = burstOf.get(t); if (c == null) continue; if (!atEnc.has(c)) atEnc.set(c, []); atEnc.get(c).push(at); }
+    const encGaps = [];
+    for (const list of atEnc.values()) { list.sort((a, b) => a - b); for (let i = 1; i < list.length; i++) encGaps.push(list[i] - list[i - 1]); }
     out.capture = {
       sparse: sp, scroll: sc, fmt: cap.fmt, frames: cap.n, unreadable: cap.bad, err: cap.err, fps: r1(cap.rows.length > 1 ? (cap.rows.length - 1) / ((cap.rows[cap.rows.length - 1][0] - cap.rows[0][0]) / 1000) : 0),
       restScroll: r1(out.scroll.toRecv.p50 != null && sc.p50 != null ? out.scroll.toRecv.p50 - sc.p50 : null),
       restSparse: r1(out.sparse.toRecv.p50 != null && sp.p50 != null ? out.sparse.toRecv.p50 - sp.p50 : null),
+      scrollGap: { ...dist(encGaps), over50: encGaps.filter((x) => x > 50).length, over100: encGaps.filter((x) => x > 100).length },
     };
   }
   // native: the same frames as a native capturer saw them. Everything here is counted from the
