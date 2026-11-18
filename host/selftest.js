@@ -1068,6 +1068,11 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     if (await hostWin.webContents.executeJavaScript('!!(session && session.native && api.nativeTestElsewhere(false))')) {
       const hadSound = s.audio;
       const audioIn = () => js(`(async () => { let n = 0; if (pc) (await pc.getStats()).forEach((r) => { if (r.type === 'inbound-rtp' && r.kind === 'audio') n += r.packetsReceived || 0; }); return n; })()`);
+      // Frames decoded on this very connection. The page's own count (__rd.frames, from its stats every few
+      // seconds) still has the connection before for a moment after a reconnect, and taken then as the
+      // count to beat it made this check fail now and then (2026-11-18, in the packaged app: the picture
+      // was back and the notice gone, but "9 frames fewer" than the old connection's last count).
+      const videoIn = () => js(`(async () => { let n = 0; if (pc) (await pc.getStats()).forEach((r) => { if (r.type === 'inbound-rtp' && r.kind === 'video') n += r.framesDecoded || 0; }); return n; })()`);
       // No sound for the next session to take over, as when nobody was connected before the PC locked.
       await hostWin.webContents.executeJavaScript('session.streams.forEach((st) => st.getAudioTracks().forEach((t) => t.stop())); api.nativeTestElsewhere(true); 1');
       const before = s.connects;
@@ -1078,9 +1083,12 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         if (up) [waits, s] = await until((x) => x.lock === 'secure', 8);
         h = await hostWin.webContents.executeJavaScript('({ waiting: !!(session && session.native && session.native.some((n) => n.waiting)), soundLater: !!(session && session.soundLater) })');
       } finally { await hostWin.webContents.executeJavaScript('api.nativeTestElsewhere(false); 1'); }
-      const f0 = s.frames, a0 = await audioIn();
-      let back;
-      [back, s] = await until((x) => x.lock === '' && x.frames > f0 + 5, 12);
+      const f0 = await videoIn(), a0 = await audioIn();
+      let back = false, f1 = f0;
+      for (let i = 0; i < 12 && !back; i++) { await sleep(1000); s = await state(); f1 = await videoIn(); back = s.lock === '' && f1 > f0 + 5; }
+      // Why not, when not: what the client has and what the host counts as unreadable, and which monitors the client shows.
+      const why = back ? null : await hostWin.webContents.executeJavaScript(`({ lock: screenGone.lock, from: screenGone.lockFrom, paused: [...screenGone.paused], timers: [...screenGone.timers.keys()],
+        sinceUnlock: Math.round(performance.now() - screenGone.unlockedAt), assist: assist.secure, sent: screenGone.sent, shown: session ? [...session.need.keys()] : null })`).then((g) => ({ client: { lock: s.lock, frames: f1 - f0 }, host: g }), (e) => String(e));
       let sound = 'sound not checked (no audio output device)';
       if (hadSound) {
         let a1 = a0;
@@ -1089,7 +1097,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       }
       check('a session started while the screen cannot be read (PC locked) comes up, says so, and the picture and sound follow',
         up && waits && h.waiting && back && !/^no sound/.test(sound),
-        `${up ? 'connected' : 'did not connect'}; ${waits ? 'the client was told the screen waits' : 'the client was not told'}; capturer ${h.waiting ? 'opened waiting' : 'not waiting'}; ${back ? 'picture back' : 'picture not back'}; ${sound}`);
+        `${up ? 'connected' : 'did not connect'}; ${waits ? 'the client was told the screen waits' : 'the client was not told'}; capturer ${h.waiting ? 'opened waiting' : 'not waiting'}; ${back ? 'picture back' : 'picture not back ' + JSON.stringify(why)}; ${sound}`);
     } else info('session start on a locked PC not checked: Windows native capture is not in use');
     // Installing or removing the lock screen support during a remote session is refused before anything
     // runs elevated: Windows' consent prompt could not be answered from the client. A stand-in runs in

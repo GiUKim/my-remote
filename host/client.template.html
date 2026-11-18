@@ -2684,6 +2684,9 @@ async function onOffer(m) {
       window.__rd.monitors = monitors.length;
       tellList(true);
       window.__rd.connects++;
+      // Counted for this connection from now on (the stats come every few seconds): until then the self-test's
+      // "frames > n" after a reconnect read the connection before's count.
+      window.__rd.frames = 0;
       if (chan) { chan.close(); chan = null; } // signaling no longer needed
       if (mainView.panes[0]) mainView.panes[0].video.focus();
       if (first) restoreLayout();
@@ -2842,6 +2845,7 @@ setInterval(async () => {
   const my = pc, conn = connSeq;
   if (!my || my.connectionState !== 'connected') { $('stats').textContent = ''; last = null; return; }
   const rep = await my.getStats();
+  if (pc !== my) return; // a reconnect meanwhile: these are the connection before's
   let bytes = 0, frames = 0, rtt = null, relay = false, jb = 0, jbn = 0;
   let lost = 0, recv = 0, freezes = 0, freezeDur = 0, dropped = 0, nack = 0, pli = 0, decoder = '';
   const byMid = {};
