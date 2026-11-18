@@ -2289,7 +2289,7 @@ function showLock() {
   for (const view of liveViews()) {
     // The window that shows the secure desktop itself: a bar at the top instead of a cover, so the lock
     // screen stays visible and can be typed into.
-    const onLive = !!live && selList(view.sel).includes(live.d);
+    const onLive = !!live && selList(view.sel).some((i) => live.ds.includes(i));
     const text = onLive ? null : live ? liveLockText(live) : LOCK_TEXT[hostLock];
     let el = view.lockEl;
     if (el || text) {
@@ -2542,7 +2542,10 @@ function onHostMessage(data) {
   else if (m.t === 'lock') {
     const was = hostLock;
     hostLock = m.on ? (m.why === 'secure' ? 'secure' : 'lock') : '';
-    hostLockLive = m.on && m.live && Number.isInteger(m.d) && monitors[m.d] ? { d: m.d, input: !!m.input } : null;
+    // ds: every monitor whose video shows the secure desktop (a host whose assist service is from before
+    // 2026-11-18 sends the primary's only); d: the one with the password box.
+    const ds = Array.isArray(m.ds) ? m.ds.filter((i) => Number.isInteger(i) && monitors[i]) : [];
+    hostLockLive = m.on && m.live && Number.isInteger(m.d) && monitors[m.d] ? { d: m.d, ds: ds.includes(m.d) ? ds : [m.d, ...ds], input: !!m.input } : null;
     window.__rd.lock = hostLock;
     window.__rd.lockLive = hostLockLive;
     showLock();

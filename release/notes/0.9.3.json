@@ -1,0 +1,12 @@
+{
+  "ko": [
+    "Electron을 45.3.4로 올렸습니다(Chromium·V8 보안 수정 포함). 설치된 앱은 연결이 없을 때 새 설치 묶음을 받아 스스로 바꿉니다",
+    "'부드러움 우선' 모드를 고쳤습니다. 스크롤할 때 글자가 뭉개지고(화질 23 dB) 느린 회선에서는 화면이 아주 작아지던 문제가 없어졌고, 선명도는 '선명도 우선'과 같으면서 더 매끄럽습니다",
+    "Windows 호스트의 잠금 화면이 모든 모니터에 보입니다(전에는 주 모니터만). 호스트 창의 '잠금 화면에서도 원격 조종' 칸에서 '업데이트'를 한 번 누르세요(그 PC 앞에서, 관리자 승인)"
+  ],
+  "en": [
+    "Electron 45.3.4 (Chromium and V8 security fixes). Installed apps fetch the new package and swap it in by themselves while nothing is connected",
+    "The smooth picture mode is fixed: scrolling no longer smears text (23 dB) and a slow link no longer shrinks the picture to a stamp; as sharp as the sharp mode, and smoother",
+    "A Windows host's lock screen shows on every monitor (before: the primary only). Press 'update' once in the host window's lock screen card (at that PC, with an administrator's consent)"
+  ]
+}

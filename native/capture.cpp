@@ -32,6 +32,8 @@ struct Capturer {
   // tries have failed for a reason other than another desktop having the screen (0: they have not).
   int failures; LONGLONG retryAt, failingSince;
   union { RECT dirty[256]; DXGI_OUTDUPL_MOVE_RECT moved[170]; } meta; // what changed with a frame
+  int adapter;         // the monitor's adapter, in DXGI's order (0: the one Chromium draws with, as a rule)
+  ID3D11Query* done;   // mc_next_gpu: tells when the copy into a shared texture is finished
 };
 static Capturer g_caps[8];
 // The graphics device of each capturer handle outlives mc_close: the next mc_open of that handle (the
@@ -86,7 +88,7 @@ static HRESULT duplicate(Capturer& c) {
 }
 // Lets go of the duplication and of this capturer's hold on the graphics device (the device itself is
 // kept for the next capturer of this handle, see g_kept), to start over or for good.
-static void release(Capturer& c) { drop(c.staging); drop(c.dup); drop(c.context); drop(c.device); drop(c.output); }
+static void release(Capturer& c) { drop(c.done); drop(c.staging); drop(c.dup); drop(c.context); drop(c.device); drop(c.output); }
 static void forget(Kept& k) { drop(k.context); drop(k.device); }
 static void closeAll(Capturer& c) {
   if (c.context) { c.context->ClearState(); c.context->Flush(); } // the kept device holds on to nothing of this capturer's
@@ -107,6 +109,7 @@ static HRESULT start(Capturer& c) {
       DXGI_OUTPUT_DESC d; output->GetDesc(&d);
       const RECT& r = d.DesktopCoordinates;
       found = d.AttachedToDesktop && c.px >= r.left && c.px < r.right && c.py >= r.top && c.py < r.bottom;
+      if (found) c.adapter = (int)a;
       if (!found) drop(output);
     }
     if (!found) drop(adapter);
@@ -292,6 +295,117 @@ EXPORT void mc_close(int handle) {
   if (c.used) closeAll(c);
   ReleaseSRWLockExclusive(&c.lock);
 }
+// ---- GPU hand-over: an experiment (2026-11-18), used only when the host's config says capture: 'gpu' -----
+// mc_next's loop, but the image is not read back: it is copied, on the graphics card, into a texture of its
+// own shared by an NT handle, which the page's process imports with Electron's sharedTexture as a VideoFrame
+// that stays on the graphics card. Every image gets a new texture that is never written again: the encoder
+// may read it later than anything here can know. The handle is this process's; Chromium duplicates it while
+// importing, and mc_gpu_done then lets go of ours and of the texture. Kept here meanwhile (at most
+// GPU_PENDING; the oldest is let go when more come, which only happens when the caller forgets).
+#define GPU_PENDING 32
+static struct { HANDLE h; ID3D11Texture2D* tex; } g_pending[GPU_PENDING];
+static int g_pendNext = 0;
+static SRWLOCK g_pendLock = SRWLOCK_INIT;
+static void pendingAdd(HANDLE h, ID3D11Texture2D* tex) {
+  AcquireSRWLockExclusive(&g_pendLock);
+  auto& p = g_pending[g_pendNext];
+  if (p.h) { CloseHandle(p.h); drop(p.tex); }
+  p.h = h; p.tex = tex;
+  g_pendNext = (g_pendNext + 1) % GPU_PENDING;
+  ReleaseSRWLockExclusive(&g_pendLock);
+}
+EXPORT void mc_gpu_done(unsigned long long shared) {
+  AcquireSRWLockExclusive(&g_pendLock);
+  for (auto& p : g_pending) if (p.h && (unsigned long long)(uintptr_t)p.h == shared) { CloseHandle(p.h); drop(p.tex); p.h = nullptr; }
+  ReleaseSRWLockExclusive(&g_pendLock);
+}
+// The adapter of a capturer's monitor in DXGI's order, -1 for a handle that is not open. A texture can only
+// be shared with Chromium's device when both are on the same adapter.
+EXPORT int mc_adapter(int handle) { return handle < 0 || handle >= 8 || !g_caps[handle].used ? -1 : g_caps[handle].adapter; }
+// As mc_next, with *shared the NT handle of the image's texture instead of its pixels; -5: no shared texture
+// could be made (the caller goes back to mc_next).
+EXPORT int mc_next_gpu(int handle, int timeoutMs, double* info, unsigned long long* shared) {
+  if (handle < 0 || handle >= 8) return -1;
+  *shared = 0;
+  Capturer& c = g_caps[handle];
+  AcquireSRWLockExclusive(&c.lock);
+  int result = 0;
+  const LONGLONG deadline = tick() + (LONGLONG)(timeoutMs / g_tickMs);
+  while (c.used) {
+    const LONGLONG now = tick();
+    const int left = (int)((deadline - now) * g_tickMs);
+    if (left <= 0) break;
+    if (!c.dup) {
+      if (now < c.retryAt) { const int wait = (int)((c.retryAt - now) * g_tickMs) + 1; Sleep(wait < left ? wait : left); continue; }
+      const int w = c.width, h = c.height;
+      const HRESULT hr = c.device ? duplicate(c) : start(c);
+      if (FAILED(hr)) { if (setback(c, hr)) { result = -4; break; } continue; }
+      if (c.width != w || c.height != h) { result = -3; break; }
+    }
+    DXGI_OUTDUPL_FRAME_INFO fi; IDXGIResource* resource = nullptr;
+    HRESULT hr = c.dup->AcquireNextFrame(left, &fi, &resource);
+    const LONGLONG handed = tick();
+    if (hr == DXGI_ERROR_WAIT_TIMEOUT) {
+      hr = c.device->GetDeviceRemovedReason();
+      if (hr == S_OK) { working(c); break; }
+      fail("the graphics device was removed", hr);
+      if (setback(c, hr)) { result = -4; break; }
+      continue;
+    }
+    if (FAILED(hr)) {
+      fail(hr == DXGI_ERROR_ACCESS_LOST ? "the duplication was lost (desktop switch, mode change)" : "AcquireNextFrame", hr);
+      if (setback(c, hr)) { result = -4; break; }
+      continue;
+    }
+    if (fi.LastPresentTime.QuadPart == 0) { drop(resource); c.dup->ReleaseFrame(); continue; }
+    const double changed = changedShare(c, fi);
+    ID3D11Texture2D* image = nullptr;
+    hr = resource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&image);
+    D3D11_TEXTURE2D_DESC td = {};
+    if (SUCCEEDED(hr)) image->GetDesc(&td);
+    const bool bytes = td.Format == DXGI_FORMAT_B8G8R8A8_UNORM || td.Format == DXGI_FORMAT_B8G8R8X8_UNORM;
+    ID3D11Texture2D* tex = nullptr;
+    HRESULT made = E_FAIL;
+    if (SUCCEEDED(hr) && bytes && (int)td.Width == c.width && (int)td.Height == c.height) {
+      D3D11_TEXTURE2D_DESC sd = {};
+      sd.Width = td.Width; sd.Height = td.Height; sd.MipLevels = 1; sd.ArraySize = 1; sd.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+      sd.SampleDesc.Count = 1; sd.Usage = D3D11_USAGE_DEFAULT; sd.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+      sd.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+      made = c.device->CreateTexture2D(&sd, nullptr, &tex);
+      if (SUCCEEDED(made)) c.context->CopyResource(tex, image);
+    }
+    drop(image); drop(resource);
+    c.dup->ReleaseFrame();
+    if (FAILED(hr)) { drop(tex); fail("reading the desktop image", hr); if (setback(c, hr)) { result = -4; break; } continue; }
+    if (!bytes) { drop(tex); result = -2; fail("the monitor is not in an 8 bit colour mode (HDR?)", E_NOTIMPL); break; }
+    if ((int)td.Width != c.width || (int)td.Height != c.height) { drop(tex); c.width = (int)td.Width; c.height = (int)td.Height; result = -3; break; }
+    if (FAILED(made)) { fail("CreateTexture2D (shared)", made); result = -5; break; }
+    HANDLE h = nullptr; IDXGIResource1* r1 = nullptr;
+    HRESULT sh = tex->QueryInterface(__uuidof(IDXGIResource1), (void**)&r1);
+    if (SUCCEEDED(sh)) sh = r1->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr, &h);
+    drop(r1);
+    // The copy is finished before the texture is handed over: Chromium reads it with a device of its own.
+    if (SUCCEEDED(sh) && !c.done) { D3D11_QUERY_DESC qd = {}; qd.Query = D3D11_QUERY_EVENT; sh = c.device->CreateQuery(&qd, &c.done); }
+    if (SUCCEEDED(sh)) {
+      c.context->End(c.done);
+      c.context->Flush();
+      const LONGLONG until = tick() + (LONGLONG)(100 / g_tickMs);
+      while (c.context->GetData(c.done, nullptr, 0, 0) == S_FALSE && tick() < until) SwitchToThread();
+    }
+    if (FAILED(sh) || !h) { if (h) CloseHandle(h); drop(tex); fail("sharing the image", sh); result = -5; break; }
+    pendingAdd(h, tex);
+    *shared = (unsigned long long)(uintptr_t)h;
+    info[0] = toMs(fi.LastPresentTime.QuadPart); info[1] = toMs(handed); info[2] = toMs(tick()); info[3] = (double)fi.AccumulatedFrames; info[4] = changed;
+    working(c);
+    result = 1;
+    break;
+  }
+  if (!c.used) result = -1;
+  else if (result == 0 && !c.dup) result = 2;
+  ReleaseSRWLockExclusive(&c.lock);
+  return result;
+}
+
 EXPORT double mc_now(void) { initClock(); return toMs(tick()); }
 EXPORT const char* mc_error(void) { return g_error; }
 

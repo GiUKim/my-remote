@@ -65,6 +65,8 @@ const DEFAULTS = {
   minBitrateMbps: 1,    // it never goes below this
   maxFps: 60,
   capture: 'auto',      // auto: the native capturer (native/capture.cpp) when its DLL is there, else the browser engine's | engine: always the engine's
+                        // | gpu: as auto, and the image handed over on the graphics card (an experiment, preload.js: slower with AV1,
+                        //   faster with H.264 on the graphics card; CLAUDE.md "Performance")
   captureGap: 8,        // ms the native capturer rests after each image. Without a rest it has every image at once, but reading
                         // the screen back that often made the host's own screen stutter under full-screen motion (measured)
   refine: true,         // true: send a still screen until it is fully sharp (AV1 only; adds about 15 ms of delay) | 'always': no added delay, but a still screen is sent continuously | false

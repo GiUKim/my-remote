@@ -1037,6 +1037,23 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       check('the client says when the host screen is locked or behind a secure prompt, and when it is back', on && shown && off && gone && !/not (shown|cleared)/.test(secure),
         `lock ${on && shown ? 'shown' : 'not shown'}, ${off && gone ? 'cleared' : 'not cleared'}; ${secure}`);
     }
+    // The lock screen through the Windows assist service on every monitor (a service of 2026-11-18 on): the
+    // helper's picture of each monitor, by its place, goes into that monitor's video, and the client shows the
+    // lock screen live (its bar, no cover) on every window that shows one of them. Acted out with what main
+    // passes on (assist.js has its own test, the helper was checked on a real lock screen in the test VM).
+    if (await hostWin.webContents.executeJavaScript('!!(session && session.native && session.sources.every((src, i) => session.native[i]))')) {
+      const n = await hostWin.webContents.executeJavaScript(`(() => {
+        assistState({ secure: true, locked: true, input: true });
+        for (const src of session.sources) assistFrame({ x: src.x, y: src.y, w: src.width, h: src.height, data: new Uint8Array(src.width * src.height * 4).fill(70) });
+        return session.sources.length; })()`);
+      const [live, s1] = await until((x) => x.lock === 'lock' && x.lockLive && x.lockLive.ds.length === n, 6);
+      const ui = await js(`({ bar: !!(mainView.lockBar && mainView.lockBar.style.display === 'flex'), cover: !!(mainView.lockEl && mainView.lockEl.style.display === 'flex') })`);
+      await hostWin.webContents.executeJavaScript(`assistState({ secure: false, locked: false, input: false }); 1`);
+      const [back] = await until((x) => x.lock === '', 6);
+      const barGone = !(await js(`!!(mainView.lockBar && mainView.lockBar.style.display === 'flex')`));
+      check('the lock screen through the assist service: every monitor\'s picture reaches its own video and the client shows it live (bar, no cover); cleared after',
+        live && ui.bar && !ui.cover && back && barGone, JSON.stringify({ monitors: n, lockLive: s1 && s1.lockLive, ui, back, barGone }));
+    } else info('the lock screen on every monitor not checked: native capture is not in use on every monitor');
     // A session that starts while the screen cannot be read (the PC locked; acted out by the native
     // capturer, mc_test_elsewhere): it comes up all the same (before 0.5.1 it ended with "Could not start
     // video source", so a locked PC could not be reached at all), the client is told why the picture

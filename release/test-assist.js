@@ -35,11 +35,12 @@ T.controlSession = 'own'; // the fake service runs in this test's session
 T.serviceState = () => 'running';
 T.retryMs = 100;
 
-// The fake service: answers 'S' with "ok" and a protocol byte.
-let protocolByte = assist.PROTOCOL, controlConnections = 0, controlAsked = 0;
+// The fake service: answers 'S' with "ok" and a protocol byte, and `caps` as a fourth byte when set (a
+// service of 2026-11-18 on: 'M', every monitor; one from before answers three bytes).
+let protocolByte = assist.PROTOCOL, caps = null, controlConnections = 0, controlAsked = 0;
 const controlServer = net.createServer((sock) => {
   controlConnections++;
-  sock.on('data', (d) => { if (d[0] === 0x53) { controlAsked++; sock.write(Buffer.from([0x6f, 0x6b, protocolByte])); } });
+  sock.on('data', (d) => { if (d[0] === 0x53) { controlAsked++; sock.write(Buffer.from(caps == null ? [0x6f, 0x6b, protocolByte] : [0x6f, 0x6b, protocolByte, caps])); } });
   sock.on('error', () => {});
 });
 // The fake helper: records what the host sends; the test writes states and pictures through it.
@@ -64,6 +65,8 @@ const frames = () => toPage.filter((m) => m.t === 'frame');
   // 1. connecting
   assist.start(pageSend);
   ok('connects to the service and then to its helper', await until(() => helper && controlConnections === 1, 4000));
+  await sleep(150);
+  ok('a service of before 2026-11-18 (three bytes) is not asked for every monitor (its helper would end on it)', received.length === 0, `${received.length} bytes`);
 
   // 2. the lock screen: input to the helper
   helper.write(Buffer.from([0x53, 1 | 2 | 4]));
@@ -144,6 +147,29 @@ const frames = () => toPage.filter((m) => m.t === 'frame');
   await until(() => helperConnections === conns + 1, 4000);
   assist.stop();
   ok('stopping closes the connection to the helper', await until(() => helperEnded, 2000) && sink === null);
+
+  // 10b. a service that can send every monitor: asked at once ('V'), and its pictures ('R') carry their place
+  caps = 0x4d;
+  received = Buffer.alloc(0);
+  const c3 = helperConnections;
+  assist.start(pageSend);
+  ok('a service that can send every monitor is asked to at once, before anything else is sent',
+    await until(() => helperConnections === c3 + 1 && received.length >= 1, 4000) && received[0] === 0x56 && received.length === 1, `${received.length} bytes, first ${received[0]}`);
+  helper.write(Buffer.from([0x53, 1 | 2 | 4]));
+  await until(() => { const s = lastState(); return s && s.secure && s.locked; }, 2000);
+  const rf = (x, y, pw, ph, p) => { const hd = Buffer.alloc(17); hd[0] = 0x52; hd.writeInt32LE(x, 1); hd.writeInt32LE(y, 5); hd.writeUInt16LE(pw, 9); hd.writeUInt16LE(ph, 11); hd.writeUInt32LE(p.length, 13); return Buffer.concat([hd, p]); };
+  const n0 = frames().length;
+  const two = Buffer.concat([rf(0, 0, w, h, px), rf(-1920, -200, w, h, px)]); // two monitors showing the same pixels
+  helper.write(two.subarray(0, 10)); await sleep(30); helper.write(two.subarray(10));
+  const f2 = () => frames().slice(n0);
+  ok('each monitor\'s picture reaches the page with its place, also the same pixels at another place',
+    await until(() => f2().length === 2, 2000) && f2()[0].x === 0 && f2()[0].y === 0 && f2()[1].x === -1920 && f2()[1].y === -200 && f2()[1].w === w && Buffer.from(f2()[1].data).equals(px),
+    JSON.stringify(f2().map((f) => [f.x, f.y, f.w, f.h])));
+  helper.write(rf(-1920, -200, w, h, px)); await sleep(150);
+  ok('an unchanged picture of a monitor is not passed on again; a changed one is', f2().length === 2 && (helper.write(rf(-1920, -200, w, h, px2)), await until(() => f2().length === 3, 2000)));
+  assist.stop();
+  await until(() => helperEnded, 2000);
+  caps = null;
 
   // 11. installing and removing: never during a remote session (Windows' consent prompt cannot be answered
   // from the client); the offer at the host's first start asks once, and only where the service is not

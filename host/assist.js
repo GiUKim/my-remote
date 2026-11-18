@@ -5,8 +5,9 @@
 // rights, keeps a LocalSystem helper in the console session that can. During a remote session this module
 // connects to it and
 //   - learns which desktop has the screen and whether the session is locked ('state' to the page);
-//   - while a secure desktop has it, receives its pictures ('frame'), which host.js puts into the primary
-//     monitor's video track in place of the capturer's (which cannot read that desktop);
+//   - while a secure desktop has it, receives its pictures ('frame'), which host.js puts into each
+//     monitor's video track in place of the capturer's (which cannot read that desktop): every monitor's
+//     from a service of 2026-11-18 on (x, y say which), only the primary's from an older one;
 //   - while the session is locked (the lock screen and nothing else), sends the person's input to the
 //     helper instead of SendInput (input.setSink), so they type their password as at the keyboard. A UAC
 //     prompt gets no input: dropped here, and refused by the helper too (see native/winassist.cpp).
@@ -27,6 +28,10 @@ const input = require('./input');
 const CONTROL = '\\\\.\\pipe\\my-remote-assist';
 const DATA = '\\\\.\\pipe\\my-remote-assist-data';
 const PROTOCOL = 1; // ASSIST_PROTOCOL in native/winassist.cpp
+// ASSIST_CAPS: the answer's fourth byte. 'M': its helper sends every monitor once asked ('V'); a service
+// from before 2026-11-18 answers three bytes and its helper gets the primary monitor's pictures only ('F'),
+// as before (it would end on a 'V').
+const CAP_MONITORS = 0x4d;
 const SERVICE = 'MyRemoteAssist';
 const BUNDLED = path.join(__dirname, 'bin', 'winassist.exe');
 const installedPath = () => path.join(process.env.ProgramFiles || 'C:\\Program Files', 'MyRemote', 'winassist.exe');
@@ -244,7 +249,7 @@ let conn = null, ownSession = -1;
 function start(send) {
   if (!supported) return;
   stop();
-  conn = { send, control: null, data: null, state: { secure: false, locked: false, input: false }, prev: null, retry: 0 };
+  conn = { send, control: null, data: null, state: { secure: false, locked: false, input: false }, prev: new Map(), retry: 0 };
   connect(conn);
 }
 function stop() {
@@ -278,14 +283,18 @@ async function connect(c) {
   if (control.serverSession() !== (T.controlSession === 'own' ? ownSession : T.controlSession)) { control.close(); return again(c, 'the control pipe is not the service\'s (not session 0): not used'); }
   c.control = control;
   const reply = await new Promise((done) => {
-    let got = Buffer.alloc(0);
+    let got = Buffer.alloc(0), late = 0;
     const t = setTimeout(() => done(null), 4000);
-    control.read((b) => { got = Buffer.concat([got, b]); if (got.length >= 3) { clearTimeout(t); done(got); } }, () => { clearTimeout(t); done(null); });
+    const finish = () => { clearTimeout(t); clearTimeout(late); done(got); };
+    // Three bytes from a service of before 2026-11-18, four from a newer one (written at once: they come
+    // together, but a short wait for the fourth costs nothing).
+    control.read((b) => { got = Buffer.concat([got, b]); if (got.length >= 4) finish(); else if (got.length >= 3 && !late) late = setTimeout(finish, 250); }, () => { clearTimeout(t); clearTimeout(late); done(got.length >= 3 ? got : null); });
     if (!control.write(Buffer.from('S'))) { clearTimeout(t); done(null); }
   });
   if (conn !== c) return;
   if (!reply || reply.toString('latin1', 0, 2) !== 'ok') return again(c, 'the service gave no answer');
   if (reply[2] !== PROTOCOL) return again(c, `the service speaks protocol ${reply[2]}, this host ${PROTOCOL}: install it again from this version`);
+  const monitors = reply.length >= 4 && reply[3] === CAP_MONITORS;
   // The helper makes the data pipe once it runs in this session: a second or so.
   let data = null;
   for (let i = 0; i < 40 && conn === c && !data; i++) {
@@ -297,11 +306,15 @@ async function connect(c) {
   if (data.serverSession() !== ownSession) { data.close(); return again(c, 'the data pipe is not the helper\'s in this session: not used'); }
   c.data = data;
   c.backoff = 0;
-  log('connected to the assist service');
+  // Every monitor's picture, where the helper can (see CAP_MONITORS); before anything else is read.
+  if (monitors && !data.write(Buffer.from('V'))) { data.close(); return again(c, 'could not write to the helper'); }
+  log('connected to the assist service' + (monitors ? ' (every monitor)' : ' (the primary monitor)'));
   const parse = parser(c);
   data.read(parse, () => again(c, 'the helper went away'));
 }
-// The helper's messages: 'S' + flags, 'F' + u16 w, u16 h, u32 bytes + BGRA.
+// The helper's messages: 'S' + flags; 'F' + u16 w, u16 h, u32 bytes + BGRA (the primary monitor);
+// 'R' + i32 x, i32 y, u16 w, u16 h, u32 bytes + BGRA (one monitor, at x,y on the virtual screen).
+const HEAD = { 0x53: 2, 0x46: 9, 0x52: 17 };
 function parser(c) {
   let head = Buffer.alloc(0), frame = null;
   return (chunk) => {
@@ -314,37 +327,43 @@ function parser(c) {
         if (frame.filled === frame.buf.length) { gotFrame(c, frame); frame = null; }
         continue;
       }
-      const need = head.length ? (head[0] === 0x53 ? 2 : head[0] === 0x46 ? 9 : -1) : 1;
+      const need = head.length ? HEAD[head[0]] || -1 : 1;
       if (need < 0) return again(c, 'unexpected data from the helper');
       const take = Math.min(need - head.length, chunk.length - off);
       head = Buffer.concat([head, chunk.subarray(off, off + take)]);
       off += take;
-      if (head.length === 1 && head[0] !== 0x53 && head[0] !== 0x46) return again(c, 'unexpected data from the helper');
-      if (head[0] === 0x53 && head.length === 2) {
+      if (head.length === 1 && !HEAD[head[0]]) return again(c, 'unexpected data from the helper');
+      if (head.length < HEAD[head[0]]) continue;
+      if (head[0] === 0x53) {
         const f = head[1];
         head = Buffer.alloc(0);
         setState(c, { secure: !!(f & 1), locked: !!(f & 2), input: !!(f & 4) });
-      } else if (head[0] === 0x46 && head.length === 9) {
-        const fw = head.readUInt16LE(1), fh = head.readUInt16LE(3), bytes = head.readUInt32LE(5);
-        head = Buffer.alloc(0);
-        if (bytes !== fw * fh * 4 || bytes > 64 * 1024 * 1024) return again(c, 'a picture of the wrong size from the helper');
-        frame = { w: fw, h: fh, buf: Buffer.allocUnsafe(bytes), filled: 0 };
+        continue;
       }
+      const at = head[0] === 0x52 ? { x: head.readInt32LE(1), y: head.readInt32LE(5) } : null;
+      const o = at ? 9 : 1;
+      const fw = head.readUInt16LE(o), fh = head.readUInt16LE(o + 2), bytes = head.readUInt32LE(o + 4);
+      head = Buffer.alloc(0);
+      if (!fw || !fh || bytes !== fw * fh * 4 || bytes > 64 * 1024 * 1024) return again(c, 'a picture of the wrong size from the helper');
+      frame = { ...(at || {}), w: fw, h: fh, buf: Buffer.allocUnsafe(bytes), filled: 0 };
     }
   };
 }
 function gotFrame(c, f) {
   if (!c.state.secure) return; // only a secure desktop's pictures are this module's to show
-  if (c.prev && c.prev.equals(f.buf)) return; // the helper repeats an unchanged picture once a second
-  c.prev = f.buf;
-  c.send({ t: 'frame', w: f.w, h: f.h, data: f.buf });
+  // The helper repeats an unchanged picture now and then (for a late connection): not passed on again.
+  const key = f.x === undefined ? 'primary' : `${f.x},${f.y},${f.w},${f.h}`;
+  const prev = c.prev.get(key);
+  if (prev && prev.equals(f.buf)) return;
+  c.prev.set(key, f.buf);
+  c.send(f.x === undefined ? { t: 'frame', w: f.w, h: f.h, data: f.buf } : { t: 'frame', x: f.x, y: f.y, w: f.w, h: f.h, data: f.buf });
 }
 function setState(c, s) {
   const was = c.state;
   c.state = s;
   // The lock screen: input goes to the helper. Another secure desktop (UAC): it goes nowhere.
   input.setSink(s.input ? (list) => toHelper(c, list) : s.secure ? () => {} : null);
-  if (!s.secure) c.prev = null;
+  if (!s.secure) c.prev.clear();
   if (was.secure !== s.secure || was.locked !== s.locked || was.input !== s.input) {
     log(`screen: ${s.secure ? (s.locked ? 'lock screen' : 'secure desktop (UAC or similar)') : 'desktop'}${s.input ? ', input to the helper' : ''}`);
     c.send({ t: 'state', ...s });

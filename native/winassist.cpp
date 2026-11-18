@@ -25,6 +25,8 @@
 //   winassist.exe status                        is it installed and running
 //   winassist.exe grab <file.bmp>               DEBUG: capture the current input desktop to a BMP
 //                                               (run elevated to catch a secure desktop); no service
+//   winassist.exe grabmon <prefix>              DEBUG: the same for every monitor, as the helper sends
+//                                               them ('R'): <prefix>-<n>.bmp
 //   winassist.exe                               service entry point (started by the Service Manager)
 //   winassist.exe helper <sessionId>            the in-session worker the service spawns as SYSTEM
 //
@@ -66,8 +68,17 @@
 // is the session's own user's only: see sessionUserSddl().
 #define CONTROL_SDDL L"D:(A;;GA;;;IU)(A;;GA;;;BA)(A;;GA;;;SY)"
 // The host's first message on the control pipe is 'S'; the answer is "ok" and this byte. Raise it when
-// the data-pipe protocol below changes, so a host and an installed service of different versions know.
+// the data-pipe protocol below changes incompatibly, so a host and an installed service of different
+// versions know. Additions an older host would not understand go behind a capability byte instead (the
+// answer's fourth byte, which hosts that know only protocol 1 never read): ASSIST_CAPS.
 #define ASSIST_PROTOCOL 1
+// 'M': the helper sends every monitor ('R' frames) once the host asks for it with 'V' (from 2026-11-18).
+// A service without it answers three bytes, and its helper must never be sent 'V' (it ends on any tag it
+// does not know).
+#define ASSIST_CAPS 'M'
+// At most this many monitors, and pictures of at most 64 MB (the host's limit too).
+#define MAX_MONS 16
+#define MAX_FRAME_BYTES (64 * 1024 * 1024)
 
 // The cross-compiler's wtsapi32.h (mingw-w64, GCC 10) predates WTSSessionInfoEx / WTSINFOEXW, which tell
 // us whether the session is locked. Declare them here exactly as the Windows SDK does (same layout, so
@@ -147,16 +158,15 @@ static bool writeAll(HANDLE h, const void* buf, DWORD n, HANDLE ev) { return pip
 // Captures the desktop the calling thread is attached to. The thread must already be on the input
 // desktop (SetThreadDesktop) for a secure desktop to be caught. Returns a top-down BGRA buffer.
 struct Frame { int w, h; uint8_t* bgra; };
-static bool capture(Frame& out, uint8_t* reuse, int reuseCap) {
-  HDC screen = CreateDCW(L"DISPLAY", nullptr, nullptr, nullptr);
-  if (!screen) return false;
-  int w = GetDeviceCaps(screen, HORZRES), h = GetDeviceCaps(screen, VERTRES);
+// The rectangle (x, y, w, h) of `screen` into a top-down BGRA buffer (`reuse` when it is big enough).
+static bool blit(HDC screen, int x, int y, int w, int h, Frame& out, uint8_t* reuse, int reuseCap) {
+  if (w <= 0 || h <= 0 || (int64_t)w * h * 4 > MAX_FRAME_BYTES) return false;
   bool ok = false;
   HDC mem = CreateCompatibleDC(screen);
   HBITMAP bmp = CreateCompatibleBitmap(screen, w, h);
   if (mem && bmp) {
     HGDIOBJ old = SelectObject(mem, bmp);
-    if (BitBlt(mem, 0, 0, w, h, screen, 0, 0, SRCCOPY)) {
+    if (BitBlt(mem, 0, 0, w, h, screen, x, y, SRCCOPY)) {
       BITMAPINFO bi; ZeroMemory(&bi, sizeof bi);
       bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
       bi.bmiHeader.biWidth = w; bi.bmiHeader.biHeight = -h; // top-down
@@ -171,15 +181,53 @@ static bool capture(Frame& out, uint8_t* reuse, int reuseCap) {
   }
   if (bmp) DeleteObject(bmp);
   if (mem) DeleteDC(mem);
+  return ok;
+}
+// The primary monitor (what hosts of protocol 1 without 'V' get).
+static bool capture(Frame& out, uint8_t* reuse, int reuseCap) {
+  HDC screen = CreateDCW(L"DISPLAY", nullptr, nullptr, nullptr);
+  if (!screen) return false;
+  bool ok = blit(screen, 0, 0, GetDeviceCaps(screen, HORZRES), GetDeviceCaps(screen, VERTRES), out, reuse, reuseCap);
   DeleteDC(screen);
   return ok;
+}
+// A rectangle of the whole virtual screen, in the coordinates EnumDisplayMonitors gives (0,0 is the
+// primary's top left; physical pixels, see dpiAware).
+static bool captureRect(const RECT& r, Frame& out, uint8_t* reuse, int reuseCap) {
+  HDC screen = GetDC(nullptr); // the thread's desktop, all monitors
+  if (!screen) return false;
+  bool ok = blit(screen, r.left, r.top, r.right - r.left, r.bottom - r.top, out, reuse, reuseCap);
+  ReleaseDC(nullptr, screen);
+  return ok;
+}
+// Every monitor's rectangle, at most `cap`. -> how many
+static int monitorRects(RECT* out, int cap) {
+  struct Ctx { RECT* out; int cap, n; } c = { out, cap, 0 };
+  EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR, HDC, LPRECT r, LPARAM p) -> BOOL {
+    Ctx* c = (Ctx*)p;
+    if (r && c->n < c->cap) c->out[c->n++] = *r;
+    return TRUE;
+  }, (LPARAM)&c);
+  return c.n;
+}
+// Real pixels on every monitor, as the host counts them (Electron's physical rectangles): per-monitor aware
+// (Windows 10 1703 and later), else system aware (the primary in real pixels, as before).
+typedef BOOL(WINAPI* SetDpiCtxFn)(HANDLE);
+static void dpiAware() {
+  SetDpiCtxFn set = (SetDpiCtxFn)GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetProcessDpiAwarenessContext");
+  if (!set || !set((HANDLE)(intptr_t)-4 /* DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 */)) SetProcessDPIAware();
 }
 
 // ---- the data-pipe protocol between helper and host -------------------------------------
 // Every message: 1 tag byte, then a fixed little-endian body. Frames carry their pixels after the body.
 //   helper -> host:
 //     'S' state: u8 flags  (bit0 secure desktop, bit1 session locked, bit2 input is accepted)
-//     'F' frame: u16 w, u16 h, u32 bytes, then <bytes> of top-down BGRA
+//     'F' frame: u16 w, u16 h, u32 bytes, then <bytes> of top-down BGRA   (the primary monitor)
+//     'R' frame of one monitor: i32 x, i32 y, u16 w, u16 h, u32 bytes, then <bytes> of top-down BGRA;
+//         x, y = its top left on the virtual screen in physical pixels. Instead of 'F', once 'V' came.
+//   host -> helper:
+//     'V' send every monitor ('R'), from now on   (no body; any time, it shows nothing new: only sent
+//         when the service's answer had ASSIST_CAPS)
 //   host -> helper (only honoured while input is accepted):
 //     'M' mouse: u32 flags, i32 x, i32 y, i32 data   (SendInput MOUSEINPUT; x,y are 0..65535 absolute)
 //     'K' key:   u16 vk, u16 scan, u32 flags          (SendInput KEYBDINPUT)
@@ -261,7 +309,7 @@ static bool sessionUserSddl(DWORD session, wchar_t* sddl, size_t cap) {
 // ---- the helper: runs as SYSTEM in the console session, follows the input desktop ------------------
 static int runHelper(DWORD session) {
   // Real pixels, not the 96-dpi picture Windows gives a program that does not say it knows about scaling.
-  SetProcessDPIAware();
+  dpiAware();
   // Pin this thread to the input desktop so capture reaches the secure desktop.
   HDESK input = nullptr;
   followInputDesktop(input);
@@ -300,7 +348,7 @@ static int runHelper(DWORD session) {
   logline("helper: host connected");
 
   // A thread reads input from the host and injects it; the main thread captures and sends frames.
-  struct Shared { HANDLE pipe; DWORD session; SendInputFn sendInput; SendSASFn sendSAS; volatile LONG stop; } sh = { pipe, session, sendInput, sendSAS, 0 };
+  struct Shared { HANDLE pipe; DWORD session; SendInputFn sendInput; SendSASFn sendSAS; volatile LONG stop; volatile LONG multi; } sh = { pipe, session, sendInput, sendSAS, 0, 0 };
   HANDLE reader = CreateThread(nullptr, 0, [](LPVOID p) -> DWORD {
     Shared* s = (Shared*)p;
     HDESK mine = nullptr; // this thread's own desktop: a new thread starts on the process's, not the input one
@@ -318,6 +366,8 @@ static int runHelper(DWORD session) {
         if (allow && s->sendInput) { INPUT in; ZeroMemory(&in, sizeof in); in.type = INPUT_KEYBOARD; in.ki.wVk = k.vk; in.ki.wScan = k.scan; in.ki.dwFlags = k.flags; s->sendInput(1, &in, sizeof in); }
       } else if (tag == 'A') {
         if (allow && s->sendSAS) s->sendSAS(FALSE);
+      } else if (tag == 'V') {
+        InterlockedExchange(&s->multi, 1); // every monitor from now on (pictures only: nothing to allow)
       } else break;
     }
     s->stop = 1;
@@ -328,6 +378,9 @@ static int runHelper(DWORD session) {
 
   uint8_t* buf = nullptr; int cap = 0, lastW = 0, lastH = 0; uint8_t lastState = 0xff;
   uint8_t* prev = nullptr; int prevCap = 0;
+  // Every monitor ('V'): its rectangle and the last picture sent of it (mlen 0: send it again).
+  RECT mrect[MAX_MONS]; int mons = 0;
+  uint8_t* mprev[MAX_MONS] = {}; int mcap[MAX_MONS] = {}, mlen[MAX_MONS] = {};
   int tick = 0;
   while (!sh.stop) {
     // Keep following the input desktop (Default <-> Winlogon).
@@ -337,12 +390,39 @@ static int runHelper(DWORD session) {
     if (inputDesktopName(dn, 128)) secure = (_wcsicmp(dn, L"Default") != 0);
     bool locked = sessionLocked(session);
     uint8_t state = (secure ? 1 : 0) | (locked ? 2 : 0) | ((secure && locked) ? 4 : 0);
-    if (state != lastState) { uint8_t hdr[2] = { 'S', state }; if (!writeAll(pipe, hdr, 2, wev)) break; lastState = state; lastW = lastH = 0; }
+    if (state != lastState) {
+      uint8_t hdr[2] = { 'S', state }; if (!writeAll(pipe, hdr, 2, wev)) break;
+      lastState = state; lastW = lastH = 0;
+      for (int k = 0; k < MAX_MONS; k++) mlen[k] = 0;
+    }
 
     // Only a secure desktop is this helper's to send; on the ordinary desktop the host captures itself.
     Frame f;
     if (!secure) { Sleep(150); tick++; continue; }
-    if (capture(f, buf, cap)) {
+    if (sh.multi) {
+      // Every monitor, each sent when it changed (the lock screen's password box is on one of them, its
+      // clock changes once a minute) and an unchanged one every 3 s. A new arrangement: all of them again.
+      RECT r[MAX_MONS]; int n = monitorRects(r, MAX_MONS);
+      if (n != mons || memcmp(r, mrect, n * sizeof(RECT)) != 0) {
+        mons = n; memcpy(mrect, r, n * sizeof(RECT));
+        for (int k = 0; k < MAX_MONS; k++) mlen[k] = 0;
+      }
+      bool broken = false;
+      for (int k = 0; k < mons && !sh.stop; k++) {
+        if (!captureRect(mrect[k], f, buf, cap)) continue;
+        if (f.bgra != buf) { free(buf); buf = f.bgra; cap = f.w * f.h * 4; }
+        int bytes = f.w * f.h * 4;
+        bool changed = mlen[k] != bytes || memcmp(mprev[k], buf, bytes) != 0;
+        if (!changed && (tick % 30) != 0) continue;
+        uint8_t hdr[17]; hdr[0] = 'R';
+        *(int32_t*)(hdr + 1) = (int32_t)mrect[k].left; *(int32_t*)(hdr + 5) = (int32_t)mrect[k].top;
+        *(uint16_t*)(hdr + 9) = (uint16_t)f.w; *(uint16_t*)(hdr + 11) = (uint16_t)f.h; *(uint32_t*)(hdr + 13) = (uint32_t)bytes;
+        if (!writeAll(pipe, hdr, 17, wev) || !writeAll(pipe, buf, bytes, wev)) { broken = true; break; }
+        if (mcap[k] < bytes) { free(mprev[k]); mprev[k] = (uint8_t*)malloc(bytes); mcap[k] = mprev[k] ? bytes : 0; }
+        if (mprev[k]) { memcpy(mprev[k], buf, bytes); mlen[k] = bytes; } else mlen[k] = 0;
+      }
+      if (broken) break;
+    } else if (capture(f, buf, cap)) {
       if (f.bgra != buf) { free(buf); buf = f.bgra; cap = f.w * f.h * 4; }
       int bytes = f.w * f.h * 4;
       bool changed = (f.w != lastW || f.h != lastH) || !prev || memcmp(prev, buf, bytes) != 0;
@@ -363,6 +443,7 @@ static int runHelper(DWORD session) {
   CancelIoEx(pipe, nullptr); // the reader's pending read ends with an error and the thread returns
   if (reader) { WaitForSingleObject(reader, 2000); CloseHandle(reader); }
   free(buf); free(prev);
+  for (int k = 0; k < MAX_MONS; k++) free(mprev[k]);
   CloseHandle(wev);
   CloseHandle(pipe);
   if (input) CloseDesktop(input);
@@ -462,7 +543,8 @@ static void controlLoop() {
       // The host asks to start the secure-desktop helper with one byte, 'S'.
       char req = 0; DWORD got = 0;
       if (ReadFile(pipe, &req, 1, &got, nullptr) && got == 1 && req == 'S') {
-        const char ok[3] = { 'o', 'k', ASSIST_PROTOCOL }; DWORD put; WriteFile(pipe, ok, 3, &put, nullptr);
+        // One write: a host reads the four bytes at once (one that knows only protocol 1 reads three).
+        const char ok[4] = { 'o', 'k', ASSIST_PROTOCOL, ASSIST_CAPS }; DWORD put; WriteFile(pipe, ok, 4, &put, nullptr);
         logline("service: a host asked for the secure-desktop helper");
         serveHost(pipe); // keeps a helper alive until the host disconnects or the service stops
       }
@@ -569,25 +651,43 @@ static int statusService() {
 }
 
 // ---- grab: capture the current input desktop to a BMP (debugging; no service) ------------
-static int grab(const wchar_t* file) {
-  SetProcessDPIAware();
-  HDESK input = nullptr;
-  followInputDesktop(input);
-  uint8_t* buf = nullptr; Frame f;
-  if (!capture(f, nullptr, 0)) { printf("capture failed (%lu); for a secure desktop run elevated\n", GetLastError()); return 1; }
-  buf = f.bgra;
+static bool writeBmp(const wchar_t* file, const Frame& f) {
   BITMAPFILEHEADER fh; ZeroMemory(&fh, sizeof fh); fh.bfType = 0x4D42;
   BITMAPINFOHEADER ih; ZeroMemory(&ih, sizeof ih);
   ih.biSize = sizeof ih; ih.biWidth = f.w; ih.biHeight = -f.h; ih.biPlanes = 1; ih.biBitCount = 32; ih.biCompression = BI_RGB;
   int bytes = f.w * f.h * 4;
   fh.bfOffBits = sizeof fh + sizeof ih; fh.bfSize = fh.bfOffBits + bytes;
   HANDLE out = CreateFileW(file, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-  int rc = 1;
-  if (out != INVALID_HANDLE_VALUE) {
-    DWORD w; WriteFile(out, &fh, sizeof fh, &w, nullptr); WriteFile(out, &ih, sizeof ih, &w, nullptr); WriteFile(out, buf, bytes, &w, nullptr);
-    CloseHandle(out); printf("wrote %dx%d\n", f.w, f.h); rc = 0;
-  } else printf("cannot write %ls (%lu)\n", file, GetLastError());
-  free(buf);
+  if (out == INVALID_HANDLE_VALUE) { printf("cannot write %ls (%lu)\n", file, GetLastError()); return false; }
+  DWORD w; WriteFile(out, &fh, sizeof fh, &w, nullptr); WriteFile(out, &ih, sizeof ih, &w, nullptr); WriteFile(out, f.bgra, bytes, &w, nullptr);
+  CloseHandle(out);
+  return true;
+}
+static int grab(const wchar_t* file) {
+  dpiAware();
+  HDESK input = nullptr;
+  followInputDesktop(input);
+  Frame f;
+  if (!capture(f, nullptr, 0)) { printf("capture failed (%lu); for a secure desktop run elevated\n", GetLastError()); return 1; }
+  int rc = writeBmp(file, f) ? 0 : 1;
+  if (!rc) printf("wrote %dx%d\n", f.w, f.h);
+  free(f.bgra);
+  if (input) CloseDesktop(input);
+  return rc;
+}
+// Every monitor as the helper sends them after 'V': <prefix>-<n>.bmp, and each one's rectangle printed.
+static int grabMonitors(const wchar_t* prefix) {
+  dpiAware();
+  HDESK input = nullptr;
+  followInputDesktop(input);
+  RECT r[MAX_MONS]; int n = monitorRects(r, MAX_MONS), rc = n ? 0 : 1;
+  for (int k = 0; k < n; k++) {
+    Frame f;
+    if (!captureRect(r[k], f, nullptr, 0)) { printf("monitor %d: capture failed (%lu)\n", k, GetLastError()); rc = 1; continue; }
+    wchar_t file[MAX_PATH]; _snwprintf_s(file, MAX_PATH, _TRUNCATE, L"%ls-%d.bmp", prefix, k);
+    if (writeBmp(file, f)) printf("monitor %d: %ld,%ld %dx%d\n", k, r[k].left, r[k].top, f.w, f.h); else rc = 1;
+    free(f.bgra);
+  }
   if (input) CloseDesktop(input);
   return rc;
 }
@@ -598,8 +698,9 @@ int wmain(int argc, wchar_t** argv) {
     if (_wcsicmp(argv[1], L"uninstall") == 0) return uninstallService();
     if (_wcsicmp(argv[1], L"status") == 0) return statusService();
     if (_wcsicmp(argv[1], L"grab") == 0 && argc >= 3) return grab(argv[2]);
+    if (_wcsicmp(argv[1], L"grabmon") == 0 && argc >= 3) return grabMonitors(argv[2]);
     if (_wcsicmp(argv[1], L"helper") == 0 && argc >= 3) return runHelper((DWORD)_wtoi(argv[2]));
-    printf("usage: winassist.exe install | uninstall | status | grab <file.bmp>\n");
+    printf("usage: winassist.exe install | uninstall | status | grab <file.bmp> | grabmon <prefix>\n");
     return 2;
   }
   // No arguments: the Service Manager is starting us.

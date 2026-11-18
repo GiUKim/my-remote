@@ -175,7 +175,7 @@ the client app instead).
     `DesktopCoordinates`: physical pixels, the page's process being per-monitor DPI aware, measured),
     with no duplication: `mc_size` returns 2 for it (`waiting` in the preload's `opened`), `mc_next` 2
     until the screen can be read, as after a desktop switch. The session comes up, the loops say
-    `paused`, the assist service's pictures fill the primary monitor's track, and the native capture
+    `paused`, the assist service's pictures fill the monitors' tracks, and the native capture
     takes over after the unlock. The engine's capture, which brings the sound, is not even tried then:
     the offer gets a sound transceiver without a track (`s.soundLater`) and the first native frame after
     the unlock fetches the sound and `replaceTrack`s it (`soundSoon`, once per session). `mc_test_elsewhere(1)`
@@ -851,7 +851,19 @@ the client app instead).
     the screen, `F` frames (GDI `BitBlt` of the primary monitor, BGRX, change-gated, ~10/s), and injects
     `M`/`K`/`A` (SendInput / SendSAS) only while the session is locked (WTSINFOEX `SessionFlags ==
     WTS_SESSIONSTATE_LOCK`, failing closed): a UAC prompt is never typed into or clicked.
-  - Pipes: control `\\.\pipe\my-remote-assist` (service, reply "ok"+`ASSIST_PROTOCOL`), data
+  - **Every monitor** (2026-11-18, the next step the user chose after "only the primary is sent"): the
+    service answers four bytes, the fourth `ASSIST_CAPS` 'M'; only then the host sends `V` on the data pipe
+    and the helper sends `R` frames instead of `F`: one per monitor (`EnumDisplayMonitors`, the helper per-
+    monitor DPI aware so the rectangles are physical pixels like Electron's), with its top left on the
+    virtual screen, each change-gated on its own, an unchanged one every 3 s. A service from before answers
+    three bytes and is never sent `V` (its helper ends on a tag it does not know; the host would then
+    reconnect for ever); a host from before reads three of the four bytes and gets `F` as always. The
+    first frame after connecting can still be an `F` (sent before the helper read `V`): the host takes it
+    for the primary's. `host.js` puts each picture into the monitor whose physical rectangle matches
+    (`assistMonitor`, else by top left), repeats each on its own, and the `lock` message lists them (`ds`,
+    `d` the primary among them); the client shows the bar on every window that shows one of them. The
+    protocol byte stays 1. `winassist.exe grabmon <prefix>` writes every monitor as the helper sends them.
+  - Pipes: control `\\.\pipe\my-remote-assist` (service, reply "ok"+`ASSIST_PROTOCOL`+`ASSIST_CAPS`), data
     `\\.\pipe\my-remote-assist-data` (helper; first instance only; DACL: SYSTEM and the session's user
     from `WTSQueryUserToken`). Both byte mode; the data pipe overlapped. **Bit once:** with a synchronous
     handle the helper's main thread could not write while its reader thread waited in ReadFile (Windows
@@ -863,20 +875,27 @@ the client app instead).
   - In the host: `main.js` starts `assist` when a session goes live (not in `--selftest`/`--bench`; it does
     run in `--localtest`), stops it with the session or the page. While the helper says "locked",
     `input.setSink` sends every injected input to the helper; on another secure desktop the sink drops it.
-    Frames go to the page (`assist` IPC) and into the primary monitor's `MediaStreamTrackGenerator`
-    (only with native capture), repeated 30 times after a change. The `lock` message gains `live`,
-    `input` and `d`; the client then shows the lock screen with a small bar and a Ctrl+Alt+Del button
-    (`sas`) instead of the cover, and other windows say which monitor has it.
+    Frames go to the page (`assist` IPC) and into each monitor's `MediaStreamTrackGenerator` (the primary's
+    only with a service from before 2026-11-18; only with native capture), repeated 30 times after a
+    change. The `lock` message gains `live`, `input`, `d` and `ds`; the client then shows the lock screen
+    with a small bar and a Ctrl+Alt+Del button (`sas`) instead of the cover, and windows showing none of
+    `ds` say which monitor has it.
   - Verified 2026-11-15 in a throwaway Windows 10 22H2 VM (dockurr/windows under KVM on the GPU server,
     `~/my-remote-dev/winvm` there; see the `my-remote-test-vm` memory): GDI captures the real lock screen
     as LocalSystem (pictures checked), a click lifts the curtain, the typed password unlocks (probe in
     the VM), the service updates in place; and end to end, the real client page on the Windows PC against
     the real host in the VM (`--localtest --no-client`, relay tunnelled): lock -> the client shows the lock
     screen live with the bar -> click, password typed with trusted key events, Enter -> unlocked.
-    `release/test-assist.js` (20 checks, fake service and helper) covers the protocol, the session checks,
-    input routing and encoding, pictures in pieces, reconnecting, the refusal during a remote session and
-    the first-start offer. Not verified: the offer's dialog on a real first start, a real PC's lock screen
-    with several monitors (only the primary is sent), Ctrl+Alt+Del with `SoftwareSASGeneration` (not set
+    `release/test-assist.js` (24 checks, fake service and helper) covers the protocol, the session checks,
+    input routing and encoding, pictures in pieces, reconnecting, the refusal during a remote session, the
+    first-start offer, and every monitor (`V` only to a service that offers it, `R` pictures with their
+    place, each deduplicated on its own). Every monitor, 2026-11-18: in the test VM (one monitor) the
+    service updated in place answered `6f6b014d`, the helper sent the real lock screen as `R` (0,0
+    1280x800, picture checked), a click changed it and the typed password unlocked (`assist-probe2.js`);
+    `grabmon` on this PC's three monitors (the ordinary desktop, as a user) gave each monitor at the
+    rectangle Windows reports, physical, with its own content; the self-test acts out every monitor's
+    picture reaching its own video and the client's bar. Not verified: the offer's dialog on a real first
+    start, a real PC's lock screen with several monitors (no VM with two), Ctrl+Alt+Del with `SoftwareSASGeneration` (not set
     by the installer), a UAC prompt through the service, the logon screen after a reboot (out of scope:
     the host is a per-user program), Windows 11.
   What was found out when the user asked how a locked host could be unlocked from the client
@@ -1062,8 +1081,33 @@ the client app instead).
   ~200 and 33-35 fps (its `motion` content hint has 156 encode the screen as camera content); on the
   direct link the bench could not even read its frames. `WebRTC-EncoderSpeed/dynamic_speed:false,
   av1_camera:normal/` raised the encoder to 42-52 fps but not the frames shown or the delay, and made
-  no difference in the default mode: not adopted. Next to try: smooth mode with the `detail` hint and
-  only `maintain-framerate`.
+  no difference in the default mode: not adopted. **Smooth mode fixed (2026-11-18, 0.9.3):** the `detail`
+  hint in both modes and `balanced` instead of `maintain-framerate` (`applyEncoding`). Benched on 45.3.4,
+  the old setting acted out through `hostJs`, two runs each, fps shown / scroll delay p50 / scroll dB:
+  direct old 36-39 / 93-106 ms / 23 dB, new 57-58 / 66 ms / 40 dB (sharp 47-54 / 80-93 ms); home old
+  33-37 / 106-133 / 23, new 40-43 / 146 / 40 (sharp 49-51 / 106-109); narrow old 44 fps at 475 ms or
+  failed (the picture down to 107x60), new 42-43 / 173 / 40 (sharp 41-55 / 93-173). On 45.3.1 the
+  `detail` hint with `maintain-framerate` was mixed (on the direct link 11 of 24 typing changes never
+  shown). So the new smooth mode is as sharp as the sharp mode and about as smooth, sometimes more,
+  sometimes less (the runs spread widely); the old one was broken on every link.
+- **Electron 45.3.4** (2026-11-18, was 45.3.1; 45.3.2 brought Chromium 156.0.8078.100 and fixes from upstream
+  Chromium, V8, ANGLE, Dawn and Skia; 45.3.3 Node 24.22.3; 45.3.4 a leak fix). A new shell identity: installed
+  apps take the new package through the shell swap. The self-test passed on it (78 checks with
+  `--client-app-check`). koffi stays 2.16.3 (it belongs to the shell; nothing in 2.16.4 called for a change).
+- **The GPU hand-over** (`capture: 'gpu'`, an experiment of 2026-11-18, off by default): `mc_next_gpu`
+  copies each image on the graphics card into a new texture shared by an NT handle; the preload imports it
+  with Electron's `sharedTexture.subtle.importSharedTexture` (the page's process loaded the DLL, so the
+  handle is that process's, as Electron's design note allows) as a VideoFrame that stays on the graphics
+  card; no read-back. A new texture per image (the encoder may read it later than anyone can know), the copy
+  finished (event query) before it is handed over, the newest 8 imports kept alive, only for monitors on
+  the first adapter, and any failure sends that loop back to reading back for good (an image whose import
+  failed is lost). Benched on the direct link, two runs each: with AV1 (the default) worse: encode 25-29
+  ms against 14, 32-38 fps encoded against 49-50, typing delay p50 80-123 ms against 66 (the CPU encoder
+  needs the pixels anyway, and Chromium reads them back inside the encoder, more slowly). With H.264 on
+  the graphics card better: typing p50 40 ms against 53 in both runs, scroll 53-66 against 53-79, host
+  CPU 4.5% against 5.3%, but more gaps over 50 ms (72-76 against 27-56). So not the default; turning it
+  on by itself for H.264 sessions would need runs between two machines, several monitors and other
+  graphics cards first. No self-test covers it (the bench does: `--tries-file` with `{ "cfg": { "capture": "gpu" } }`).
 - **Cursor and the captured video.** Chromium always paints the cursor into captured frames
   (`cursor: 'never'` is ignored, and hiding it with the Magnification API does not affect capture). The
   host therefore swaps the system cursors for a transparent one (`SetSystemCursor`) *before* capture
@@ -1391,7 +1435,7 @@ Run from `host/` with Electron's env var cleared.
 | `node release/ci-native.js` | Rebuilds the committed binaries from `native/` (needs `x86_64-w64-mingw32-g++`: CI's Ubuntu 22.04, or the build server) and compares them byte for byte with `host/bin` |
 | `node release/bench-gate.js --profile=dev\|ci` | Runs the bench and fails when a figure leaves `release/bench-thresholds.json` (dev: a development PC; ci: CI machines). About a minute; shows the bench's test picture meanwhile |
 | `node release/test-assist.js` | The host's side of the Windows assist service (`host/assist.js`) against a fake service and helper on test pipes: protocol and version, the pipe-server session checks, input routing per state and its encoding, pictures in pieces, Ctrl+Alt+Del, reconnecting, installing refused during a remote session, the first-start offer. Windows only (skips elsewhere); no input reaches the PC (the sink is recorded, never installed) and nothing runs elevated (`T.elevate`). A few seconds |
-| `host\bin\winassist.exe install`, `uninstall`, `status`, `grab <file.bmp>` | The assist service itself: install/uninstall need an elevated prompt (the host window's card does this through UAC). `grab` writes the current input desktop to a BMP (a secure one only when run as LocalSystem) |
+| `host\bin\winassist.exe install`, `uninstall`, `status`, `grab <file.bmp>`, `grabmon <prefix>` | The assist service itself: install/uninstall need an elevated prompt (the host window's card does this through UAC). `grab` writes the current input desktop to a BMP (a secure one only when run as LocalSystem); `grabmon` every monitor as the helper sends them (`<prefix>-<n>.bmp`, rectangles printed). Both are pictures of the person's screen: delete them after looking |
 | `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept, device tokens (kept, the key let go only for the token that worked, a key given again replaces the token). A second |
 | `node release/test-devices.js` | The host's device tokens (`host/devices.js`) and access log (`host/accesslog.js`) in plain Node: tokens never as text, the same app pairing again, blocking, removal, the limit, a file that cannot be read never written over, a broken file kept; log entries with known fields only, kept 90 days and under 2 MB. A second |
 | `node release/test-pagecheck.js` | The client app's check of a host's page (`client/pagecheck.js`): signed by a release key or not, a changed statement, another page, a manifest that is no statement; and that `release/build.js` signs the page a host builds for the default relay (a real build with a test key). Seconds |

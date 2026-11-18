@@ -35,13 +35,15 @@ function sendLock(force) {
   const s = session, dc = s && s.dc;
   if (!dc || dc.readyState !== 'open') return;
   const why = lockReason();
-  // live: the secure desktop's picture is in the video of monitor `d` (the primary); input: the person may
-  // type into it (the lock screen; never a UAC prompt).
-  const live = !!(why && assist.secure && assist.frames && assistTarget());
-  const key = why + (live ? (assist.input ? '+live+input' : '+live') : '');
+  // live: the secure desktop's picture is in the video of the monitors `ds` (`d`: the primary when it is
+  // among them, where the password box is); input: the person may type into it (the lock screen; never a
+  // UAC prompt).
+  const ds = why && assist.secure ? assistLive() : [];
+  const live = ds.length > 0;
+  const key = why + (live ? (assist.input ? '+live+input:' : '+live:') + ds.join(',') : '');
   if (!force && screenGone.sentFor === s && screenGone.sent === key) return;
   screenGone.sentFor = s; screenGone.sent = key;
-  const msg = why ? { t: 'lock', on: true, why, live, input: live && assist.input, d: live ? primaryIndex(s) : undefined } : { t: 'lock', on: false };
+  const msg = why ? { t: 'lock', on: true, why, live, input: live && assist.input, d: live ? ds[0] : undefined, ds: live ? ds : undefined } : { t: 'lock', on: false };
   try { dc.send(JSON.stringify(msg)); } catch {}
 }
 function screenPaused(i, on) {
@@ -61,20 +63,35 @@ setInterval(() => {
 
 // ---- the lock screen through the assist service (Windows; host/assist.js, native/winassist.cpp) --------
 // With the service installed, main.js connects to it during a session. While a secure desktop has the
-// screen, its pictures arrive here and go into the primary monitor's video track in place of the
-// capturer's, which cannot read that desktop; on the lock screen main.js sends the client's input to the
-// service's helper, so the person types their password as at the keyboard. UAC prompts are shown only.
-const assist = { secure: false, locked: false, input: false, frames: 0, last: null, left: 0, timer: 0 };
+// screen, its pictures arrive here and go into each monitor's video track in place of the capturer's,
+// which cannot read that desktop (a service from before 2026-11-18 sends the primary monitor's only); on
+// the lock screen main.js sends the client's input to the service's helper, so the person types their
+// password as at the keyboard. UAC prompts are shown only.
+// mons: monitor index -> { last: the last picture, left: repeats still to send }.
+const assist = { secure: false, locked: false, input: false, mons: new Map(), timer: 0 };
 const ASSIST_REPEATS = 30, ASSIST_REPEAT_MS = 33; // a still picture brought to full quality (cf. REPEATS in preload.js)
 const primaryIndex = (s) => (s && s.sources ? s.sources.findIndex((src) => src.primary) : -1);
-function assistTarget() {
-  const s = session, i = primaryIndex(s);
+// Which monitor a picture is of: by its rectangle on the virtual screen (physical pixels, as the sources'),
+// else by its top left; one without a place ('F') is the primary's. -1: none of this session's.
+function assistMonitor(s, m) {
+  if (!s || !s.sources) return -1;
+  if (typeof m.x !== 'number') return primaryIndex(s);
+  const same = s.sources.findIndex((src) => src.x === m.x && src.y === m.y && src.width === m.w && src.height === m.h);
+  return same >= 0 ? same : s.sources.findIndex((src) => src.x === m.x && src.y === m.y);
+}
+function assistTarget(i) {
+  const s = session;
   return s && s.native && i >= 0 && s.native[i] ? s.native[i] : null; // only a native track takes our pictures
 }
+// The monitors whose secure-desktop picture is in their video now, the primary first.
+function assistLive() {
+  const p = primaryIndex(session);
+  return [...assist.mons.keys()].filter((i) => assistTarget(i)).sort((a, b) => (b === p) - (a === p) || a - b);
+}
 function assistForget() {
-  assist.frames = 0; assist.left = 0;
   clearInterval(assist.timer); assist.timer = 0;
-  if (assist.last) { assist.last.close(); assist.last = null; }
+  for (const e of assist.mons.values()) if (e.last) e.last.close();
+  assist.mons.clear();
 }
 function assistState(m) {
   const was = assist.secure;
@@ -86,24 +103,30 @@ function assistState(m) {
   sendLock();
 }
 function assistFrame(m) {
-  const n = assistTarget();
-  if (!n || !assist.secure || !m || !m.data) return;
+  if (!assist.secure || !m || !m.data) return;
+  const i = assistMonitor(session, m), n = assistTarget(i);
+  if (!n) return;
   let frame;
   // GDI leaves the fourth byte 0: BGRX, as the native capturer's pictures (BGRA would make it transparent).
   try { frame = new VideoFrame(m.data, { format: 'BGRX', codedWidth: m.w, codedHeight: m.h, timestamp: Math.round(performance.now() * 1000) }); }
   catch (e) { log('잠금 화면 그림을 쓸 수 없습니다: ' + e.message); return; }
-  if (assist.last) assist.last.close();
-  assist.last = frame;
+  const e = assist.mons.get(i), first = !e;
+  if (e && e.last) e.last.close();
+  assist.mons.set(i, { last: frame, left: ASSIST_REPEATS });
   n.writer.write(new VideoFrame(frame, { timestamp: frame.timestamp })).catch(() => {});
-  assist.left = ASSIST_REPEATS;
   if (!assist.timer) assist.timer = setInterval(assistRepeat, ASSIST_REPEAT_MS);
-  if (++assist.frames === 1) sendLock(); // the picture is live now: the client shows it instead of a notice
+  if (first) sendLock(); // this monitor's picture is live now: the client shows it instead of a notice
 }
 function assistRepeat() {
-  const n = assistTarget();
-  if (!n || !assist.last || assist.left <= 0) { clearInterval(assist.timer); assist.timer = 0; return; }
-  assist.left--;
-  n.writer.write(new VideoFrame(assist.last, { timestamp: Math.round(performance.now() * 1000) })).catch(() => {});
+  let more = false;
+  for (const [i, e] of assist.mons) {
+    const n = assistTarget(i);
+    if (!n || !e.last || e.left <= 0) continue;
+    e.left--;
+    more = true;
+    n.writer.write(new VideoFrame(e.last, { timestamp: Math.round(performance.now() * 1000) })).catch(() => {});
+  }
+  if (!more) { clearInterval(assist.timer); assist.timer = 0; }
 }
 if (api.assist) api.assist.onMessage((m) => { if (m.t === 'state') assistState(m); else if (m.t === 'frame') assistFrame(m); });
 
@@ -172,7 +195,7 @@ async function openNativeLoops(s, sources) {
   for (let i = 0; i < sources.length; i++) {
     const r = await new Promise((done) => {
       nativeOpening.set(i, done);
-      port.postMessage({ t: 'open', i, x: sources[i].x + 8, y: sources[i].y + 8, gap: Math.max(0, Number(cfg.captureGap) || 0),
+      port.postMessage({ t: 'open', i, x: sources[i].x + 8, y: sources[i].y + 8, gap: Math.max(0, Number(cfg.captureGap) || 0), gpu: cfg.capture === 'gpu',
         rect: { x: sources[i].x, y: sources[i].y, w: sources[i].width, h: sources[i].height } });
       // A capturer that has not answered in 4 s is not asked again: its answer, should it still come,
       // would be taken for the answer to a later request.
@@ -306,14 +329,19 @@ function applyEncoding(s) {
     for (let i = 0; i < s.videoSenders.length; i++) {
       const sender = s.videoSenders[i];
       try {
-        sender.track.contentHint = smooth ? 'motion' : 'detail';
+        // 'detail' in both modes. With 'motion' (smooth mode up to 0.9.2) Chromium 156 encodes the screen as
+        // camera content: in the bench 22-23 dB while scrolling (text unreadable), QP about 200, 35 of 50
+        // captured frames encoded, and on the narrow link the picture fell to 107x60. Smooth mode is 'balanced'
+        // instead: the engine lowers frame rate and size as it sees fit, which measured smoother than holding the
+        // frame rate on every link, at the same sharpness as the sharp mode (2026-11-18, see CLAUDE.md).
+        sender.track.contentHint = 'detail';
         const p = sender.getParameters();
         if (!p.encodings || !p.encodings.length) continue;
         p.encodings[0].active = !!plan[i];
         p.encodings[0].scaleResolutionDownBy = plan[i] ? plan[i].scale : 1;
         p.encodings[0].maxBitrate = Math.round((plan[i] ? plan[i].mbps : 1.5) * 1e6);
         p.encodings[0].maxFramerate = cfg.maxFps;
-        p.degradationPreference = smooth ? 'maintain-framerate' : 'maintain-resolution';
+        p.degradationPreference = smooth ? 'balanced' : 'maintain-resolution';
         await sender.setParameters(p);
       } catch (e) { log('인코더 설정 실패: ' + e.message); }
       if (session !== s) return; // the next session's capture loops go by the same monitor numbers

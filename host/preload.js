@@ -141,6 +141,13 @@ function capturer() {
         error: dll.func('const char *mc_error()'),
         testElsewhere: dll.func('void mc_test_elsewhere(int on)'), // the self-test: act as on the lock screen
       };
+      // The GPU hand-over (an experiment, config capture: 'gpu'; see gpuLoop below). Optional: a DLL without
+      // these functions is used as before.
+      try {
+        lib.nextGpu = dll.func('int mc_next_gpu(int handle, int timeoutMs, double *info, _Out_ uint64_t *shared)');
+        lib.gpuDone = dll.func('void mc_gpu_done(uint64_t shared)');
+        lib.adapter = dll.func('int mc_adapter(int handle)');
+      } catch { lib.nextGpu = null; }
       // A page that was here before in this process may have left capturers open (a monitor can only
       // be captured once per process): close whatever is left.
       for (let i = 0; i < 8; i++) lib.close(i);
@@ -155,10 +162,33 @@ function capturer() {
 // try to start the capture again while the screen cannot be read).
 const loops = new Set();
 window.addEventListener('beforeunload', () => { for (const r of [...loops]) r.stop(); });
-function captureLoop(port, i, handle, width, height, gap) {
+// The GPU hand-over (capture: 'gpu', an experiment of 2026-11-18): the DLL copies each image on the graphics
+// card into a texture of its own and hands over its NT handle (mc_next_gpu); Electron's sharedTexture imports it
+// here, in the process that loaded the DLL, as a VideoFrame that stays on the graphics card: no read-back of
+// the image into memory. Only for a monitor on the first adapter (Chromium's, as a rule: a texture cannot be
+// shared between adapters). Any failure: that loop reads back as before, for good.
+let shareApi;
+function sharedTextures() {
+  if (shareApi === undefined) {
+    try { const s = require('electron').sharedTexture; shareApi = s && s.subtle && typeof s.subtle.importSharedTexture === 'function' ? s.subtle : null; }
+    catch { shareApi = null; }
+  }
+  return shareApi;
+}
+// Imports kept alive after their image (the encoder may still read a frame of it): the newest GPU_KEEP.
+const GPU_KEEP = 8;
+function captureLoop(port, i, handle, width, height, gap, gpu) {
   // left: repeats of the last image still to send. paused: the screen cannot be read right now.
   const r = { on: true, alive: true, last: null, left: 0, paused: false, stamp: 0, closed: false };
-  const buf = new Uint8Array(width * height * 4), info = new Float64Array(5);
+  const info = new Float64Array(5), shared = [0];
+  let buf = null, viaGpu = false;
+  const imports = [];
+  const letGo = (keep) => { while (imports.length > keep) { try { imports.shift().release(); } catch {} } };
+  if (gpu) {
+    const why = !lib.nextGpu ? 'the DLL has no GPU hand-over' : !sharedTextures() ? 'no sharedTexture in this Electron' : lib.adapter(handle) !== 0 ? `the monitor is on adapter ${lib.adapter(handle)}` : '';
+    viaGpu = !why;
+    console.log(`[native] monitor ${i + 1}: ${viaGpu ? 'GPU hand-over' : 'read back (' + why + ')'}`);
+  }
   const stamp = () => (r.stamp = Math.max(r.stamp + 1, Math.round(performance.now() * 1000)));
   const end = () => {
     if (r.closed) return;
@@ -166,14 +196,35 @@ function captureLoop(port, i, handle, width, height, gap) {
     loops.delete(r);
     try { lib.close(handle); } catch {}
     if (r.last) { r.last.close(); r.last = null; }
+    letGo(0);
   };
   r.stop = () => { r.alive = false; end(); };
   loops.add(r);
+  // An image handed over on the graphics card -> a VideoFrame, or null (then this loop reads back from now on).
+  const imported = () => {
+    const h = shared[0];
+    let imp = null;
+    try {
+      const nt = Buffer.alloc(8);
+      nt.writeBigUInt64LE(BigInt(h));
+      imp = sharedTextures().importSharedTexture({ pixelFormat: 'bgra', codedSize: { width, height }, timestamp: stamp(), handle: { ntHandle: nt } });
+    } catch (e) { console.warn(`[native] monitor ${i + 1}: GPU import failed, reading back from now on: ${e.message}`); }
+    finally { try { lib.gpuDone(h); } catch {} } // Chromium has its own copy of the handle by now
+    let frame = null;
+    if (imp) { try { frame = imp.getVideoFrame(); imports.push(imp); letGo(GPU_KEEP); } catch (e) { console.warn(`[native] monitor ${i + 1}: GPU frame failed, reading back from now on: ${e.message}`); try { imp.release(); } catch {} } }
+    if (!frame) viaGpu = false;
+    return frame;
+  };
   const step = () => {
     if (!r.alive) return end();
     if (!r.on) return void setTimeout(step, 100); // not on screen at the client: no capture at all
-    lib.next.async(handle, buf, buf.length, REPEAT_MS, info, (err, got) => {
-      if (!r.alive) return end();
+    if (viaGpu) return void lib.nextGpu.async(handle, REPEAT_MS, info, shared, (err, got) => took(err, got, true));
+    if (!buf) buf = new Uint8Array(width * height * 4);
+    lib.next.async(handle, buf, buf.length, REPEAT_MS, info, (err, got) => took(err, got, false));
+  };
+  const took = (err, got, gpuGot) => {
+      if (!r.alive) { if (gpuGot && got === 1) try { lib.gpuDone(shared[0]); } catch {} return end(); }
+      if (gpuGot && got === -5) { console.warn(`[native] monitor ${i + 1}: no shared texture (${lib.error()}), reading back from now on`); viaGpu = false; return step(); }
       if (err || got < 0) {
         r.alive = false;
         end();
@@ -190,10 +241,13 @@ function captureLoop(port, i, handle, width, height, gap) {
       try {
         let frame = null;
         if (got === 1) {
-          frame = new VideoFrame(buf, { format: 'BGRX', codedWidth: width, codedHeight: height, timestamp: stamp() });
-          if (r.last) r.last.close();
-          r.last = frame.clone();
-          r.left = Math.max(r.left, info[4] < SMALL ? FEW : REPEATS); // a series under way is not cut short
+          // (An image whose import failed is lost: the next change of the screen comes read back.)
+          frame = gpuGot ? imported() : new VideoFrame(buf, { format: 'BGRX', codedWidth: width, codedHeight: height, timestamp: stamp() });
+          if (frame) {
+            if (r.last) r.last.close();
+            r.last = frame.clone();
+            r.left = Math.max(r.left, info[4] < SMALL ? FEW : REPEATS); // a series under way is not cut short
+          }
         } else if (r.last && r.left > 0) {
           r.left--;
           frame = new VideoFrame(r.last, { timestamp: stamp() });
@@ -201,7 +255,6 @@ function captureLoop(port, i, handle, width, height, gap) {
         if (frame) port.postMessage({ t: 'frame', i, frame, presented: got === 1 ? info[0] : 0 }, [frame]);
       } catch (e) { console.error('native capture frame', e); }
       if (gap > 0 && got === 1) setTimeout(step, gap); else step();
-    });
   };
   step();
   return r;
@@ -218,7 +271,7 @@ window.addEventListener('message', (e) => {
       if (handle < 0) return port.postMessage({ t: 'opened', i: m.i, ok: false, error: c ? c.error() : 'no native capturer' });
       // waiting: the lock screen or a permission prompt has the screen; the loop reports 'paused' until it can read it.
       const waiting = c.size(handle, w, h) === 2;
-      runs.set(m.i, captureLoop(port, m.i, handle, w[0], h[0], m.gap || 0));
+      runs.set(m.i, captureLoop(port, m.i, handle, w[0], h[0], m.gap || 0, !!m.gpu));
       port.postMessage({ t: 'opened', i: m.i, ok: true, width: w[0], height: h[0], waiting });
     } else if (m.t === 'show') {
       // Sent whenever the encoding was set (the connection is up, the monitor came on screen, its
