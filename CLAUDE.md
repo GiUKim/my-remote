@@ -152,12 +152,25 @@ the client app instead).
     same adapter and not removed (then a new one is made). After that, 60 pairs left no handle behind.
     `mc_test_lose(h, 2|3)` drops the kept device too.
   - After a change the last image is sent `REPEATS` (45) more times (`preload.js`) so the encoder
-    brings it to full quality, then nothing is sent; after a change below 1% of the picture (DXGI's
+    brings it to full quality, then once a second while nothing changes (config `keepAlive`, ms; 0 =
+    never); after a change below 1% of the picture (DXGI's
     dirty and move rectangles, `mc_next`'s `info[4]`: a blinking caret, a typed letter) only `FEW` (6),
     and a running series is never cut short. Every `show` (connected, back on screen, new size, the
     client's `view`) re-sends it with a full series: the encoder drops frames before it runs, and a
     `MediaStreamTrackGenerator` cannot answer its refresh request. A monitor nobody looks at is not
     captured at all.
+  - **Why the keep-alive** (2026-11-18): before it, nothing at all was sent while the screen stayed the
+    same, and a receiver that gets no picture for 3 s asks for a key frame (WebRTC's frame time-out: a
+    PLI, counted as `pli` in the diagnostics log); the encoder then makes the next picture one, so the
+    first change after a pause - a key pressed after reading - came as a whole new picture. The Linux
+    host's diagnostics log (2026-11-14, 2 h of real use from a Windows client): 98% of the frames shown
+    late (251 of 257) were in the 2 s after a still stretch of 3-5 s, each after such a request, late by
+    89 ms on average and up to 266 ms; 831 PLIs, all while still (longer pauses do not show in `late`,
+    which leaves out gaps over 5 s). The bench, one change every 4 s: 106 ms p50 and 7 PLIs in 9
+    changes, against 66 ms and none every 0.5 s. WebRTC's own screen sharing repeats a still frame once
+    a second for the same reason (zero-hertz mode), which frames from a generator do not go through.
+    Only while the screen can be read (`mc_next` 0, not 2): while it cannot, the assist service's
+    pictures may be going into that video, and `host.js` keeps those alive itself (same setting).
   - A lost duplication (lock screen, UAC, mode change, a full-screen program) or a lost device (driver
     restart, TDR) is rebuilt inside the DLL (a new device when the old one was removed), at once and
     then up to once a second; meanwhile `mc_next` returns 2, the preload sends `paused` (host log), the
@@ -633,8 +646,8 @@ the client app instead).
     isolated runs never get it). Bit while fixing: the once-a-minute limit started at 0 and the host page (reloaded by
     the self-test a minute earlier) answered nobody. Not tried: the real ntfy.sh with a real host and
     several tokens, a Linux client app, a browser whose key a real old loader had kept.
-- **The self-test keeps every display's picture moving.** The native capturer sends nothing while a
-  screen stays the same, and the checks that count frames failed now and then on a PC with two
+- **The self-test keeps every display's picture moving.** The native capturer sent nothing while a
+  screen stayed the same (since 2026-11-18 its last picture once a second), and the checks that count frames failed now and then on a PC with two
   monitors, one of them idle. A 64x28 counter window (no focus, no clicks) sits in a corner of every
   display for the length of the test; before 2026-11-14 only on Linux.
 - **Throwaway profiles.** Every isolated run (`--selftest`, `--localtest`, `--bench`, and the bench's
@@ -1787,8 +1800,9 @@ client app's windows always count as visible (it turns `backgroundThrottling` of
 minimized window shows up as frames drawn late, not received late. The self-test's hidden window draws
 seldom and its INFO line shows exactly that. The engine's `freezes`/`freezeDur` are no such measure:
 they count every pause of more than about 150 ms between shown frames, and the native capturer sends
-nothing while the screen stays the same (a real session of 2026-11-12: 627 "freezes", 385 s, in an
-hour of normal use). Counters run per connection. An entry may carry `slow`: main-process
+only one picture a second while the screen stays the same (nothing at all before 2026-11-18; a real session of 2026-11-12: 627 "freezes", 385 s, in an
+hour of normal use). `pli`: key frames the client asked for; many of them while the picture is still
+mean the keep-alive is not working (see "Native capture"), and each makes the next change late. Counters run per connection. An entry may carry `slow`: main-process
 calls that took over 50 ms since the previous entry (`input mm`, `clip-read`, `clip-files`,
 `drag clipboard` (reading the clipboard waits for its owner), `cursor`, ...) and
 `paused` (the main thread itself did not run for over a second), each as count, total and longest ms.

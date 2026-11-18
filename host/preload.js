@@ -108,7 +108,15 @@ contextBridge.exposeInMainWorld('hostApi', {
 // that to the page over a message port; the page feeds the frames to the engine's encoder through
 // a MediaStreamTrackGenerator (see host.js). When the screen stops changing, the last image is
 // sent a number of times more, so the encoder can bring the still picture to full quality, and
-// then nothing is sent at all.
+// then once every `keep` ms (config keepAlive) for as long as nothing changes.
+//
+// Why the last: a receiver that got no picture for 3 s asks for a key frame (WebRTC's frame time-out),
+// and the encoder makes the next picture one. So the first change after a pause - a key pressed after
+// reading - came as a whole new picture: in a host's diagnostics log (2026-11-14, 2 h of real use) 98% of
+// the frames shown late were the first ones after a pause of 3 to 5 s, each after such a request, late by
+// 90 ms on average and up to 270 ms; the bench, a change every 4 s: 106 ms against 66 ms every 0.5 s.
+// WebRTC's own screen sharing repeats a still picture once a second for the same reason (zero-hertz mode),
+// which this capturer's frames do not go through. A picture that changes nothing costs next to nothing.
 const fs = require('fs');
 const path = require('path');
 const REPEATS = 45, REPEAT_MS = 20; // for about a second
@@ -177,9 +185,10 @@ function sharedTextures() {
 }
 // Imports kept alive after their image (the encoder may still read a frame of it): the newest GPU_KEEP.
 const GPU_KEEP = 8;
-function captureLoop(port, i, handle, width, height, gap, gpu) {
+function captureLoop(port, i, handle, width, height, gap, gpu, keep) {
   // left: repeats of the last image still to send. paused: the screen cannot be read right now.
-  const r = { on: true, alive: true, last: null, left: 0, paused: false, stamp: 0, closed: false };
+  // sent: when a frame last went to the page (the keep-alive counts from it).
+  const r = { on: true, alive: true, last: null, left: 0, paused: false, stamp: 0, closed: false, sent: 0 };
   const info = new Float64Array(5), shared = [0];
   let buf = null, viaGpu = false;
   const imports = [];
@@ -251,8 +260,12 @@ function captureLoop(port, i, handle, width, height, gap, gpu) {
         } else if (r.last && r.left > 0) {
           r.left--;
           frame = new VideoFrame(r.last, { timestamp: stamp() });
+        } else if (r.last && keep > 0 && got === 0 && performance.now() - r.sent >= keep) {
+          // The screen is readable and still: the keep-alive (see above). Never while it cannot be read (2):
+          // then the lock screen's pictures may be going into this monitor's video instead (host.js assist).
+          frame = new VideoFrame(r.last, { timestamp: stamp() });
         }
-        if (frame) port.postMessage({ t: 'frame', i, frame, presented: got === 1 ? info[0] : 0 }, [frame]);
+        if (frame) { port.postMessage({ t: 'frame', i, frame, presented: got === 1 ? info[0] : 0 }, [frame]); r.sent = performance.now(); }
       } catch (e) { console.error('native capture frame', e); }
       if (gap > 0 && got === 1) setTimeout(step, gap); else step();
   };
@@ -271,7 +284,7 @@ window.addEventListener('message', (e) => {
       if (handle < 0) return port.postMessage({ t: 'opened', i: m.i, ok: false, error: c ? c.error() : 'no native capturer' });
       // waiting: the lock screen or a permission prompt has the screen; the loop reports 'paused' until it can read it.
       const waiting = c.size(handle, w, h) === 2;
-      runs.set(m.i, captureLoop(port, m.i, handle, w[0], h[0], m.gap || 0, !!m.gpu));
+      runs.set(m.i, captureLoop(port, m.i, handle, w[0], h[0], m.gap || 0, !!m.gpu, Math.max(0, Number(m.keep) || 0)));
       port.postMessage({ t: 'opened', i: m.i, ok: true, width: w[0], height: h[0], waiting });
     } else if (m.t === 'show') {
       // Sent whenever the encoding was set (the connection is up, the monitor came on screen, its

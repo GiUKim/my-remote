@@ -31,6 +31,10 @@ const TRIES = {
   av1: { codec: 'AV1' },
   always: { cfg: { refine: 'always' } },      // a still screen is sent continuously (lowest delay, constant cost)
   norefine: { hostJs: '{ const c = capture; capture = (src, a) => c(src, a, false); }' }, // a still screen is not sent again and again until sharp
+  // Typing after pauses: one change every 4 s. A receiver that got no picture for 3 s asks for a key frame, and
+  // before the keep-alive (preload.js) the next change came as one; release/bench-gate.js checks it stays away.
+  pause: { pattern: { phases: [{ type: 'sparse', ms: 60000 }], every: 4000 } },
+  nokeep: { cfg: { keepAlive: 0 } },          // a still screen sends nothing at all (as before 2026-11-18)
   // How it was before these were tuned: the engine's own transport settings, H.264, no upper probing limit.
   old: { codec: 'H264', cfg: { capture: 'engine' }, trials: '', hostJs: '{ const h = hintBitrate; hintBitrate = (sdp, a, b) => h(sdp, a, b, 0); }' },
 };

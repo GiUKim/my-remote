@@ -67,9 +67,13 @@ setInterval(() => {
 // which cannot read that desktop (a service from before 2026-11-18 sends the primary monitor's only); on
 // the lock screen main.js sends the client's input to the service's helper, so the person types their
 // password as at the keyboard. UAC prompts are shown only.
-// mons: monitor index -> { last: the last picture, left: repeats still to send }.
+// mons: monitor index -> { last: the last picture, left: repeats still to send, at: when it last went }.
 const assist = { secure: false, locked: false, input: false, mons: new Map(), timer: 0 };
 const ASSIST_REPEATS = 30, ASSIST_REPEAT_MS = 33; // a still picture brought to full quality (cf. REPEATS in preload.js)
+// How often a still picture goes again once it is sharp (config keepAlive; 0: never), so that the client never
+// asks for a key frame: see the keep-alive in preload.js. Here for the lock screen's pictures, a typed
+// password's next dot after a pause; preload.js is given the same for the capturer's.
+const keepAliveMs = () => (cfg && cfg.keepAlive > 0 ? Math.max(200, Number(cfg.keepAlive)) : 0);
 const primaryIndex = (s) => (s && s.sources ? s.sources.findIndex((src) => src.primary) : -1);
 // Which monitor a picture is of: by its rectangle on the virtual screen (physical pixels, as the sources'),
 // else by its top left; one without a place ('F') is the primary's. -1: none of this session's.
@@ -89,7 +93,7 @@ function assistLive() {
   return [...assist.mons.keys()].filter((i) => assistTarget(i)).sort((a, b) => (b === p) - (a === p) || a - b);
 }
 function assistForget() {
-  clearInterval(assist.timer); assist.timer = 0;
+  clearTimeout(assist.timer); assist.timer = 0;
   for (const e of assist.mons.values()) if (e.last) e.last.close();
   assist.mons.clear();
 }
@@ -112,21 +116,30 @@ function assistFrame(m) {
   catch (e) { log('잠금 화면 그림을 쓸 수 없습니다: ' + e.message); return; }
   const e = assist.mons.get(i), first = !e;
   if (e && e.last) e.last.close();
-  assist.mons.set(i, { last: frame, left: ASSIST_REPEATS });
+  assist.mons.set(i, { last: frame, left: ASSIST_REPEATS, at: performance.now() });
   n.writer.write(new VideoFrame(frame, { timestamp: frame.timestamp })).catch(() => {});
-  if (!assist.timer) assist.timer = setInterval(assistRepeat, ASSIST_REPEAT_MS);
+  assistAgain(ASSIST_REPEAT_MS);
   if (first) sendLock(); // this monitor's picture is live now: the client shows it instead of a notice
 }
+function assistAgain(ms) { clearTimeout(assist.timer); assist.timer = setTimeout(assistRepeat, ms); }
+// The repeats of each monitor's last picture, then the keep-alive; ends when no picture has a video to go
+// into (a new session's starts again with the next picture) and with the secure desktop (assistForget).
 function assistRepeat() {
-  let more = false;
+  assist.timer = 0;
+  const keep = keepAliveMs(), now = performance.now();
+  let more = false, live = false;
   for (const [i, e] of assist.mons) {
     const n = assistTarget(i);
-    if (!n || !e.last || e.left <= 0) continue;
-    e.left--;
-    more = true;
-    n.writer.write(new VideoFrame(e.last, { timestamp: Math.round(performance.now() * 1000) })).catch(() => {});
+    if (!n || !e.last) continue;
+    live = true;
+    if (e.left > 0) e.left--;
+    else if (!keep || now - e.at < keep - 5) continue;
+    if (e.left > 0) more = true;
+    e.at = now;
+    n.writer.write(new VideoFrame(e.last, { timestamp: Math.round(now * 1000) })).catch(() => {});
   }
-  if (!more) { clearInterval(assist.timer); assist.timer = 0; }
+  if (more) assistAgain(ASSIST_REPEAT_MS);
+  else if (live && keep) assistAgain(keep);
 }
 if (api.assist) api.assist.onMessage((m) => { if (m.t === 'state') assistState(m); else if (m.t === 'frame') assistFrame(m); });
 
@@ -195,7 +208,7 @@ async function openNativeLoops(s, sources) {
   for (let i = 0; i < sources.length; i++) {
     const r = await new Promise((done) => {
       nativeOpening.set(i, done);
-      port.postMessage({ t: 'open', i, x: sources[i].x + 8, y: sources[i].y + 8, gap: Math.max(0, Number(cfg.captureGap) || 0), gpu: cfg.capture === 'gpu',
+      port.postMessage({ t: 'open', i, x: sources[i].x + 8, y: sources[i].y + 8, gap: Math.max(0, Number(cfg.captureGap) || 0), gpu: cfg.capture === 'gpu', keep: keepAliveMs(),
         rect: { x: sources[i].x, y: sources[i].y, w: sources[i].width, h: sources[i].height } });
       // A capturer that has not answered in 4 s is not asked again: its answer, should it still come,
       // would be taken for the answer to a later request.

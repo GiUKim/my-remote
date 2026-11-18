@@ -1048,11 +1048,18 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         return session.sources.length; })()`);
       const [live, s1] = await until((x) => x.lock === 'lock' && x.lockLive && x.lockLive.ds.length === n, 6);
       const ui = await js(`({ bar: !!(mainView.lockBar && mainView.lockBar.style.display === 'flex'), cover: !!(mainView.lockEl && mainView.lockEl.style.display === 'flex') })`);
+      // The still picture goes again once a second after its repeats (the keep-alive): a client that gets
+      // nothing for 3 s asks for a key frame, and the next dot of a typed password would come as one.
+      await sleep(2500);
+      const kept = await hostWin.webContents.executeJavaScript(`(() => { const now = performance.now(), k = keepAliveMs();
+        return { keep: k, ages: [...assist.mons.values()].map((e) => Math.round(now - e.at)), left: [...assist.mons.values()].map((e) => e.left), timer: !!assist.timer }; })()`);
+      const keptOk = kept.keep > 0 && kept.ages.length === n && kept.ages.every((a) => a < kept.keep + 400) && kept.left.every((l) => l === 0) && kept.timer;
       await hostWin.webContents.executeJavaScript(`assistState({ secure: false, locked: false, input: false }); 1`);
       const [back] = await until((x) => x.lock === '', 6);
       const barGone = !(await js(`!!(mainView.lockBar && mainView.lockBar.style.display === 'flex')`));
-      check('the lock screen through the assist service: every monitor\'s picture reaches its own video and the client shows it live (bar, no cover); cleared after',
-        live && ui.bar && !ui.cover && back && barGone, JSON.stringify({ monitors: n, lockLive: s1 && s1.lockLive, ui, back, barGone }));
+      const stopped = await hostWin.webContents.executeJavaScript('!assist.timer && assist.mons.size === 0');
+      check('the lock screen through the assist service: every monitor\'s picture reaches its own video and the client shows it live (bar, no cover), still pictures are kept alive once a second; cleared after',
+        live && ui.bar && !ui.cover && keptOk && back && barGone && stopped, JSON.stringify({ monitors: n, lockLive: s1 && s1.lockLive, ui, kept, back, barGone, stopped }));
     } else info('the lock screen on every monitor not checked: native capture is not in use on every monitor');
     // A session that starts while the screen cannot be read (the PC locked; acted out by the native
     // capturer, mc_test_elsewhere): it comes up all the same (before 0.5.1 it ended with "Could not start

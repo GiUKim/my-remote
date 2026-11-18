@@ -69,6 +69,8 @@ const DEFAULTS = {
                         //   faster with H.264 on the graphics card; CLAUDE.md "Performance")
   captureGap: 8,        // ms the native capturer rests after each image. Without a rest it has every image at once, but reading
                         // the screen back that often made the host's own screen stutter under full-screen motion (measured)
+  keepAlive: 1000,      // ms: a still screen's last picture goes again this often (native capture, the lock screen's pictures), so
+                        // the client never asks for a key frame; 0: never (the first change after a pause of 3 s or more is then one)
   refine: true,         // true: send a still screen until it is fully sharp (AV1 only; adds about 15 ms of delay) | 'always': no added delay, but a still screen is sent continuously | false
   audio: true,          // send system sound
   clipboard: true,      // two-way text clipboard
