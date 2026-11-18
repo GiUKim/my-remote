@@ -1132,6 +1132,13 @@ the client app instead).
   disturbed (`--native-probe`: on screen 18.9 against 18.2 ms after it is drawn, 74.2 against 74.5 fps). So
   the gaps come from the client's drawing on the same graphics card as the host's GPU work - which a client
   on another PC does not share - but that is not shown yet: the two-machine run is still the step before a default.
+  Shown the same day: the client on the build server (Electron 45.3.1 under Xvfb, drawn in software), the
+  host on this PC, H.264 on the graphics card, two runs each, read-back -> GPU: scroll p50 52-62 -> 40-42 ms,
+  typing p50 40-44 -> 33-36 ms (max 153-399 -> 68-73), 50-56 -> 60-61 fps shown, gaps over 50 ms per frame
+  presented 37-39 -> 32-34, over 100 ms 0-3 -> 0, received that far apart 20-24 -> 6-7, host CPU 5.1-5.2% ->
+  3.8-3.9%. Better on every figure once the client is another PC. Still open before it could be the default
+  for H.264 sessions: other graphics cards (only NVIDIA's encoder was tried) and several monitors with it on
+  (the self-test has no way to turn it on yet).
 - **The client's side of the delay** (2026-11-18): the receiver already shows each frame as soon as it is
   decoded (`ForceSendPlayoutDelay` 0/0 in `ENGINE_TRIALS`, and `jitterBufferTarget`/`playoutDelayHint` 0
   in the page); received to screen is about 14 ms on this PC (decode about 1 ms). Keeping the client page
@@ -1351,7 +1358,11 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
     same first swap through `my-remote.sh`: swapped 2 s after the host quit, up 34 s later. The first real
     one, through the published 0.7.0 and the real feed, on the person's PC (2026-11-16 16:12): the host on
     the 0.6.0 package's shell began the swap, quit, and was swapped 5 s later; the new shell's host said it
-    was up 10 s after that. Not verified: the client app's swap at quit with the real app, a company PC's
+    was up 10 s after that. The first new Electron through it (0.9.3, 45.3.1 -> 45.3.4, 2026-11-18): the
+    Linux PC's installed host (0.8.1, reached only remotely) fetched the 117 MB package at its 6-hour look,
+    swapped while idle and came back as 0.9.3 3 s later (its host.log); this Windows PC's app staged its
+    package and waits, since the client app runs there all the time (as designed: no swap while it runs).
+    Not verified: the client app's swap at quit with the real app, a company PC's
     policies (constrained language), a virus scanner holding files, a PC with the app in Program Files.
 - **Plain names.** No file or folder the package holds or the app makes has a space or anything but
   ASCII in its name (the user's rule, 2026-11-14: a path with Korean or a space fails on some systems
