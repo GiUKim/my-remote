@@ -1,0 +1,10 @@
+{
+  "ko": [
+    "화면이 몇 초 멈춰 있다가 바뀔 때 첫 반응이 늦던 문제를 고쳤습니다(읽다가 누른 키, 멈춘 화면에서 시작한 스크롤). 4초 멈춘 뒤 입력이 106 ms에서 40~50 ms로 빨라졌고, 멈췄다 시작한 스크롤이 끊기지 않습니다. 호스트가 이 버전이 되면 적용됩니다",
+    "Windows 잠금 화면에서 비밀번호를 입력할 때도 같은 지연이 없어졌습니다"
+  ],
+  "en": [
+    "The first change after the screen stood still for a few seconds (a key pressed after reading, a scroll started on a still page) no longer comes late: 106 ms -> 40-50 ms after a 4 s pause, and such a scroll no longer stutters. Takes effect once the host runs this version",
+    "Typing a password on a Windows lock screen no longer has that delay either"
+  ]
+}
