@@ -1622,6 +1622,16 @@ five-minute test, so a restart does not forget them. A new `hello` replaces the 
 session is current from its hello on, a teardown during its setup closes what it has, and the host
 ends a session as soon as its input channel closes.
 
+A message lost on the relay (the public one loses one now and then; in CI a hello went out before the
+host had subscribed) used to end a try: the page waited 20 s and gave up (a first connection; a reconnect
+tried again 1.5 s later). Since 2026-11-19 the page starts over once by itself (`tryAgain`): 6 s after its
+hello when the host said nothing at all (no offer, no `confirm`, no `denied`), or 8 s after its answer when
+the connection is not up. Never while the host asks the person there (`confirm`): the same page asking
+again replaces its question there, and a host takes at most 6 in 10 minutes. Once per try (the count starts
+again on 연결, on a connection up, and at each reconnect). The self-test has its relay lose an offer and an
+answer (`relayDrop`): up again after 8 and 10 s. The loader's own `ver`/`app` exchange (15 s, no second
+try) is unchanged: loaders handed out cannot change, and the client app's loader is the same file.
+
 Data channel `input` (JSON text):
 
 | Direction | Message | Meaning |
@@ -1824,6 +1834,15 @@ Findings so far (i9-9900K, RTX 3060, three 1080p displays at 75 Hz, 1280x720 pic
   were tried and were worse or no better.
 
 ## Diagnostics log
+
+**The client app's connect.log** (from 0.9.5; `%APPDATA%\my-remote-client\connect.log`, Linux
+`~/.config/my-remote-client/connect.log`, kept under 256 KB with `connect.old.log`): one line per step of each
+try to connect, written by the page through `mrShell.connLog` - `request key|token|one-time code` (`, again`,
+`, reconnecting`), `asked at the host`, `offer +N ms`, `answer +N ms`, `connected +N ms`, `again <why>`,
+`lost <text>`, `refused <why>` - with the time and the list entry's id. No key, token, sid or relay topic
+(the self-test checks the file for them), so it may be read: when a connection would not come up, it says
+where it stopped (on 2026-11-18 a token's try at the Linux host stalled after the host's offer and nothing
+on the client told why). The loader's steps before the page are not in it.
 
 The client sends its measurements every 2 s (`cs` message) and the host appends them, with its own
 encoder statistics, to `%APPDATA%\my-remote-host\diag.log` (Linux: `~/.config/my-remote-host/diag.log`;

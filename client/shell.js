@@ -377,6 +377,24 @@ function setupIpc() {
   });
   // What the page says about its session: connected or not, and what the host said it is.
   ipcMain.handle('shell:hostInfo', (e, info) => { const s = listed(e); if (!s) return false; list.info(s.host, info && typeof info === 'object' ? info : {}); return true; });
+  // The page's steps of each try to connect (request, offer, answer, connected, again, lost, refused) with their
+  // times, kept in connect.log in the app's profile (from 0.9.5): when a connection would not come up, this says
+  // where it stopped. The page writes no key, token, sid or relay topic; a line is cut short and cleaned here, a
+  // window writes at most 60 lines a minute, and the file is kept under 256 KB (the one before as connect.old.log).
+  ipcMain.handle('shell:connLog', (e, line) => {
+    const s = shellOf(e.sender);
+    if (!s || e.sender !== s.win.webContents || (e.senderFrame && e.senderFrame !== e.sender.mainFrame) || typeof line !== 'string') return false;
+    const now = Date.now();
+    if (!s.connLog || now - s.connLog.since > 60e3) s.connLog = { since: now, n: 0 };
+    if (++s.connLog.n > 60) return false;
+    const text = Array.from(line.slice(0, 200), (c) => (c.codePointAt(0) < 32 ? ' ' : c)).join('');
+    const file = path.join(app.getPath('userData'), 'connect.log');
+    try {
+      try { if (fs.statSync(file).size > 256 * 1024) fs.renameSync(file, path.join(app.getPath('userData'), 'connect.old.log')); } catch {}
+      fs.appendFileSync(file, `${new Date(now).toISOString()} ${s.host ? 'pc ' + String(s.host).slice(0, 16) : 'window'} ${text}\n`);
+    } catch { return false; }
+    return true;
+  });
   // Connections that come back on themselves (see writeLive above): pages a release signed only.
   ipcMain.handle('shell:localHost', (e) => { if (!trusted(e)) return ''; try { return String(localHostOf() || ''); } catch { return ''; } });
   ipcMain.handle('shell:liveHost', (e, id) => {

@@ -26,6 +26,9 @@ const CLIENT_APP_CHECK = process.argv.includes('--client-app-check');
 
 // Minimal ntfy-compatible pub/sub: POST /topic, GET /topic/sse, GET /topic1,topic2/sse (several topics
 // on one subscription, as ntfy.sh does: each message says the topic it came on).
+// relayDrop: the test can have it lose messages on one topic, as the public relay now and then does: after
+// `skip` messages there, the next `n` are taken (answered 200) and never passed on.
+const relayDrop = { topic: '', skip: 0, n: 0, dropped: 0 };
 exports.startRelay = () => new Promise((resolve) => {
   const subs = new Map();
   const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' };
@@ -42,6 +45,10 @@ exports.startRelay = () => new Promise((resolve) => {
       let body = '';
       req.on('data', (c) => (body += c));
       req.on('end', () => {
+        if (relayDrop.n > 0 && parts[0] === relayDrop.topic) {
+          if (relayDrop.skip > 0) relayDrop.skip--;
+          else { relayDrop.n--; relayDrop.dropped++; res.writeHead(200, cors); res.end('{}'); return; }
+        }
         for (const s of subs.get(parts[0]) || []) s.write(`data: ${JSON.stringify({ event: 'message', topic: parts[0], message: body })}\n\n`);
         res.writeHead(200, cors); res.end('{}');
       });
@@ -1034,6 +1041,26 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       check('an encoder that stops taking frames is noticed: the host makes the session anew and the picture comes back',
         back2 && r1 === r0 + 1, `stall renews ${r0} -> ${r1}; reconnected ${s.connects > before2}; frames decoded after ${f0 < 0 || f1 < 0 ? '-' : f1 - f0}`);
     }
+    // A message lost on the relay (tryAgain in the page): once the host's offer, once the client's answer. The
+    // client asks again by itself, once, and the session comes up; before, it waited 20 s and gave up (seen on
+    // the public relay, and in CI when a hello went out before the host had subscribed). Each time the host
+    // renews the session (as when its monitors change), so the client connects anew at once.
+    {
+      const topics = await hostWin.webContents.executeJavaScript('({ toClient: keys.topicClient, toHost: keys.topicHost })');
+      const lose = async (topic, skip) => {
+        const before3 = s.connects, a0 = s.resends || 0, t0 = Date.now();
+        Object.assign(relayDrop, { topic, skip, n: 1, dropped: 0 });
+        hostWin.webContents.send('displays-changed');
+        let up = false;
+        for (let i = 0; i < 40 && !up; i++) { await sleep(1000); s = await state(); up = s.connects > before3 && s.state === 'connected'; }
+        relayDrop.n = 0;
+        return { up, secs: Math.round((Date.now() - t0) / 1000), dropped: relayDrop.dropped, again: (s.resends || 0) - a0 };
+      };
+      const offer = await lose(topics.toClient, 0); // the first message to the client after the request: the offer
+      const answer = await lose(topics.toHost, 1); // the second to the host: the request, then the answer
+      check('a message lost on the relay does not end the connection: the client asks once more by itself and comes back (a lost offer, a lost answer)',
+        offer.up && offer.dropped === 1 && offer.again === 1 && answer.up && answer.dropped === 1 && answer.again === 1, JSON.stringify({ offer, answer }));
+    }
     // The host's screen locked and unlocked (what main sends on Windows' lock events), and a screen the
     // native capturer cannot read for a while (a UAC prompt): the client says so over the picture.
     {
@@ -1615,6 +1642,16 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
           !!seen2 && !!entry && entry.lastAt > 0 && entry.os === os0.os && entry.osName === os0.name && entry.pc === os0.pc && typeof entry.keyEnc === 'string' && entry.keyEnc.length > 0 && !text.includes(cfg.key) && !fs.existsSync(imp),
           seen2 ? `fps ${JSON.stringify(seen2.fps)}; entry ${entry ? JSON.stringify({ name: entry.name, os: entry.os, osName: entry.osName, pc: !!entry.pc, lastAt: entry.lastAt > 0, monitors: entry.monitors }) : 'none'}; key as text in the file: ${text.includes(cfg.key)}` : 'no measurements from the app arrived');
 
+        // The app keeps the steps of each try to connect (connect.log, shell:connLog): the request and the
+        // connection with their times, and never the key, the relay's topics or a session's id.
+        {
+          let log = '';
+          try { log = fs.readFileSync(path.join(ldir, 'client-app-profile', 'connect.log'), 'utf8'); } catch {}
+          const tp = await hostWin.webContents.executeJavaScript('({ a: keys.topicClient, b: keys.topicHost })');
+          const leaks = [cfg.key, tp.a, tp.b].filter((x) => x && log.includes(x)).length + (/\b[A-Za-z0-9_-]{16,}\b/.test(log.replace(/pc [0-9a-f]{1,16}/g, '')) ? 1 : 0);
+          check('client app: it keeps the steps of a try to connect (connect.log), with no key, relay topic or id in it',
+            /request key/.test(log) && /connected \+\d+ ms/.test(log) && leaks === 0, `${log.split('\n').filter(Boolean).length} lines${leaks ? `, ${leaks} secret-looking strings` : ''}: ${log.split('\n').filter(Boolean).slice(0, 4).map((l) => l.slice(25, 90)).join(' | ')}`);
+        }
         // Devices (host/devices.js): connected with the key, the app was given a token of its own over that
         // connection, keeps it like the key, and lets the key go once the token has been seen to work.
         // The token is kept in tokens.json (by entry), and the key let go leaves 'none' in hosts.json.

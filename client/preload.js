@@ -92,4 +92,6 @@ contextBridge.exposeInMainWorld('mrShell', {
   // Whether the system holds Ctrl, Alt or a Windows key now: true, false, or null (cannot tell; a window without
   // the focus is not told). For the safe Keyboard Lock (client/keylock.js), from 0.9.1.
   modsHeld: () => ipcRenderer.invoke('shell:modsHeld'),
+  // A step of a try to connect, for the app's connect.log (from 0.9.5; the page must not rely on it).
+  connLog: (line) => ipcRenderer.invoke('shell:connLog', line),
 });

@@ -2416,6 +2416,28 @@ async function signed(text) {
   return b64(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, k.priv, new TextEncoder().encode(text)));
 }
 
+// ---- a relay message lost on the way (2026-11-19) --------------------------------------------------------
+// One message lost on the relay (the host's offer, or this page's answer) ended a connection: the page
+// waited its 20 s and gave up (seen on the public relay on 2026-11-18, and in CI when the hello went out
+// before the host had subscribed). So an attempt is made anew, once: RESEND_MS after the hello when the host
+// has said nothing at all (no offer, no question for the person there, no refusal), or ANSWERED_MS after
+// the answer when the connection is not up. Never while the host asks the person there (confirm): the same
+// page asking again replaces its question there, and a host takes at most 6 in 10 minutes. Once per try:
+// the count starts again when the person connects, when a connection is up and at each reconnect.
+const RESEND_MS = 6000, ANSWERED_MS = 8000;
+let resendTimer = 0, resends = 0, helloAt = 0;
+function tryAgain(why) {
+  if (!want || asking || resends >= 1) return;
+  resends++;
+  window.__rd.resends = (window.__rd.resends || 0) + 1;
+  connNote('again', why);
+  begin();
+}
+// What the client app keeps about each try to connect (its connect.log, from 0.9.5; the page must not rely on
+// it): the steps and their times, which kind of credential, never a key, token, sid or relay topic.
+const connNote = (step, extra) => { if (shell && typeof shell.connLog === 'function') Promise.resolve(shell.connLog(step + (extra ? ' ' + extra : ''))).catch(() => {}); };
+const sinceHello = () => (helloAt ? `+${Math.round(performance.now() - helloAt)} ms` : '');
+
 // ---- waiting for the host to allow this client (a new device) ------------------------------------------
 // The host asks the person there (or takes the code of their authenticator app, when they turned that on).
 let asking = null; // { sid, timer }
@@ -2485,7 +2507,7 @@ function forgetSession() {
   putting = null; // an upload under way finds its channel closed and stops by itself
 }
 function cleanupPc() {
-  clearTimeout(helloTimer); clearTimeout(retryTimer);
+  clearTimeout(helloTimer); clearTimeout(retryTimer); clearTimeout(resendTimer);
   hideAsk();
   if (chan) { chan.close(); chan = null; }
   const old = pc;
@@ -2511,9 +2533,11 @@ function disconnect(text) {
 // Unexpected loss: retry automatically, keeping windows where they are.
 function lost(text) {
   if (!want) return;
+  connNote('lost', text);
   cleanupPc();
   if (ever && retry < MAX_RETRY) {
     retry++;
+    resends = 0; // each reconnect may try once more itself (see tryAgain)
     overlay(`연결이 끊겼습니다. 다시 연결하는 중… (${retry}/${MAX_RETRY})`);
     window.__rd.state = 'reconnecting';
     retryTimer = setTimeout(begin, Math.min(15000, 1500 * retry));
@@ -2676,8 +2700,9 @@ async function onOffer(m) {
     const st = my.connectionState;
     if (st === 'connected') {
       const first = !ever;
-      ever = true; retry = 0;
-      clearTimeout(helloTimer);
+      ever = true; retry = 0; resends = 0;
+      clearTimeout(helloTimer); clearTimeout(resendTimer);
+      connNote('connected', sinceHello());
       $('panel').style.display = 'none';
       overlay('');
       window.__rd.state = 'connected';
@@ -2702,7 +2727,12 @@ async function onOffer(m) {
   if (pc !== my || !chan) return;
   const sdp = my.localDescription.sdp;
   await chan.send({ t: 'answer', sid, ts: Date.now(), sdp, sig: await signed('answer\n' + sid + '\n' + sdp) });
+  connNote('answer', sinceHello());
   if (!ever) msg('연결 수립 중…');
+  // The answer may be lost on the way (see tryAgain): then the host never connects.
+  const answered = sid;
+  clearTimeout(resendTimer);
+  resendTimer = setTimeout(() => { if (sid === answered && pc === my && my.connectionState !== 'connected') tryAgain('no connection after the answer'); }, ANSWERED_MS);
 }
 
 async function begin() {
@@ -2715,10 +2745,10 @@ async function begin() {
       server: DEVICE && DEVICE.server ? DEVICE.server : SERVER, subTopic: keys.topicClient, pubTopic: keys.topicHost, rxKey: keys.h2c, txKey: keys.c2h,
       onMessage: (m) => {
         if (!m || m.sid !== sid) return;
-        if (m.t === 'offer' && !pc) { hideAsk(); onOffer(m).catch((e) => lost('오류: ' + e.message)); }
-        else if (m.t === 'confirm' && !pc) showAsk(m);
+        if (m.t === 'offer' && !pc) { hideAsk(); connNote('offer', sinceHello()); onOffer(m).catch((e) => lost('오류: ' + e.message)); }
+        else if (m.t === 'confirm' && !pc) { if (!asking) connNote('asked at the host', sinceHello()); showAsk(m); }
         else if (m.t === 'otp' && asking) codeAnswer(m);
-        else if (m.t === 'denied') { hideAsk(); window.__rd.denied = String(m.why || ''); disconnect(DENIED[m.why] || '호스트가 접속을 거부했습니다.'); }
+        else if (m.t === 'denied') { hideAsk(); connNote('refused', String(m.why || '')); window.__rd.denied = String(m.why || ''); disconnect(DENIED[m.why] || '호스트가 접속을 거부했습니다.'); }
       },
     }));
     await Promise.race([c.ready, sleep(10000).then(() => { throw new Error('시그널링 서버에 연결할 수 없습니다'); })]);
@@ -2739,7 +2769,11 @@ async function begin() {
     }
     if (sid !== mySid || chan !== c) return;
     await c.send(hello);
+    helloAt = performance.now();
+    connNote('request', `${DEVICE ? 'token' : ONE_TIME ? 'one-time code' : 'key'}${resends ? ', again' : ''}${ever ? ', reconnecting' : ''}`);
     if (!ever) msg('호스트 응답 대기 중…');
+    // Nothing from the host at all: the hello or the host's answer may be lost on the way (see tryAgain).
+    resendTimer = setTimeout(() => { if (sid === mySid && !pc && !asking) tryAgain('no answer to the request'); }, RESEND_MS);
     helloTimer = setTimeout(() => {
       if (sid === mySid && (!pc || pc.connectionState !== 'connected')) lost(ONE_TIME ? '호스트가 응답하지 않습니다. 1회용 코드가 만료되었거나 호스트에서 끝냈을 수 있습니다.' : '호스트가 응답하지 않습니다. 호스트 프로그램 실행 여부와 키를 확인하세요.');
     }, 20000);
@@ -2754,6 +2788,7 @@ async function connect() {
   // The field holds an access key or a one-time code the host window made (signal.js codeOf; see host.js oneTime).
   const typed = $('key').value.trim();
   ONE_TIME = !DEVICE && !!RD.codeOf(typed);
+  resends = 0;
   try { keys = DEVICE ? await RD.derive(DEVICE.secret, RD.DEVICE) : ONE_TIME ? await RD.deriveCode(RD.codeOf(typed)) : await RD.derive(typed); }
   catch (e) { msg(/형식/.test(e.message) ? '접속 키나 1회용 코드의 형식이 올바르지 않습니다' : '오류: ' + e.message); return; }
   want = true; ever = false; retry = 0;
