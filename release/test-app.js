@@ -205,9 +205,13 @@ function makeApp(name, builtin, port) {
     // What a failed run said that tells why (the CI log keeps only this test's lines): frames the engine took for
     // out of order (host.js stalled()), the host noticing an encoder that takes none, sessions ending.
     const whyFailed = (text) => {
-      const lines = text.split('\n');
-      const host = lines.filter((l) => /\[host\].*(인코더|세션 종료|연결 상태: (failed|disconnected))/.test(l)).slice(-6).map((l) => l.trim().slice(0, 160));
-      return ` [frames taken for out of order: ${lines.filter((l) => /not monotonically increasing/.test(l)).length}${host.length ? '; ' + host.join(' | ') : ''}]`;
+      const lines = text.split('\n'), count = (re) => lines.filter((l) => re.test(l)).length;
+      const first = lines.findIndex((l) => /\[selftest\] FAIL/.test(l));
+      // The host's own lines just before the first failure (what it did meanwhile), and what it said about its encoder at all.
+      const before = lines.slice(Math.max(0, first - 40), first).filter((l) => /\[host\]/.test(l)).slice(-5).map((l) => l.trim().slice(0, 140));
+      const enc = lines.filter((l) => /\[host\].*인코더/.test(l)).slice(0, 3).map((l) => l.trim().slice(0, 140));
+      return ` [frames taken for out of order: ${count(/not monotonically increasing/)}; stalls noticed: ${count(/인코더가 4초째/)}; encoder settings refused: ${count(/인코더 설정 실패/)}`
+        + `${enc.length ? '; about the encoder: ' + enc.join(' | ') : ''}${before.length ? '; before the failure: ' + before.join(' | ') : ''}]`;
     };
     const r = spawnSync(exe, [...EXTRA, '--selftest'], { env, encoding: 'utf8', timeout: 6 * 60e3, maxBuffer: 64 * 1024 * 1024 });
     const outText = String(r.stdout || '') + String(r.stderr || ''), fails = outText.split('\n').filter((l) => /\[selftest\] FAIL/.test(l));
