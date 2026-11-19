@@ -74,6 +74,9 @@ const ASSIST_REPEATS = 30, ASSIST_REPEAT_MS = 33; // a still picture brought to 
 // asks for a key frame: see the keep-alive in preload.js. Here for the lock screen's pictures, a typed
 // password's next dot after a pause; preload.js is given the same for the capturer's.
 const keepAliveMs = () => (cfg && cfg.keepAlive > 0 ? Math.max(200, Number(cfg.keepAlive)) : 0);
+// The lock screen's pictures are stamped on the capturer's clock (the page's: preload.js), always rising.
+let assistTs = 0;
+const frameTs = () => (assistTs = Math.max(assistTs + 1, Math.round(performance.now() * 1000)));
 const primaryIndex = (s) => (s && s.sources ? s.sources.findIndex((src) => src.primary) : -1);
 // Which monitor a picture is of: by its rectangle on the virtual screen (physical pixels, as the sources'),
 // else by its top left; one without a place ('F') is the primary's. -1: none of this session's.
@@ -112,7 +115,7 @@ function assistFrame(m) {
   if (!n) return;
   let frame;
   // GDI leaves the fourth byte 0: BGRX, as the native capturer's pictures (BGRA would make it transparent).
-  try { frame = new VideoFrame(m.data, { format: 'BGRX', codedWidth: m.w, codedHeight: m.h, timestamp: Math.round(performance.now() * 1000) }); }
+  try { frame = new VideoFrame(m.data, { format: 'BGRX', codedWidth: m.w, codedHeight: m.h, timestamp: frameTs() }); }
   catch (e) { log('잠금 화면 그림을 쓸 수 없습니다: ' + e.message); return; }
   const e = assist.mons.get(i), first = !e;
   if (e && e.last) e.last.close();
@@ -136,7 +139,7 @@ function assistRepeat() {
     else if (!keep || now - e.at < keep - 5) continue;
     if (e.left > 0) more = true;
     e.at = now;
-    n.writer.write(new VideoFrame(e.last, { timestamp: Math.round(now * 1000) })).catch(() => {});
+    n.writer.write(new VideoFrame(e.last, { timestamp: frameTs() })).catch(() => {});
   }
   if (more) assistAgain(ASSIST_REPEAT_MS);
   else if (live && keep) assistAgain(keep);

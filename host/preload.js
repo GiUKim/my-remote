@@ -185,6 +185,11 @@ function sharedTextures() {
 }
 // Imports kept alive after their image (the encoder may still read a frame of it): the newest GPU_KEEP.
 const GPU_KEEP = 8;
+// Frames are stamped on the page's clock (performance.now(), in microseconds). Tried on 2026-11-18 and taken
+// back: the operating system's monotonic clock (process.hrtime, what Chromium times itself with), meant to keep
+// the engine from comparing two clocks (see stalled() in host.js). On Linux the engine then took about 70
+// frames of every 30 s run for out of order ("current: X last: X", the same stamp twice; 3e12 us, the server
+// up 35 days), where the page's clock gave none in 50 runs.
 function captureLoop(port, i, handle, width, height, gap, gpu, keep) {
   // left: repeats of the last image still to send. paused: the screen cannot be read right now.
   // sent: when a frame last went to the page (the keep-alive counts from it).

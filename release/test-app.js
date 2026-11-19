@@ -202,10 +202,17 @@ function makeApp(name, builtin, port) {
     const p = require('./package').pack({ release: rel, out: path.join(tmp, 'pack'), archive: false, config: conf, quiet: true });
     const exe = path.join(p.dir, process.platform === 'win32' ? 'MyRemote.exe' : 'my-remote');
     const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+    // What a failed run said that tells why (the CI log keeps only this test's lines): frames the engine took for
+    // out of order (host.js stalled()), the host noticing an encoder that takes none, sessions ending.
+    const whyFailed = (text) => {
+      const lines = text.split('\n');
+      const host = lines.filter((l) => /\[host\].*(인코더|세션 종료|연결 상태: (failed|disconnected))/.test(l)).slice(-6).map((l) => l.trim().slice(0, 160));
+      return ` [frames taken for out of order: ${lines.filter((l) => /not monotonically increasing/.test(l)).length}${host.length ? '; ' + host.join(' | ') : ''}]`;
+    };
     const r = spawnSync(exe, [...EXTRA, '--selftest'], { env, encoding: 'utf8', timeout: 6 * 60e3, maxBuffer: 64 * 1024 * 1024 });
     const outText = String(r.stdout || '') + String(r.stderr || ''), fails = outText.split('\n').filter((l) => /\[selftest\] FAIL/.test(l));
     check(`the packaged app (${p.name}) passes the self-test through the shell`, r.status === 0 && /\[selftest\] ALL PASS/.test(outText) && /\[app\] host: version /.test(outText),
-      `exit ${r.status}; ${fails.slice(0, 3).join(' ; ') || outText.split('\n').filter((l) => /\[app\]|Error|error/.test(l)).slice(0, 5).join(' ; ')}`);
+      `exit ${r.status}; ${fails.slice(0, 3).join(' ; ') || outText.split('\n').filter((l) => /\[app\]|Error|error/.test(l)).slice(0, 5).join(' ; ')}${r.status === 0 ? '' : whyFailed(outText)}`);
     const cap = (/\[selftest\] INFO {2}screen capture: (.*)/.exec(outText) || [])[1];
     console.log(`      screen capture in the package: ${cap || '?'} (native needs koffi, which the shell brings); ${(outText.match(/\[selftest\] PASS/g) || []).length} checks`);
     // The same code once more as an UPDATE: installed into the data folder as the updater does, where it has
@@ -223,7 +230,7 @@ function makeApp(name, builtin, port) {
       const out2 = String(r2.stdout || '') + String(r2.stderr || ''), fails2 = out2.split('\n').filter((l) => /\[selftest\] FAIL/.test(l));
       check('the same code installed as an update (the data folder) passes the self-test through the shell, its native capturer loaded',
         r2.status === 0 && /\[selftest\] ALL PASS/.test(out2) && /\[app\] host: version 9\.9\.9 \(installed/.test(out2) && /PASS {2}the native capturer loads in the host page/.test(out2),
-        `exit ${r2.status}; ${(/\[app\] host: [^\n]*/.exec(out2) || [''])[0]}; ${fails2.slice(0, 3).join(' ; ') || out2.split('\n').filter((l) => /\[app\]|Error|error/.test(l)).slice(0, 5).join(' ; ')}`);
+        `exit ${r2.status}; ${(/\[app\] host: [^\n]*/.exec(out2) || [''])[0]}; ${fails2.slice(0, 3).join(' ; ') || out2.split('\n').filter((l) => /\[app\]|Error|error/.test(l)).slice(0, 5).join(' ; ')}${r2.status === 0 ? '' : whyFailed(out2)}`);
       console.log(`      screen capture as an update: ${(/\[selftest\] INFO {2}screen capture: (.*)/.exec(out2) || [])[1] || '?'}; ${(out2.match(/\[selftest\] PASS/g) || []).length} checks`);
     }
     // What shell the package holds (host/shellswap.js reads it to decide whether a newer package replaces it).
