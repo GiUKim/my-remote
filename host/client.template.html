@@ -2274,8 +2274,9 @@ window.addEventListener('pagehide', () => { for (const v of liveViews()) if (!v.
 // The host's screen is locked, or a secure prompt (UAC) has it: those cannot be seen or controlled from
 // here, and the picture stops at what was there before. Every window says so over the picture.
 let hostLock = ''; // '', 'lock' or 'secure' (see 'lock' in the host's host.js)
-// A Windows host with the lock screen support (its assist service) shows that secure desktop's picture on
-// its primary monitor `d`; `input`: what is typed reaches it (the lock screen; a UAC prompt is view only).
+// A Windows host with the lock screen support (its assist service) shows that secure desktop's picture on the
+// monitors `ds` (every monitor from a service of 2026-11-18 on, the primary only before), `d` the one with the
+// password box; `input`: what is typed reaches it (the lock screen; a UAC prompt is view only).
 let hostLockLive = null;
 const LOCK_TEXT = {
   lock: ['호스트 PC가 잠겨 있습니다', '잠금 화면은 원격으로 보이지도 조작되지도 않습니다. 호스트 PC 앞에서 잠금을 풀면 화면이 이어집니다. (Windows 호스트는 호스트 창에서 "잠금 화면에서도 원격 조종"을 설치하면 원격에서 풀 수 있습니다.)'],

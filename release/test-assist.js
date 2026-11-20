@@ -171,6 +171,18 @@ const frames = () => toPage.filter((m) => m.t === 'frame');
   await until(() => helperEnded, 2000);
   caps = null;
 
+  // 10c. A new connection's first word goes to the page also when it is the ordinary desktop (the state a
+  // connection starts from): the page may still have what the connection before said last - here the lock
+  // screen of 10b, as when a session ended on the lock screen and the PC was unlocked at the PC before the next.
+  const c4 = helperConnections, said = toPage.filter((m) => m.t === 'state').length;
+  assist.start(pageSend);
+  await until(() => helperConnections === c4 + 1, 4000);
+  helper.write(Buffer.from([0x53, 0]));
+  ok('a new connection tells the page how the screen is, also when that is the ordinary desktop',
+    await until(() => toPage.filter((m) => m.t === 'state').length > said, 2000) && !lastState().secure, JSON.stringify(lastState()));
+  assist.stop();
+  await until(() => helperEnded, 2000);
+
   // 11. installing and removing: never during a remote session (Windows' consent prompt cannot be answered
   // from the client); the offer at the host's first start asks once, and only where the service is not
   // there yet. Nothing runs elevated here: T.elevate stands in for winassist.exe.

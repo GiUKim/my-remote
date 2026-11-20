@@ -1041,6 +1041,21 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       check('an encoder that stops taking frames is noticed: the host makes the session anew and the picture comes back',
         back2 && r1 === r0 + 1, `stall renews ${r0} -> ${r1}; reconnected ${s.connects > before2}; frames decoded after ${f0 < 0 || f1 < 0 ? '-' : f1 - f0}`);
     }
+    // The watch compares only readings that follow each other: a monitor left out of a reading (not being sent)
+    // and a reading that did not happen (the connection was not up: stallForget) start it afresh, so that two
+    // readings around such a gap never count as seconds with nothing encoded. A made-up session; never 2 in a
+    // row, so nothing is renewed.
+    {
+      const r = await hostWin.webContents.executeJavaScript(`(() => {
+        const f = { native: [{ written: 0 }] }, m = f.native[0], out = [];
+        stalled(f, { 0: 5 }); m.written += 10; stalled(f, { 0: 5 }); out.push(m.stuck); // frames written, none encoded: 1
+        stalled(f, {}); out.push(m.stuck);                                             // not sent in this reading: 0
+        m.written += 10; stalled(f, { 0: 5 }); out.push(m.stuck);                      // compared afresh: 0
+        m.written += 10; stalled(f, { 0: 5 }); out.push(m.stuck);                      // 1
+        stallForget(f); m.written += 10; stalled(f, { 0: 5 }); out.push(m.stuck);      // after a gap: 0
+        return out; })()`).catch((e) => String(e.message || e));
+      check('the encoder-stall watch compares only readings that follow each other', JSON.stringify(r) === '[1,0,0,1,0]', JSON.stringify(r));
+    }
     // A message lost on the relay (tryAgain in the page): once the host's offer, once the client's answer. The
     // client asks again by itself, once, and the session comes up; before, it waited 20 s and gave up (seen on
     // the public relay, and in CI when a hello went out before the host had subscribed). Each time the host
@@ -1093,19 +1108,61 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         return session.sources.length; })()`);
       const [live, s1] = await until((x) => x.lock === 'lock' && x.lockLive && x.lockLive.ds.length === n, 6);
       const ui = await js(`({ bar: !!(mainView.lockBar && mainView.lockBar.style.display === 'flex'), cover: !!(mainView.lockEl && mainView.lockEl.style.display === 'flex') })`);
-      // The still picture goes again once a second after its repeats (the keep-alive): a client that gets
-      // nothing for 3 s asks for a key frame, and the next dot of a typed password would come as one.
-      await sleep(2500);
-      const kept = await hostWin.webContents.executeJavaScript(`(() => { const now = performance.now(), k = keepAliveMs();
-        return { keep: k, ages: [...assist.mons.values()].map((e) => Math.round(now - e.at)), left: [...assist.mons.values()].map((e) => e.left), timer: !!assist.timer }; })()`);
-      const keptOk = kept.keep > 0 && kept.ages.length === n && kept.ages.every((a) => a < kept.keep + 400) && kept.left.every((l) => l === 0) && kept.timer;
+      // Meanwhile nothing of the capturer's goes into those videos: it cannot read the secure desktop, and its last
+      // picture of the desktop (repeats under way when the screen locked, or a series that a 'show' starts when the
+      // client changes what it shows: acted out with applyEncoding) flickered over the lock screen. The test's
+      // counter windows keep the capturer busy all the while.
+      // Each still picture goes again once a second after its repeats (the keep-alive): a client that gets nothing
+      // for 3 s asks for a key frame, and the next dot of a typed password would come as one. One monitor's picture
+      // changes half a second after the others' (as where the password box is): the others' keep-alive must not
+      // wait for its repeats to end (it did, up to a second, before 2026-11-20).
+      await hostWin.webContents.executeJavaScript(`(() => {
+        const w = (window.__lockWatch = { w0: session.native.map((x) => x.written || 0), maxAge: new Map(), t0: performance.now() });
+        applyEncoding(session);
+        setTimeout(() => { const s0 = session.sources[0]; assistFrame({ x: s0.x, y: s0.y, w: s0.width, h: s0.height, data: new Uint8Array(s0.width * s0.height * 4).fill(90) }); }, 500);
+        w.timer = setInterval(() => {
+          const now = performance.now();
+          if (now - w.t0 < 2000) return; // every monitor's repeats are over by then
+          for (const [i, e] of assist.mons) w.maxAge.set(i, Math.max(w.maxAge.get(i) || 0, now - e.at));
+        }, 20);
+        return 1; })()`);
+      await sleep(4500);
+      const kept = await hostWin.webContents.executeJavaScript(`(() => { const w = window.__lockWatch; clearInterval(w.timer);
+        return { keep: keepAliveMs(), maxAge: [...w.maxAge.values()].map(Math.round), left: [...assist.mons.values()].map((e) => e.left), timer: !!assist.timer,
+          written: session.native.map((x, i) => (x.written || 0) - w.w0[i]), held: assist.held || 0 }; })()`);
+      const keptOk = kept.keep > 0 && kept.maxAge.length === n && kept.maxAge.every((a) => a < kept.keep + 400) && kept.left.every((l) => l === 0) && kept.timer;
+      const heldOk = kept.written.every((x) => x === 0);
       await hostWin.webContents.executeJavaScript(`assistState({ secure: false, locked: false, input: false }); 1`);
       const [back] = await until((x) => x.lock === '', 6);
       const barGone = !(await js(`!!(mainView.lockBar && mainView.lockBar.style.display === 'flex')`));
       const stopped = await hostWin.webContents.executeJavaScript('!assist.timer && assist.mons.size === 0');
-      check('the lock screen through the assist service: every monitor\'s picture reaches its own video and the client shows it live (bar, no cover), still pictures are kept alive once a second; cleared after',
-        live && ui.bar && !ui.cover && keptOk && back && barGone && stopped, JSON.stringify({ monitors: n, lockLive: s1 && s1.lockLive, ui, kept, back, barGone, stopped }));
+      // And the capturer's pictures go in again once the secure desktop is gone (on the monitors the client shows:
+      // the others are not captured at all).
+      const w1 = await hostWin.webContents.executeJavaScript('({ w: session.native.map((x) => x.written || 0), shown: [...session.need.keys()] })');
+      await sleep(2500);
+      const w2 = await hostWin.webContents.executeJavaScript('session.native.map((x) => x.written || 0)');
+      const resumed = w1.shown.length > 0 && w1.shown.every((i) => w2[i] > w1.w[i]);
+      check('the lock screen through the assist service: every monitor\'s picture reaches its own video and the client shows it live (bar, no cover), nothing of the capturer\'s goes in with it, each still picture is kept alive once a second; cleared after, the capturer\'s pictures again',
+        live && ui.bar && !ui.cover && heldOk && keptOk && back && barGone && stopped && resumed,
+        JSON.stringify({ monitors: n, lockLive: s1 && s1.lockLive, ui, kept, back, barGone, stopped, shown: w1.shown, resumed: w2.map((x, i) => x - w1.w[i]) }));
     } else info('the lock screen on every monitor not checked: native capture is not in use on every monitor');
+    // A session that ends while the assist service says "lock screen" leaves nothing of that behind: the next
+    // session's connection to the service says afresh how the screen is (none here: the self-test runs none), so a
+    // PC unlocked at the PC meanwhile is not "locked" for the next session's client (it was, over the desktop,
+    // before 2026-11-20). The session is made anew as when the monitors change.
+    {
+      await hostWin.webContents.executeJavaScript(`assistState({ secure: true, locked: true, input: true }); 1`);
+      const [locked] = await until((x) => x.lock === 'lock', 6);
+      const before4 = s.connects;
+      hostWin.webContents.send('displays-changed');
+      let up4 = false;
+      for (let i = 0; i < 20 && !up4; i++) { await sleep(1000); s = await state(); up4 = s.connects > before4 && s.state === 'connected'; }
+      await sleep(2500); // the new session has said how the screen is (sendLock when its channel opens)
+      s = await state();
+      const host4 = await hostWin.webContents.executeJavaScript('({ secure: assist.secure, locked: assist.locked, reason: lockReason() })');
+      check('a session that ends on the lock screen leaves nothing of it behind: the next session\'s client is not told "locked"',
+        locked && up4 && s.lock === '' && !host4.secure && host4.reason === '', JSON.stringify({ locked, up4, clientLock: s.lock, host: host4 }));
+    }
     // A session that starts while the screen cannot be read (the PC locked; acted out by the native
     // capturer, mc_test_elsewhere): it comes up all the same (before 0.5.1 it ended with "Could not start
     // video source", so a locked PC could not be reached at all), the client is told why the picture

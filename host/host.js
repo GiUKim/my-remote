@@ -68,7 +68,8 @@ setInterval(() => {
 // the lock screen main.js sends the client's input to the service's helper, so the person types their
 // password as at the keyboard. UAC prompts are shown only.
 // mons: monitor index -> { last: the last picture, left: repeats still to send, at: when it last went }.
-const assist = { secure: false, locked: false, input: false, mons: new Map(), timer: 0 };
+// held: frames of the capturer kept out of a video that has the secure desktop's picture (see nativeChannel).
+const assist = { secure: false, locked: false, input: false, mons: new Map(), timer: 0, held: 0 };
 const ASSIST_REPEATS = 30, ASSIST_REPEAT_MS = 33; // a still picture brought to full quality (cf. REPEATS in preload.js)
 // How often a still picture goes again once it is sharp (config keepAlive; 0: never), so that the client never
 // asks for a key frame: see the keep-alive in preload.js. Here for the lock screen's pictures, a typed
@@ -125,26 +126,31 @@ function assistFrame(m) {
   if (first) sendLock(); // this monitor's picture is live now: the client shows it instead of a notice
 }
 function assistAgain(ms) { clearTimeout(assist.timer); assist.timer = setTimeout(assistRepeat, ms); }
-// The repeats of each monitor's last picture, then the keep-alive; ends when no picture has a video to go
-// into (a new session's starts again with the next picture) and with the secure desktop (assistForget).
+// The repeats of each monitor's last picture, then the keep-alive, each monitor's on its own time; ends when no
+// picture has a video to go into (a new session's starts again with the next picture) and with the secure
+// desktop (assistForget). Before 2026-11-20 the keep-alive was looked at a whole `keep` after any monitor's
+// repeats ended, so another monitor's came up to that much late (1.5 s apart, measured with three monitors).
 function assistRepeat() {
   assist.timer = 0;
   const keep = keepAliveMs(), now = performance.now();
-  let more = false, live = false;
+  let more = false, next = Infinity; // next: ms until the next keep-alive is due
   for (const [i, e] of assist.mons) {
     const n = assistTarget(i);
     if (!n || !e.last) continue;
-    live = true;
     if (e.left > 0) e.left--;
-    else if (!keep || now - e.at < keep - 5) continue;
-    if (e.left > 0) more = true;
+    else if (!keep) continue;
+    else if (now - e.at < keep - 5) { next = Math.min(next, e.at + keep - now); continue; }
     e.at = now;
     n.writer.write(new VideoFrame(e.last, { timestamp: frameTs() })).catch(() => {});
+    if (e.left > 0) more = true;
+    else if (keep) next = Math.min(next, keep);
   }
   if (more) assistAgain(ASSIST_REPEAT_MS);
-  else if (live && keep) assistAgain(keep);
+  else if (next < Infinity) assistAgain(Math.max(ASSIST_REPEAT_MS, next));
 }
-if (api.assist) api.assist.onMessage((m) => { if (m.t === 'state') assistState(m); else if (m.t === 'frame') assistFrame(m); });
+// Only during a session: main.js lets go of the service when one ends, and what is still on its way from that
+// connection then must not bring back what teardown forgot.
+if (api.assist) api.assist.onMessage((m) => { if (!session) return; if (m.t === 'state') assistState(m); else if (m.t === 'frame') assistFrame(m); });
 
 // ---- native capture (optional) -----------------------------------------------------
 // The preload script runs the native capturer and sends each monitor's frames over a message
@@ -171,6 +177,12 @@ function nativeChannel() {
     const m = e.data;
     if (m.t === 'frame') {
       const n = session && session.native && session.native[m.i];
+      // The secure desktop's picture (the assist service's) is in this monitor's video: the capturer cannot read
+      // that desktop, and what it still sends, its last picture of the desktop (the rest of a series of repeats
+      // under way when the screen locked, or a whole series that a 'show' starts when the client changes what it
+      // shows), went into the same encoder in turn with the lock screen's: the desktop flickered over it, or stood
+      // there for a second (found in a review, 2026-11-20). Kept out until the secure desktop is gone.
+      if (n && assist.secure && assist.mons.has(m.i)) { assist.held++; m.frame.close(); return; }
       if (n) { n.written = (n.written || 0) + 1; n.writer.write(m.frame).catch(() => {}); } else m.frame.close(); // `written`: see stalled()
       if (n && session.soundLater) soundSoon(session); // started on the lock screen: the screen is readable now
     } else if (m.t === 'opened') {
@@ -241,7 +253,12 @@ function teardown(reason, silent) {
   const s = session;
   session = null;
   forgetPaused(); // the next session's capture loops report for themselves
-  assistForget(); // main.js lets go of the service when told the session ended (below)
+  // main.js lets go of the service when told the session ended (below), and the next session's connection to it
+  // says afresh how the screen is (assist.js setState). Kept, what it said last outlived the session: a lock
+  // screen unlocked at the PC before the next session was still "locked" for that session's client, over the
+  // desktop (found in a review, 2026-11-20).
+  assistForget();
+  assist.secure = assist.locked = assist.input = false;
   if (s.native && nativePort) nativePort.postMessage({ t: 'close' });
   for (const t of s.timers) clearInterval(t);
   clearTimeout(s.dropTimer);
@@ -856,7 +873,8 @@ async function startSession(hello, route) {
 
   let last = null;
   s.timers.push(setInterval(async () => {
-    if (session !== s || pc.connectionState !== 'connected') return;
+    if (session !== s) return;
+    if (pc.connectionState !== 'connected') { stallForget(s); return; } // the readings stalled() compares follow each other
     const rep = await pc.getStats();
     if (session !== s) return;
     let bytes = 0, fps = [], impl = '', codecId = '', rtt = null, kind = '', limit = '', avail = 0, target = 0;
@@ -912,14 +930,16 @@ let stallRenews = 0, stallRenewAt = -1e9;
 function stalled(s, encoded) {
   if (!s.native) return false;
   let stuck = -1;
-  for (const [k, enc] of Object.entries(encoded)) {
-    const i = Number(k), n = s.native[i];
-    if (!n) continue;
+  s.native.forEach((n, i) => {
+    if (!n) return;
+    const enc = encoded[i];
+    // Not in this reading (not being sent): compared afresh from its next reading on (see stallForget).
+    if (enc === undefined) { n.seen = null; n.stuck = 0; return; }
     const w = n.written || 0, p = n.seen;
     n.stuck = p && enc === p.enc && w - p.w >= STALL_FRAMES ? (n.stuck || 0) + 1 : 0;
     n.seen = { enc, w };
     if (n.stuck >= STALL_READINGS) stuck = i;
-  }
+  });
   if (stuck < 0) return false;
   s.native[stuck].stuck = 0;
   if (performance.now() - stallRenewAt < STALL_RENEW_MS) return false; // it came back at once: not again and again
@@ -929,6 +949,10 @@ function stalled(s, encoded) {
   renew(s, '인코더 멈춤');
   return true;
 }
+// A reading that did not happen (the connection was not up): the next ones compare afresh. Before 2026-11-20 a
+// reading was compared with the last one taken, also across such a gap, so two readings around a short loss of
+// the connection could count as seconds with nothing encoded and renew a session that was coming back by itself.
+function stallForget(s) { if (s && s.native) for (const n of s.native) if (n) { n.seen = null; n.stuck = 0; } }
 
 // Without hints the bandwidth estimate starts near 300 kbps and climbs slowly, so a
 // connection begins blurry and drops frames whenever the picture moves. Start high

@@ -170,7 +170,10 @@ the client app instead).
     Windows. So the host watches for it: two stats readings in a row (4 s) with 4 or more frames written each
     and none encoded -> `renew` (the client reconnects at once and keeps its windows), at most once a minute,
     counted as `stalls` in the host's numbers (diagnostics log). The self-test acts it out by giving the
-    encoder an empty track of its own.
+    encoder an empty track of its own. Only readings that follow each other count (2026-11-20, found in a
+    review): a reading skipped because the connection was not up (`stallForget`) and a monitor left out of a
+    reading (not being sent) start the comparison afresh; before, two readings around a short loss of the
+    connection could renew a session that was coming back by itself.
   - **Why the keep-alive** (2026-11-18): before it, nothing at all was sent while the screen stayed the
     same, and a receiver that gets no picture for 3 s asks for a key frame (WebRTC's frame time-out: a
     PLI, counted as `pli` in the diagnostics log); the encoder then makes the next picture one, so the
@@ -902,19 +905,33 @@ the client app instead).
     `input.setSink` sends every injected input to the helper; on another secure desktop the sink drops it.
     Frames go to the page (`assist` IPC) and into each monitor's `MediaStreamTrackGenerator` (the primary's
     only with a service from before 2026-11-18; only with native capture), repeated 30 times after a
-    change. The `lock` message gains `live`, `input`, `d` and `ds`; the client then shows the lock screen
+    change, then kept alive like the capturer's (`keepAlive`), each monitor on its own time. The `lock` message
+    gains `live`, `input`, `d` and `ds`; the client then shows the lock screen
     with a small bar and a Ctrl+Alt+Del button (`sas`) instead of the cover, and windows showing none of
-    `ds` say which monitor has it.
+    `ds` say which monitor has it. Found in a review (2026-11-20) and fixed, each with a check:
+    - While a monitor's video has the secure desktop's picture, the capturer's frames are kept out of it
+      (`assist.held`): it cannot read that desktop, but it still sent its last picture of the desktop (the
+      rest of a series of repeats under way when the screen locked, or a whole series started by a `show`
+      when the client changed what it showed), and the two went into one encoder in turn: the desktop
+      flickered over the lock screen, or stood there for a second (185 such frames in 4.5 s in the
+      self-test's acting out, before).
+    - A monitor's keep-alive could come up to `keep` late after another monitor's repeats ended (1.5 s
+      apart, three monitors); now the timer goes off when the next one is due.
+    - What the service said last outlived the session (since 0.5.0): ended on the lock screen and unlocked
+      at the PC before the next session, the next session's client was told "locked" and showed the cover
+      over the desktop for as long as it lasted, since the new connection's first word, "the desktop", was
+      the state a connection starts from and went unsaid. `teardown` forgets it, `assist.js` passes on every
+      connection's first word, and the page takes the service's messages only while a session is on.
   - Verified 2026-11-15 in a throwaway Windows 10 22H2 VM (dockurr/windows under KVM on the GPU server,
     `~/my-remote-dev/winvm` there; see the `my-remote-test-vm` memory): GDI captures the real lock screen
     as LocalSystem (pictures checked), a click lifts the curtain, the typed password unlocks (probe in
     the VM), the service updates in place; and end to end, the real client page on the Windows PC against
     the real host in the VM (`--localtest --no-client`, relay tunnelled): lock -> the client shows the lock
     screen live with the bar -> click, password typed with trusted key events, Enter -> unlocked.
-    `release/test-assist.js` (24 checks, fake service and helper) covers the protocol, the session checks,
+    `release/test-assist.js` (25 checks, fake service and helper) covers the protocol, the session checks,
     input routing and encoding, pictures in pieces, reconnecting, the refusal during a remote session, the
-    first-start offer, and every monitor (`V` only to a service that offers it, `R` pictures with their
-    place, each deduplicated on its own). Every monitor, 2026-11-18: in the test VM (one monitor) the
+    first-start offer, every monitor (`V` only to a service that offers it, `R` pictures with their
+    place, each deduplicated on its own), and a new connection's first word passed on. Every monitor, 2026-11-18: in the test VM (one monitor) the
     service updated in place answered `6f6b014d`, the helper sent the real lock screen as `R` (0,0
     1280x800, picture checked), a click changed it and the typed password unlocked (`assist-probe2.js`);
     `grabmon` on this PC's three monitors (the ordinary desktop, as a user) gave each monitor at the

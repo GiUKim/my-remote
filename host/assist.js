@@ -249,7 +249,8 @@ let conn = null, ownSession = -1;
 function start(send) {
   if (!supported) return;
   stop();
-  conn = { send, control: null, data: null, state: { secure: false, locked: false, input: false }, prev: new Map(), retry: 0 };
+  // told: the page has heard this connection's state (see setState).
+  conn = { send, control: null, data: null, state: { secure: false, locked: false, input: false }, told: false, prev: new Map(), retry: 0 };
   connect(conn);
 }
 function stop() {
@@ -359,15 +360,18 @@ function gotFrame(c, f) {
   c.send(f.x === undefined ? { t: 'frame', w: f.w, h: f.h, data: f.buf } : { t: 'frame', x: f.x, y: f.y, w: f.w, h: f.h, data: f.buf });
 }
 function setState(c, s) {
-  const was = c.state;
+  const was = c.state, first = !c.told;
   c.state = s;
+  c.told = true;
   // The lock screen: input goes to the helper. Another secure desktop (UAC): it goes nowhere.
   input.setSink(s.input ? (list) => toHelper(c, list) : s.secure ? () => {} : null);
   if (!s.secure) c.prev.clear();
-  if (was.secure !== s.secure || was.locked !== s.locked || was.input !== s.input) {
-    log(`screen: ${s.secure ? (s.locked ? 'lock screen' : 'secure desktop (UAC or similar)') : 'desktop'}${s.input ? ', input to the helper' : ''}`);
-    c.send({ t: 'state', ...s });
-  }
+  const changed = was.secure !== s.secure || was.locked !== s.locked || was.input !== s.input;
+  if (changed) log(`screen: ${s.secure ? (s.locked ? 'lock screen' : 'secure desktop (UAC or similar)') : 'desktop'}${s.input ? ', input to the helper' : ''}`);
+  // A connection's first word goes to the page also when it is the ordinary desktop, the state a connection starts
+  // from: the page may still have what the connection before said last. Before 2026-11-20 it did not, and a lock
+  // screen that was unlocked at the PC while no session was on stayed "locked" for the next session's client.
+  if (changed || first) c.send({ t: 'state', ...s });
 }
 function toHelper(c, list) {
   if (!c.data) return;
