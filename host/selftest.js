@@ -1425,8 +1425,10 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       const pageLang = (l) => js(`(() => { const s = document.getElementById('lang'); s.value = '${l}'; s.dispatchEvent(new Event('change')); return 1; })()`);
       const waitFor = async (get, value, secs) => { for (let i = 0; i < secs * 10; i++) { if ((await get()) === value) return true; await sleep(100); } return false; };
       const problems = [], infos = [];
-      // The page's own controls keep their keys: the language list opened, ArrowDown and Enter choose English and
-      // nothing goes to the host.
+      // The page's own controls keep their keys: the language list opened, ArrowDown and Enter choose the next
+      // language (English after Korean, which an isolated run starts in: --lang in main.js) and nothing goes to the host.
+      const startLang = await js(`document.getElementById('lang').value`);
+      const next = I.CODES[Math.min(I.CODES.length - 1, I.CODES.indexOf(startLang) + 1)];
       const keysStay = await js(`(async () => {
         const sent = []; const orig = send; send = (o) => { sent.push(o); return orig(o); };
         try {
@@ -1441,10 +1443,10 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         } finally { send = orig; }
       })()`);
       const bye = () => js(`document.getElementById('bye').textContent`);
-      const toEn = await waitFor(bye, want(PAGE_CAT, '연결 끊기', 'en'), 8);
-      check('language: the toolbar\'s list (flags, every language) is chosen from by keyboard, its keys stay here, and the page relabels from the host\'s texts',
-        keysStay.n === I.CODES.length && keysStay.flags === I.CODES.length && keysStay.lang === 'en' && !keysStay.open && keysStay.keys === 0 && keysStay.asked === 'en' && toEn,
-        JSON.stringify({ ...keysStay, relabelled: toEn, bye: await bye() }));
+      const toEn = await waitFor(bye, want(PAGE_CAT, '연결 끊기', next), 8);
+      check('language: an isolated run\'s page starts in Korean; the toolbar\'s list (flags, every language) is chosen from by keyboard, its keys stay here, and the page relabels from the host\'s texts',
+        startLang === 'ko' && keysStay.n === I.CODES.length && keysStay.flags === I.CODES.length && keysStay.lang === next && !keysStay.open && keysStay.keys === 0 && keysStay.asked === next && toEn,
+        JSON.stringify({ startLang, ...keysStay, relabelled: toEn, bye: await bye() }));
       const SCAN = `(() => {
         const out = [];
         const vis = (el) => { const s = getComputedStyle(el); if (s.display === 'none' || s.visibility === 'hidden') return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };

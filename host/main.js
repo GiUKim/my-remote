@@ -525,6 +525,10 @@ if (ISOLATED) {
   app.commandLine.appendSwitch('disable-features', ['WebRtcHideLocalIpsWithMdns', ...((benchCfg && benchCfg.disableFeatures) || [])].join(','));
   // A bench run can try other engine switches before they are made the default.
   if (benchCfg) for (const [k, v] of Object.entries(benchCfg.switches || {})) app.commandLine.appendSwitch(k, String(v));
+  // The pages' own language too (navigator.languages: the client page in a test window has no app to ask, and
+  // follows the browser's), so that a run on a PC in another language reads the Korean its checks expect, as this
+  // process does (systemLang). Found on GitHub's runners (English): the self-test's page started in English.
+  app.commandLine.appendSwitch('lang', I18N.normalize(process.env.MY_REMOTE_LANG) || 'ko');
 }
 const cfgPath = () => path.join(app.getPath('userData'), 'config.json');
 const langFile = () => langStore || (langStore = settings.create(settings.fileFor(app, ISOLATED ? app.getPath('userData') : '')));

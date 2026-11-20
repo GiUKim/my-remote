@@ -1086,8 +1086,9 @@ the client app instead).
   Korean text needs its entry in every language (`node release/i18n-sources.js --missing`), and
   `release/test-i18n.js` (CI) fails otherwise, also when a button quoted in a sentence is not that button's own
   translation; the same Korean word used for two meanings needs two sources (the access log's `접속 종료`/`허용됨`/
-  `거부됨` against the buttons' `종료`/`허용`/`거부`). Isolated runs start in Korean (their checks read Korean)
-  unless `MY_REMOTE_LANG` is set; a person changing the language of a test run's window fails those checks (seen
+  `거부됨` against the buttons' `종료`/`허용`/`거부`). Isolated runs start in Korean (their checks read Korean), the pages too (`--lang`:
+  a test window's page follows the browser's language; on GitHub's English runners it started in English), unless
+  `MY_REMOTE_LANG` is set; a person changing the language of a test run's window fails those checks (seen
   once). The client page carries no catalog (the loader's 40-chunk reply): the loader brings it, else the host
   sends the page's texts on request (`lang`/`strings`), kept per page hash. The picker is a hidden `<select>` shown
   as a button with SVG flags (Windows draws flag emoji as letters; `I18N.picker`); its keys stay in the page
