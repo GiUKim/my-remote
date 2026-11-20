@@ -1,0 +1,18 @@
+{
+  "ko": [
+    "중계 서버에서 메시지 하나가 사라져도 접속이 실패하지 않습니다. 응답이 없으면 클라이언트가 스스로 한 번 더 시도합니다",
+    "호스트의 화면 인코더가 멈추면(화면이 그대로 서 있음) 4초 안에 알아채고 스스로 다시 연결합니다",
+    "Windows 잠금 화면을 원격으로 볼 때, 잠길 때나 클라이언트에서 보는 모니터를 바꿀 때 데스크톱이 잠금 화면 위에 깜빡이던 문제를 고쳤습니다",
+    "잠금 화면인 채로 세션이 끝난 뒤 PC 앞에서 잠금을 풀고 다시 접속하면, 풀린 화면 위에 '호스트 PC가 잠겨 있습니다'가 계속 뜨던 문제를 고쳤습니다",
+    "클라이언트 앱이 접속 단계를 connect.log에 남깁니다(키와 토큰은 남기지 않습니다). 접속이 안 될 때 어디서 멈췄는지 알 수 있습니다",
+    "대부분 호스트 쪽 변경입니다. 호스트가 이 버전이 되면 적용됩니다"
+  ],
+  "en": [
+    "A message lost on the relay no longer fails a connection: the client tries once more by itself when the host does not answer",
+    "A host whose screen encoder stops taking frames (the picture stands still) notices within 4 s and reconnects by itself",
+    "Watching a Windows lock screen remotely, the desktop no longer flickers over it when the screen locks or the client changes what it shows",
+    "After a session ended on the lock screen and the PC was unlocked at the PC, the next session no longer shows 'the host PC is locked' over the unlocked desktop",
+    "The client app keeps the steps of each connection in connect.log (never a key or token): when a connection does not come up, it shows where it stopped",
+    "Mostly the host's side: takes effect once the host runs this version"
+  ]
+}
