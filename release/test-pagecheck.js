@@ -47,7 +47,10 @@ try {
   fs.writeFileSync(keyFile, k.privateKey.export({ format: 'pem', type: 'pkcs8' }));
   const pub = k.publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
   const read = (p) => fs.readFileSync(path.join(__dirname, '..', p));
-  const files = new Map(['host/client.template.html', 'host/signal.js', 'host/package.json'].map((p) => [p, read(p)]));
+  // (host/i18n.js: inlined into the page from 0.9.6 on; a release takes it from the commit like the others.)
+  const files = new Map(['host/client.template.html', 'host/signal.js', 'host/i18n.js', 'host/package.json'].map((p) => [p, read(p)]));
+  check('... the page a release signs has the translator in it (without host/i18n.js it would be another page)',
+    builder.fillText(read('host/client.template.html').toString('utf8'), read('host/signal.js').toString('utf8'), builder.DEFAULT_SERVER) !== builder.build(builder.DEFAULT_SERVER));
   const { build } = require('./build');
   const r = build({ out: path.join(dir, 'out'), key: keyFile, files, version: '9.9.9', notes: { ko: [], en: [] }, minimum: '0.0.0', needsBase: 1, date: '' });
   const statement = fs.readFileSync(path.join(dir, 'out', 'bundle', 'host', 'page.json'), 'utf8');
