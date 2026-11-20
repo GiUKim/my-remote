@@ -1497,7 +1497,10 @@ Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하�
   package, together with package.js copying `@koromix/koffi-<platform>-<arch>`.
 - **A flake on GitHub's Linux runner**: "a window the client app reports minimized is not sent ..." and
   "1:1 mode receives the full resolution" failed once (2026-11-16, commit 7f9fd6c) and passed when the
-  job ran again (`gh run rerun --failed`). Not seen on the Linux PCs.
+  job ran again (`gh run rerun --failed`). Not seen on the Linux PCs. Likewise "sends only as many pixels as are
+  shown" (2026-11-20, commit a3e6b74: received 1920x1080 for 1280 expected within its 15 s; passed on the re-run).
+  All three wait for the host to change what it sends: the runner is slow then, not the code wrong, as far as
+  seen. `gh` is not on the Windows PC's PATH: it is under `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.cli_*`.
 
 ## Commands
 
