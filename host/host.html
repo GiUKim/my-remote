@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <title>My Remote Host</title>
 <style>
-  body { font: 14px/1.5 "Segoe UI", "Malgun Gothic", sans-serif; margin: 0; padding: 18px; background: #14171c; color: #e6e8eb; }
+  body { font: 14px/1.5 var(--mr-font); margin: 0; padding: 18px; background: #14171c; color: #e6e8eb; overflow-wrap: anywhere; }
   h1 { font-size: 17px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
   h1 > span { flex: 1 1 auto; min-width: 0; }
   #exitStart { flex: none; margin-left: 0; }
@@ -22,7 +22,7 @@
   .dev .btns { margin-left: auto; display: flex; gap: 4px; } .dev .btns button.mini { margin-left: 0; }
   .tag { font-size: 12px; padding: 0 6px; border-radius: 4px; } .tag.on { background: #1f4d2e; color: #7fe3a0; } .tag.bad { background: #5a1f1f; color: #ff9b9b; }
   #devList { margin-top: 6px; }
-  #accessList { font: 12px/1.5 Consolas, "Malgun Gothic", monospace; max-height: 220px; overflow: auto; color: #aab2bd; margin-top: 8px; border-top: 1px solid #2c333d; padding-top: 6px; }
+  #accessList { font: 12px/1.5 Consolas, var(--mr-font); max-height: 220px; overflow: auto; color: #aab2bd; margin-top: 8px; border-top: 1px solid #2c333d; padding-top: 6px; }
   input.ren { font: inherit; font-weight: 600; background: #0e1014; color: #fff; border: 1px solid #3a4350; border-radius: 4px; padding: 1px 6px; width: 16em; }
   #ask { border-color: #e0b341; background: #2a2618; }
   #askCode { font: 600 22px Consolas, monospace; letter-spacing: .15em; color: #fff; }
@@ -41,76 +41,79 @@
   #otpSetup ol { margin: 6px 0; padding-left: 20px; color: #c5ccd6; }
   #log { font: 12px/1.45 Consolas, monospace; white-space: pre-wrap; max-height: 230px; overflow: auto; color: #aab2bd; }
   small { color: #8b94a1; }
+  /* The language (host/i18n.js): a globe and the languages in their own names, found in any language. */
+  .lang { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 400; color: #8b94a1; }
+  .lang select { font: inherit; font-size: 12px; background: #343c48; color: #fff; border: 0; border-radius: 6px; padding: 2px 4px; cursor: pointer; }
 </style>
 </head>
 <body>
-  <h1><span>My Remote Host <small id="ver"></small><button id="updCheck" class="sub mini" style="display:none">업데이트 확인</button> <small id="updMsg"></small></span><button id="exitStart" class="sub mini" style="display:none" title="처음 화면(이 PC 공유 / 다른 PC에 접속)으로 돌아갑니다. 호스트는 계속 켜져 있습니다. 끄려면 트레이 → 종료">나가기</button></h1>
+  <h1><span>My Remote Host <small id="ver"></small><button id="updCheck" class="sub mini" style="display:none" data-i18n>업데이트 확인</button> <small id="updMsg"></small></span><label class="lang" title="Language"><span aria-hidden="true">🌐</span><select id="lang" aria-label="Language"></select></label><button id="exitStart" class="sub mini" style="display:none" title="처음 화면(이 PC 공유 / 다른 PC에 접속)으로 돌아갑니다. 호스트는 계속 켜져 있습니다. 끄려면 트레이 → 종료" data-i18n-title data-i18n>나가기</button></h1>
   <div class="card" id="ask" style="display:none">
-    <div class="row"><b id="askTitle">새 기기가 접속하려고 합니다</b> <small id="askLeft"></small></div>
-    <div style="margin:6px 0"><span id="askWho"></span> · 확인 숫자 <span id="askCode"></span></div>
-    <small id="askText">그 기기 화면에도 같은 숫자가 보입니다. 내가 접속하는 것이 맞을 때만 허용하세요. 클라이언트 앱은 허용하면 기기로 등록되어 다음부터 묻지 않습니다(브라우저는 매번 묻습니다).</small>
-    <div class="row" style="margin-top:8px"><button id="askYes">허용</button><button id="askNo" class="sub">거부</button></div>
+    <div class="row"><b id="askTitle"></b> <small id="askLeft"></small></div>
+    <div style="margin:6px 0"><span id="askWho"></span> · <span data-i18n>확인 숫자</span> <span id="askCode"></span></div>
+    <small id="askText"></small>
+    <div class="row" style="margin-top:8px"><button id="askYes" data-i18n>허용</button><button id="askNo" class="sub" data-i18n>거부</button></div>
   </div>
   <div class="card" id="upd" style="display:none">
     <div><b id="updTitle"></b></div>
     <small id="updText"></small>
     <ul id="updNotes" style="margin:6px 0 0; padding-left:20px; color:#c5ccd6"></ul>
     <div class="row" style="margin-top:8px">
-      <button id="updGo">지금 업데이트</button>
-      <button id="updLater" class="sub">나중에</button>
+      <button id="updGo"></button>
+      <button id="updLater" class="sub" data-i18n>나중에</button>
     </div>
   </div>
   <div class="card">
-    <div class="row"><span id="dot" class="dot"></span><b id="status">시작 중…</b></div>
+    <div class="row"><span id="dot" class="dot"></span><b id="status" data-i18n>시작 중…</b></div>
     <small id="stats"></small>
   </div>
   <div class="card" id="assist" style="display:none">
-    <div class="row"><b>잠금 화면에서도 원격 조종</b> <small id="assistState"></small></div>
+    <div class="row"><b data-i18n>잠금 화면에서도 원격 조종</b> <small id="assistState"></small></div>
     <small id="assistText"></small>
     <div class="row" style="margin-top:8px">
-      <button id="assistGo">설치</button>
-      <button id="assistOff" class="sub">제거</button>
+      <button id="assistGo"></button>
+      <button id="assistOff" class="sub" data-i18n>제거</button>
     </div>
   </div>
   <div class="card">
-    <div><b>접속 키</b> <small>— 비밀번호처럼 다루세요. 이 키를 가진 사람은 이 PC를 조작할 수 있습니다.</small></div>
+    <div><b data-i18n>접속 키</b> <small data-i18n>— 비밀번호처럼 다루세요. 이 키를 가진 사람은 이 PC를 조작할 수 있습니다.</small></div>
     <div style="margin:8px 0"><code id="key">••••••••••••••••••••••••</code></div>
     <div class="row">
-      <button id="copy">키 복사</button>
-      <button id="show" class="sub">표시</button>
-      <button id="export" class="sub">클라이언트 파일 내보내기</button>
-      <button id="regen" class="sub">새 키 발급</button>
-      <button id="kick" class="sub">연결 끊기</button>
+      <button id="copy" data-i18n>키 복사</button>
+      <button id="show" class="sub" data-i18n>표시</button>
+      <button id="export" class="sub" data-i18n>클라이언트 파일 내보내기</button>
+      <button id="regen" class="sub" data-i18n>새 키 발급</button>
+      <button id="kick" class="sub" data-i18n>연결 끊기</button>
     </div>
   </div>
   <div class="card" id="ot">
-    <div class="row"><b>1회용 코드로 도움 받기</b> <small id="otState"></small><span style="flex:1"></span><button id="otBtn" class="sub mini">코드 만들기</button></div>
+    <div class="row"><b data-i18n>1회용 코드로 도움 받기</b> <small id="otState"></small><span style="flex:1"></span><button id="otBtn" class="sub mini" data-i18n>코드 만들기</button></div>
     <div id="otBox" style="display:none; margin-top:8px">
       <div id="otCode"></div>
       <small id="otText"></small>
-      <div class="row" style="margin-top:8px"><button id="otEnd" class="sub">끝내기</button><span style="flex:1"></span><label class="switch" id="otAutoRow" title="켜 두면 이 코드를 넣은 사람이 이 창의 허용 없이 바로 접속합니다. 코드를 아는 사람은 누구나 들어올 수 있으니 도와줄 사람에게만 알려 주세요.">자동 허용<button id="otAuto" role="switch" aria-checked="false" aria-label="자동 허용"></button></label></div>
+      <div class="row" style="margin-top:8px"><button id="otEnd" class="sub" data-i18n>끝내기</button><span style="flex:1"></span><label class="switch" id="otAutoRow" title="켜 두면 이 코드를 넣은 사람이 이 창의 허용 없이 바로 접속합니다. 코드를 아는 사람은 누구나 들어올 수 있으니 도와줄 사람에게만 알려 주세요." data-i18n-title><span data-i18n>자동 허용</span><button id="otAuto" role="switch" aria-checked="false" aria-label="자동 허용" data-i18n-aria></button></label></div>
     </div>
-    <small id="otNote">접속 키를 주지 않고 이 PC를 잠깐 다른 사람에게 보여 주거나 맡길 때 씁니다. 코드는 10분 동안 한 번만 쓸 수 있고, 상대가 들어오기 전에 이 창에서 허용해야 합니다(코드를 만든 뒤 자동 허용을 켜면 바로 들어옵니다). 기기로 등록되지 않으며, 끝나면 코드도 사라집니다.</small>
+    <small id="otNote" data-i18n>접속 키를 주지 않고 이 PC를 잠깐 다른 사람에게 보여 주거나 맡길 때 씁니다. 코드는 10분 동안 한 번만 쓸 수 있고, 상대가 들어오기 전에 이 창에서 허용해야 합니다(코드를 만든 뒤 자동 허용을 켜면 바로 들어옵니다). 기기로 등록되지 않으며, 끝나면 코드도 사라집니다.</small>
   </div>
   <div class="card" id="devs">
-    <div class="row"><b>접속한 기기</b> <small id="devsNote"></small><span style="flex:1"></span><button id="accessBtn" class="sub mini">접속 기록</button></div>
+    <div class="row"><b data-i18n>접속한 기기</b> <small id="devsNote"></small><span style="flex:1"></span><button id="accessBtn" class="sub mini" data-i18n>접속 기록</button></div>
     <div id="devList"></div>
     <div class="row sec">
-      <span>새 기기 확인 <b id="gateState"></b></span><button id="gateBtn" class="sub mini"></button>
-      <span style="margin-left:12px">휴대폰 인증 앱 <b id="otpState"></b></span><button id="otpBtn" class="sub mini"></button>
+      <span><span data-i18n>새 기기 확인</span> <b id="gateState"></b></span><button id="gateBtn" class="sub mini"></button>
+      <span style="margin-left:12px"><span data-i18n>휴대폰 인증 앱</span> <b id="otpState"></b></span><button id="otpBtn" class="sub mini"></button>
     </div>
     <small id="gateNote"></small>
     <div id="otpSetup" style="display:none">
       <div class="row" style="align-items:flex-start; flex-wrap:nowrap">
         <div id="otpQr"></div>
         <div>
-          <b>휴대폰 인증 앱 설정</b>
+          <b data-i18n>휴대폰 인증 앱 설정</b>
           <ol>
-            <li>휴대폰의 인증 앱(Google Authenticator, Microsoft Authenticator 등)에서 이 QR 코드를 찍습니다. 찍을 수 없으면 아래 키를 직접 넣습니다.</li>
-            <li>앱에 나온 6자리를 넣고 확인을 누릅니다.</li>
+            <li data-i18n>휴대폰의 인증 앱(Google Authenticator, Microsoft Authenticator 등)에서 이 QR 코드를 찍습니다. 찍을 수 없으면 아래 키를 직접 넣습니다.</li>
+            <li data-i18n>앱에 나온 6자리를 넣고 확인을 누릅니다.</li>
           </ol>
           <code id="otpSecret"></code>
-          <div class="row" style="margin-top:8px"><input id="otpCode" inputmode="numeric" maxlength="7" placeholder="6자리"><button id="otpOk">확인</button><button id="otpCancel" class="sub">취소</button></div>
+          <div class="row" style="margin-top:8px"><input id="otpCode" inputmode="numeric" maxlength="7" placeholder="6자리" data-i18n-placeholder><button id="otpOk" data-i18n>확인</button><button id="otpCancel" class="sub" data-i18n>취소</button></div>
           <small id="otpMsg"></small>
         </div>
       </div>
@@ -120,6 +123,7 @@
   <div class="card"><div id="log"></div></div>
   <script src="signal.js"></script>
   <script src="qr.js"></script>
+  <script src="i18n.js"></script>
   <script src="host.js"></script>
 </body>
 </html>

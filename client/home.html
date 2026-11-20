@@ -2,12 +2,12 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src data:">
 <title>My Remote</title>
 <style>
   :root { --bg: #14171c; --panel: #1d2229; --panel2: #232a33; --line: #2c333d; --line2: #3a4350; --text: #e6e8eb; --muted: #8b94a1; --blue: #2b6cff; --blue2: #4a8dff; --green: #3ddc84; --amber: #e0b341; --red: #ff6b6b; }
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; user-select: none; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 var(--mr-font); user-select: none; overflow-wrap: anywhere; }
   body { display: flex; flex-direction: column; }
   button { font: inherit; color: inherit; background: none; border: 0; border-radius: 7px; padding: 7px 14px; cursor: pointer; }
   button:focus-visible, input:focus-visible, .card:focus-visible { outline: 2px solid var(--blue2); outline-offset: 2px; }
@@ -21,7 +21,11 @@
   input[type=text], input[type=password], input[type=search] { font: inherit; color: var(--text); background: #0e1014; border: 1px solid var(--line2); border-radius: 7px; padding: 8px 10px; width: 100%; user-select: text; }
   input::placeholder { color: #5f6875; }
 
-  header { display: flex; align-items: center; gap: 14px; padding: 16px 22px 14px; border-bottom: 1px solid var(--line); }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 16px 22px 14px; border-bottom: 1px solid var(--line); }
+  /* The language (host/i18n.js): a globe and the languages in their own names, found in any language. */
+  .lang { flex: none; display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+  .lang select { font: inherit; font-size: 12.5px; color: var(--text); background: #2a313b; border: 0; border-radius: 6px; padding: 4px 6px; cursor: pointer; }
+  .lang select:focus-visible { outline: 2px solid var(--blue2); outline-offset: 2px; }
   .logo { flex: none; width: 38px; height: 38px; border-radius: 10px; background: var(--blue); display: grid; place-items: center; }
   .logo svg { width: 24px; height: 24px; }
   .title { flex: 1 1 auto; min-width: 0; }
@@ -52,11 +56,11 @@
   .os svg { width: 28px; height: 28px; }
   .name { grid-column: 2; min-width: 0; font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .name input { font-size: 15px; font-weight: 600; padding: 3px 7px; margin: -4px 0 -4px -8px; width: calc(100% + 8px); }
-  .sub { grid-column: 2 / span 2; min-width: 0; color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub { grid-column: 2 / span 2; min-width: 0; color: var(--muted); font-size: 12.5px; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; } /* two lines: a longer language says it whole */
   .more { grid-column: 3; grid-row: 1; padding: 2px 8px; font-size: 18px; line-height: 1.2; color: var(--muted); border-radius: 6px; }
   .more:hover { background: #343c48; color: var(--text); }
   .bottom { display: flex; align-items: center; gap: 10px; }
-  .state { flex: 1 1 auto; min-width: 0; color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .state { flex: 1 1 auto; min-width: 0; color: var(--muted); font-size: 12.5px; line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: #5b6573; vertical-align: 1px; }
   .state.live { color: var(--green); } .state.live .dot { background: var(--green); box-shadow: 0 0 0 3px rgba(61, 220, 132, .18); }
   .state.busy { color: var(--amber); } .state.busy .dot { background: var(--amber); animation: pulse 1s ease-in-out infinite; }
@@ -73,7 +77,7 @@
   #nomatch { display: none; color: var(--muted); padding: 30px 0; text-align: center; }
 
   footer { display: flex; gap: 12px; align-items: center; padding: 9px 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
-  footer #store { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  footer #store { flex: 1 1 auto; min-width: 0; }
   footer #store.warn { color: var(--amber); }
 
   #menu { position: fixed; z-index: 20; display: none; min-width: 168px; padding: 5px; background: #232a33; border: 1px solid var(--line2); border-radius: 9px; box-shadow: 0 12px 30px rgba(0, 0, 0, .5); }
@@ -91,7 +95,8 @@
   .keyRow button { flex: none; padding: 7px 10px; }
   .hint { min-height: 1.5em; margin-top: 5px; font-size: 12.5px; color: var(--muted); }
   .hint.ok { color: var(--green); } .hint.bad { color: #ff9c9c; }
-  .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .btns { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .btns button { white-space: nowrap; } /* a longer language moves a whole button to the next line, never half its label */
 
   #toast { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); z-index: 30; display: none; max-width: 80vw; padding: 9px 16px; border-radius: 8px; background: rgba(35, 42, 51, .97); border: 1px solid var(--line2); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
 </style>
@@ -100,99 +105,105 @@
 <header>
   <div class="logo"><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="2" fill="#fff"/><path d="M8.5 20h7M12 16.5V20" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></div>
   <div class="title">
-    <div class="tline"><b>My Remote</b><span id="ver"></span><button id="updCheck" class="plain mini" hidden>업데이트 확인</button><span id="updMsg"></span></div>
+    <div class="tline"><b>My Remote</b><span id="ver"></span><button id="updCheck" class="plain mini" hidden data-i18n>업데이트 확인</button><span id="updMsg"></span></div>
     <small id="count">&nbsp;</small>
   </div>
-  <input id="search" type="search" placeholder="이름, 컴퓨터 이름으로 찾기" spellcheck="false" autocomplete="off">
-  <button id="add" class="primary" title="Ctrl+N">＋ PC 추가</button>
-  <button id="code" class="plain" title="다른 사람의 호스트 창에서 받은 1회용 코드로 한 번만 접속합니다(목록에 넣지 않습니다)">1회용 코드로 접속</button>
-  <button id="exitStart" class="plain" hidden title="처음 화면(이 PC 공유 / 다른 PC에 접속)으로 돌아갑니다. 열려 있는 원격 PC 창은 그대로 둡니다">나가기</button>
+  <input id="search" type="search" placeholder="이름, 컴퓨터 이름으로 찾기" spellcheck="false" autocomplete="off" data-i18n-placeholder>
+  <button id="add" class="primary" title="Ctrl+N" data-i18n>＋ PC 추가</button>
+  <button id="code" class="plain" title="다른 사람의 호스트 창에서 받은 1회용 코드로 한 번만 접속합니다(목록에 넣지 않습니다)" data-i18n-title data-i18n>1회용 코드로 접속</button>
+  <button id="exitStart" class="plain" hidden title="처음 화면(이 PC 공유 / 다른 PC에 접속)으로 돌아갑니다. 열려 있는 원격 PC 창은 그대로 둡니다" data-i18n-title data-i18n>나가기</button>
+  <label class="lang" title="Language"><span aria-hidden="true">🌐</span><select id="lang" aria-label="Language"></select></label>
 </header>
 <main>
   <div id="note"></div>
   <div id="grid"></div>
-  <div id="nomatch">찾는 PC가 없습니다.</div>
+  <div id="nomatch" data-i18n>찾는 PC가 없습니다.</div>
   <div id="empty">
     <svg viewBox="0 0 150 96"><rect x="8" y="14" width="58" height="40" rx="5" fill="#1d2229" stroke="#3a4350" stroke-width="2"/><path d="M27 66h20M37 54v12" stroke="#3a4350" stroke-width="3" stroke-linecap="round"/><rect x="84" y="14" width="58" height="40" rx="5" fill="#1d2229" stroke="#4a8dff" stroke-width="2"/><path d="M103 66h20M113 54v12" stroke="#4a8dff" stroke-width="3" stroke-linecap="round"/><path d="M68 34h14" stroke="#4a8dff" stroke-width="2.5" stroke-dasharray="3 3"/><circle cx="113" cy="34" r="7" fill="none" stroke="#4a8dff" stroke-width="2"/><path d="M113 30.5v7M109.5 34h7" stroke="#4a8dff" stroke-width="2" stroke-linecap="round"/></svg>
-    <h2>아직 등록한 PC가 없습니다</h2>
-    <p>조종할 PC(호스트)의 My Remote 창에서 <b>키 복사</b>를 누른 뒤, 그 키로 여기에 PC를 추가하세요. 추가한 PC는 여러 대를 동시에 열 수 있습니다.</p>
-    <button id="add2" class="primary">＋ PC 추가</button>
+    <h2 data-i18n>아직 등록한 PC가 없습니다</h2>
+    <p data-i18n-html>조종할 PC(호스트)의 My Remote 창에서 <b>키 복사</b>를 누른 뒤, 그 키로 여기에 PC를 추가하세요. 추가한 PC는 여러 대를 동시에 열 수 있습니다.</p>
+    <button id="add2" class="primary" data-i18n>＋ PC 추가</button>
   </div>
 </main>
 <footer><span id="store"></span></footer>
 
 <div id="menu" role="menu">
-  <button data-do="open" role="menuitem">접속</button>
-  <button data-do="close" role="menuitem">접속 끊기</button>
+  <button data-do="open" role="menuitem" data-i18n>접속</button>
+  <button data-do="close" role="menuitem" data-i18n>접속 끊기</button>
   <hr>
-  <button data-do="rename" role="menuitem">이름 바꾸기 <small style="float:right;color:#8b94a1">F2</small></button>
-  <button data-do="key" role="menuitem">키 바꾸기</button>
+  <button data-do="rename" role="menuitem"><span data-i18n>이름 바꾸기</span> <small style="float:right;color:#8b94a1">F2</small></button>
+  <button data-do="key" role="menuitem" data-i18n>키 바꾸기</button>
   <hr>
-  <button data-do="remove" class="del" role="menuitem">목록에서 지우기 <small style="float:right;color:#b98">Del</small></button>
+  <button data-do="remove" class="del" role="menuitem"><span data-i18n>목록에서 지우기</span> <small style="float:right;color:#b98">Del</small></button>
 </div>
 
 <dialog id="addDlg">
   <form method="dialog">
-    <h3>PC 추가</h3>
-    <p>호스트 PC의 My Remote 창에서 <b>키 복사</b>로 복사한 접속 키를 붙여 넣으세요.</p>
-    <label for="addKey">접속 키</label>
-    <div class="keyRow"><input id="addKey" type="password" placeholder="접속 키 (43글자)" spellcheck="false" autocomplete="off"><button type="button" class="plain" id="addShow">보기</button></div>
+    <h3 data-i18n>PC 추가</h3>
+    <p data-i18n-html>호스트 PC의 My Remote 창에서 <b>키 복사</b>로 복사한 접속 키를 붙여 넣으세요.</p>
+    <label for="addKey" data-i18n>접속 키</label>
+    <div class="keyRow"><input id="addKey" type="password" placeholder="접속 키 (43글자)" spellcheck="false" autocomplete="off" data-i18n-placeholder><button type="button" class="plain" id="addShow" data-i18n>보기</button></div>
     <div class="hint" id="addHint"></div>
-    <label for="addName">이름 <small style="color:#8b94a1">(나중에 바꿀 수 있습니다. 비워 두면 컴퓨터 이름을 씁니다)</small></label>
-    <input id="addName" type="text" maxlength="40" placeholder="예: 회사 PC, 집 서버" spellcheck="false" autocomplete="off">
+    <label for="addName"><span data-i18n>이름</span> <small style="color:#8b94a1" data-i18n>(나중에 바꿀 수 있습니다. 비워 두면 컴퓨터 이름을 씁니다)</small></label>
+    <input id="addName" type="text" maxlength="40" placeholder="예: 회사 PC, 집 서버" spellcheck="false" autocomplete="off" data-i18n-placeholder>
     <div class="btns">
-      <button type="button" class="plain" id="addCancel">취소</button>
-      <button type="button" class="plain" id="addOnly">추가만</button>
-      <button type="submit" class="primary" id="addGo">추가하고 접속</button>
+      <button type="button" class="plain" id="addCancel" data-i18n>취소</button>
+      <button type="button" class="plain" id="addOnly" data-i18n>추가만</button>
+      <button type="submit" class="primary" id="addGo" data-i18n>추가하고 접속</button>
     </div>
   </form>
 </dialog>
 
 <dialog id="codeDlg">
   <form method="dialog">
-    <h3>1회용 코드로 접속</h3>
-    <p>도와줄 PC의 My Remote 호스트 창에서 <b>1회용 코드로 도움 받기 → 코드 만들기</b>로 만든 코드를 넣으세요. 그 PC에서 허용하면 연결되고(그 PC가 자동 허용을 켜 두었으면 바로 연결), 목록에는 넣지 않습니다.</p>
-    <label for="codeIn">1회용 코드</label>
+    <h3 data-i18n>1회용 코드로 접속</h3>
+    <p data-i18n-html>도와줄 PC의 My Remote 호스트 창에서 <b>1회용 코드로 도움 받기 → 코드 만들기</b>로 만든 코드를 넣으세요. 그 PC에서 허용하면 연결되고(그 PC가 자동 허용을 켜 두었으면 바로 연결), 목록에는 넣지 않습니다.</p>
+    <label for="codeIn" data-i18n>1회용 코드</label>
     <input id="codeIn" type="text" maxlength="20" placeholder="XXXX-XXXX-XXXX" spellcheck="false" autocomplete="off" style="font-family: Consolas, monospace; letter-spacing: .08em">
     <div class="hint" id="codeHint"></div>
     <div class="btns">
-      <button type="button" class="plain" id="codeCancel">취소</button>
-      <button type="submit" class="primary" id="codeGo">접속</button>
+      <button type="button" class="plain" id="codeCancel" data-i18n>취소</button>
+      <button type="submit" class="primary" id="codeGo" data-i18n>접속</button>
     </div>
   </form>
 </dialog>
 
 <dialog id="keyDlg">
   <form method="dialog">
-    <h3>키 바꾸기</h3>
-    <p><b id="keyWho"></b>의 접속 키를 새로 넣습니다. 호스트에서 <b>새 키 발급</b>을 눌렀거나, 호스트의 "접속한 기기"에서 이 PC를 지웠을 때 쓰세요. 이 키로 한 번 접속하면 이 PC가 다시 기기로 등록됩니다. 이름과 접속 기록은 그대로 남습니다.</p>
-    <label for="newKey">새 접속 키</label>
-    <div class="keyRow"><input id="newKey" type="password" placeholder="접속 키 (43글자)" spellcheck="false" autocomplete="off"><button type="button" class="plain" id="newShow">보기</button></div>
+    <h3 data-i18n>키 바꾸기</h3>
+    <p id="keyText"></p>
+    <label for="newKey" data-i18n>새 접속 키</label>
+    <div class="keyRow"><input id="newKey" type="password" placeholder="접속 키 (43글자)" spellcheck="false" autocomplete="off" data-i18n-placeholder><button type="button" class="plain" id="newShow" data-i18n>보기</button></div>
     <div class="hint" id="keyHint"></div>
     <div class="btns">
-      <button type="button" class="plain" id="keyCancel">취소</button>
-      <button type="submit" class="primary" id="keyGo">바꾸기</button>
+      <button type="button" class="plain" id="keyCancel" data-i18n>취소</button>
+      <button type="submit" class="primary" id="keyGo" data-i18n>바꾸기</button>
     </div>
   </form>
 </dialog>
 
 <dialog id="delDlg">
   <form method="dialog">
-    <h3>목록에서 지우기</h3>
-    <p><b id="delWho"></b>을(를) 목록에서 지웁니다. 이 PC에 보관한 그 PC의 접속 키(또는 기기 등록)도 함께 지워지고, 열려 있는 창은 닫힙니다. 호스트 PC의 "접속한 기기"에는 이 PC가 남아 있으니, 다시 쓰지 않을 거라면 거기서도 지우세요.</p>
+    <h3 data-i18n>목록에서 지우기</h3>
+    <p id="delText"></p>
     <div class="btns">
-      <button type="button" class="plain" id="delCancel">취소</button>
-      <button type="submit" class="danger" id="delGo">지우기</button>
+      <button type="button" class="plain" id="delCancel" data-i18n>취소</button>
+      <button type="submit" class="danger" id="delGo" data-i18n>지우기</button>
     </div>
   </form>
 </dialog>
 
 <div id="toast"></div>
 
+<script src="../host/i18n.js"></script>
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
 const api = window.mrHome;
+// The language (host/i18n.js): this PC's, from the app; a change made here, in the start screen, the host window
+// or a remote session's toolbar redraws the texts at once.
+const I18N = window.MRI18N;
+let t = I18N.translator('ko'), lastInfo = null;
 // Our own drawings (the same as in the client page's arrangement panel); names always go in as text.
 const OS_ICON = {
   windows: '<path fill="#00a4ef" d="M2 2h9.5v9.5H2zM12.5 2H22v9.5h-9.5zM2 12.5h9.5V22H2zM12.5 12.5H22V22h-9.5z"/>',
@@ -203,7 +214,7 @@ const OS_ICON = {
   other: '<rect x="3" y="4" width="18" height="12" rx="1.5" fill="none" stroke="#9aa3ad" stroke-width="1.6"/><path d="M9 20h6M12 16v4" stroke="#9aa3ad" stroke-width="1.6" stroke-linecap="round"/>',
 };
 const KEY_RE = /^[A-Za-z0-9_-]{43}$/;
-const WHY = {
+const WHY = { // said through t() where shown
   badkey: '접속 키 형식이 아닙니다. 호스트 창의 "키 복사"로 복사한 43글자를 붙여 넣으세요.',
   exists: '이미 목록에 있는 PC의 키입니다.',
   nostore: '이 PC에서는 키를 안전하게 보관할 수 없어 저장하지 못했습니다.',
@@ -212,19 +223,21 @@ const WHY = {
 };
 let hosts = [], editing = '', menuFor = '', storeOk = true;
 
-const shown = (h) => h.name || h.pc || '이름 없는 PC';
-function ago(t) {
-  const s = Math.max(0, (Date.now() - t) / 1000);
-  if (s < 50) return '방금 전';
-  if (s < 3300) return Math.max(1, Math.round(s / 60)) + '분 전';
-  if (s < 86400 * 0.92) return Math.max(1, Math.round(s / 3600)) + '시간 전';
+const why = (code, fallback) => (WHY[code] ? t(WHY[code]) : t(fallback));
+const shown = (h) => h.name || h.pc || t('이름 없는 PC');
+// "3 minutes ago", "yesterday" as this language says them (Intl.RelativeTimeFormat); a date after a month.
+function ago(ms) {
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 50) return t('방금 전');
+  let rel = null;
+  try { rel = new Intl.RelativeTimeFormat(t.lang, { numeric: 'auto' }); } catch {}
   const days = Math.round(s / 86400);
-  if (days <= 1) return '어제';
-  if (days < 30) return days + '일 전';
-  const d = new Date(t);
-  return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`;
+  if (rel && s < 3300) return rel.format(-Math.max(1, Math.round(s / 60)), 'minute');
+  if (rel && s < 86400 * 0.92) return rel.format(-Math.max(1, Math.round(s / 3600)), 'hour');
+  if (rel && days < 30) return rel.format(-Math.max(1, days), 'day');
+  try { return new Date(ms).toLocaleDateString(t.lang, { year: 'numeric', month: 'numeric', day: 'numeric' }); } catch { const d = new Date(ms); return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`; }
 }
-const fullDate = (t) => new Date(t).toLocaleString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' });
+const fullDate = (ms) => { try { return new Date(ms).toLocaleString(t.lang, { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return new Date(ms).toLocaleString(); } };
 function toast(text, ms) {
   const el = $('toast');
   el.textContent = text;
@@ -235,18 +248,18 @@ function toast(text, ms) {
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
 function stateOf(h) {
-  if (h.connected) return { cls: 'live', text: '연결됨', title: '지금 연결되어 있습니다' };
-  if (h.open) return { cls: 'busy', text: '연결하는 중…', title: '창이 열려 있고 호스트를 기다리고 있습니다' };
-  if (h.lastAt) return { cls: '', text: '마지막 접속 ' + ago(h.lastAt), title: fullDate(h.lastAt) };
-  return { cls: '', text: '아직 접속한 적 없음', title: '' };
+  if (h.connected) return { cls: 'live', text: t('연결됨'), title: t('지금 연결되어 있습니다') };
+  if (h.open) return { cls: 'busy', text: t('연결하는 중…'), title: t('창이 열려 있고 호스트를 기다리고 있습니다') };
+  if (h.lastAt) return { cls: '', text: t('마지막 접속 {0}', ago(h.lastAt)), title: fullDate(h.lastAt) };
+  return { cls: '', text: t('아직 접속한 적 없음'), title: '' };
 }
 // Under the name: the computer's own name (when the person gave another), then what it runs.
 function subOf(h) {
   const lines = [];
   if (h.name && h.pc && h.pc !== h.name) lines.push(h.pc);
-  const os = [h.osName, h.monitors > 0 ? `모니터 ${h.monitors}개` : '', h.paired ? '기기로 등록됨' : ''].filter(Boolean).join(' · ');
+  const os = [h.osName, h.monitors > 0 ? t('모니터 {0}개', h.monitors) : '', h.paired ? t('기기로 등록됨') : ''].filter(Boolean).join(' · ');
   if (os) lines.push(os);
-  return lines.length ? lines : ['접속하면 정보가 채워집니다'];
+  return lines.length ? lines : [t('접속하면 정보가 채워집니다')];
 }
 function card(h) {
   const c = el('article', 'card' + (h.connected ? ' on' : ''));
@@ -258,14 +271,14 @@ function card(h) {
   svg.innerHTML = OS_ICON[h.os] || OS_ICON.other;
   os.title = h.osName || '';
   os.appendChild(svg);
-  const name = el('div', 'name', shown(h)); name.title = shown(h) + ' (더블클릭: 이름 바꾸기)';
-  const more = el('button', 'more', '⋯'); more.title = '이름 바꾸기, 키 바꾸기, 지우기'; more.setAttribute('aria-label', '더 보기');
+  const name = el('div', 'name', shown(h)); name.title = shown(h) + ' ' + t('(더블클릭: 이름 바꾸기)');
+  const more = el('button', 'more', '⋯'); more.title = t('이름 바꾸기, 키 바꾸기, 지우기'); more.setAttribute('aria-label', t('더 보기'));
   top.append(os, name, more);
   for (const line of subOf(h)) { const sub = el('div', 'sub', line); sub.title = line; top.append(sub); }
   const bottom = el('div', 'bottom');
   const st = stateOf(h), state = el('div', 'state ' + st.cls);
   state.append(el('i', 'dot'), document.createTextNode(st.text)); state.title = st.title;
-  const go = el('button', 'go ' + (h.open ? 'plain' : 'primary'), h.open ? '창 보기' : '접속');
+  const go = el('button', 'go ' + (h.open ? 'plain' : 'primary'), h.open ? t('창 보기') : t('접속'));
   bottom.append(state, go);
   c.append(top, bottom);
   go.onclick = (ev) => { ev.stopPropagation(); connect(h.id); };
@@ -293,8 +306,8 @@ function render() {
   grid.textContent = '';
   for (const h of list) grid.appendChild(card(h));
   if (hosts.length && !q && storeOk) {
-    const a = el('article', 'card addCard'); a.tabIndex = 0; a.title = 'PC 추가 (Ctrl+N)';
-    a.append(el('b', '', '＋'), el('span', '', 'PC 추가'));
+    const a = el('article', 'card addCard'); a.tabIndex = 0; a.title = t('PC 추가') + ' (Ctrl+N)';
+    a.append(el('b', '', '＋'), el('span', '', t('PC 추가')));
     a.onclick = () => openAdd();
     a.onkeydown = (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openAdd(); } };
     grid.appendChild(a);
@@ -304,7 +317,7 @@ function render() {
   $('nomatch').style.display = hosts.length && !list.length ? 'block' : 'none';
   $('search').style.visibility = hosts.length > 1 ? '' : 'hidden';
   const live = hosts.filter((h) => h.connected).length;
-  $('count').textContent = hosts.length ? `PC ${hosts.length}대` + (live ? ` · ${live}대 연결됨` : '') : '원격으로 쓸 PC를 추가하세요';
+  $('count').textContent = hosts.length ? t('PC {0}대', hosts.length) + (live ? ' · ' + t('{0}대 연결됨', live) : '') : t('원격으로 쓸 PC를 추가하세요');
   if (focused && focused.id) { const c = grid.querySelector(`.card[data-id="${focused.id}"]`); if (c) c.focus(); }
 }
 async function load() {
@@ -313,8 +326,8 @@ async function load() {
   hosts = r.hosts || [];
   const note = $('note');
   note.style.display = r.note ? 'block' : 'none';
-  note.textContent = r.note === 'broken' ? 'PC 목록 파일(hosts.json)을 읽을 수 없어 빈 목록으로 시작했습니다. 이전 파일은 같은 폴더에 hosts.json.bad-… 이름으로 남겨 두었습니다.'
-    : r.note ? 'PC 목록 파일을 열 수 없습니다.' : '';
+  note.textContent = r.note === 'broken' ? t('PC 목록 파일(hosts.json)을 읽을 수 없어 빈 목록으로 시작했습니다. 이전 파일은 같은 폴더에 hosts.json.bad-… 이름으로 남겨 두었습니다.')
+    : r.note ? t('PC 목록 파일을 열 수 없습니다.') : '';
   render();
 }
 function flash(id) {
@@ -326,7 +339,7 @@ function flash(id) {
 }
 async function connect(id) {
   const r = await api.open(id);
-  if (r && !r.ok) toast(WHY[r.why] || '열지 못했습니다.', 5000);
+  if (r && !r.ok) toast(why(r.why, '열지 못했습니다.'), 5000);
 }
 
 // ---- the menu of one PC ----
@@ -335,7 +348,7 @@ function showMenu(id, anchor, x, y) {
   if (!h) return;
   menuFor = id;
   const m = $('menu');
-  m.querySelector('[data-do="open"]').textContent = h.open ? '창 보기' : '접속';
+  m.querySelector('[data-do="open"]').textContent = h.open ? t('창 보기') : t('접속');
   m.querySelector('[data-do="close"]').style.display = h.open ? '' : 'none';
   m.style.display = 'block';
   const r = anchor ? anchor.getBoundingClientRect() : { left: x, right: x, bottom: y };
@@ -366,7 +379,7 @@ function rename(id) {
   if (!h || !c || editing) return;
   editing = id;
   const name = c.querySelector('.name'), input = el('input');
-  input.type = 'text'; input.maxLength = 40; input.value = h.name || ''; input.placeholder = h.pc || '이름'; input.spellcheck = false;
+  input.type = 'text'; input.maxLength = 40; input.value = h.name || ''; input.placeholder = h.pc || t('이름'); input.spellcheck = false;
   name.textContent = ''; name.appendChild(input);
   input.focus(); input.select();
   let done = false;
@@ -388,29 +401,30 @@ function keyField(input, hint, show) {
   const check = () => {
     const v = input.value.trim();
     hint.className = 'hint' + (!v ? '' : KEY_RE.test(v) ? ' ok' : ' bad');
-    hint.textContent = !v ? '' : KEY_RE.test(v) ? '✓ 접속 키 형식이 맞습니다' : `접속 키는 43글자입니다 (지금 ${v.length}글자${/[^A-Za-z0-9_-]/.test(v) ? ', 쓸 수 없는 글자 포함' : ''})`;
+    hint.textContent = !v ? '' : KEY_RE.test(v) ? '✓ ' + t('접속 키 형식이 맞습니다')
+      : /[^A-Za-z0-9_-]/.test(v) ? t('접속 키는 43글자입니다 (지금 {0}글자, 쓸 수 없는 글자 포함)', v.length) : t('접속 키는 43글자입니다 (지금 {0}글자)', v.length);
     return KEY_RE.test(v);
   };
   input.oninput = check;
-  show.onclick = () => { const on = input.type === 'password'; input.type = on ? 'text' : 'password'; show.textContent = on ? '숨기기' : '보기'; input.focus(); };
-  return { check, reset() { input.value = ''; input.type = 'password'; show.textContent = '보기'; hint.className = 'hint'; hint.textContent = ''; } };
+  show.onclick = () => { const on = input.type === 'password'; input.type = on ? 'text' : 'password'; show.textContent = on ? t('숨기기') : t('보기'); input.focus(); };
+  return { check, reset() { input.value = ''; input.type = 'password'; show.textContent = t('보기'); hint.className = 'hint'; hint.textContent = ''; } };
 }
 const addKey = keyField($('addKey'), $('addHint'), $('addShow'));
 const newKey = keyField($('newKey'), $('keyHint'), $('newShow'));
 function openAdd() {
-  if (!storeOk) { toast(WHY.nostore, 5000); return; }
+  if (!storeOk) { toast(t(WHY.nostore), 5000); return; }
   addKey.reset(); $('addName').value = '';
   $('addDlg').showModal();
   $('addKey').focus();
 }
 async function doAdd(thenOpen) {
-  if (!addKey.check()) { $('addHint').className = 'hint bad'; if (!$('addKey').value.trim()) $('addHint').textContent = '접속 키를 붙여 넣으세요.'; $('addKey').focus(); return; }
+  if (!addKey.check()) { $('addHint').className = 'hint bad'; if (!$('addKey').value.trim()) $('addHint').textContent = t('접속 키를 붙여 넣으세요.'); $('addKey').focus(); return; }
   const r = await api.add({ key: $('addKey').value.trim(), name: $('addName').value });
-  if (!r || (!r.ok && r.why !== 'exists')) { $('addHint').className = 'hint bad'; $('addHint').textContent = WHY[r && r.why] || '추가하지 못했습니다.'; return; }
+  if (!r || (!r.ok && r.why !== 'exists')) { $('addHint').className = 'hint bad'; $('addHint').textContent = why(r && r.why, '추가하지 못했습니다.'); return; }
   addKey.reset();
   $('addDlg').close();
   await load();
-  if (r.why === 'exists') toast(WHY.exists);
+  if (r.why === 'exists') toast(t(WHY.exists));
   flash(r.id);
   if (thenOpen) connect(r.id);
 }
@@ -423,7 +437,7 @@ $('codeDlg').querySelector('form').onsubmit = async (ev) => {
   ev.preventDefault();
   const r = await api.oneTime($('codeIn').value).catch(() => ({ ok: false }));
   if (r && r.ok) { $('codeDlg').close(); return; }
-  $('codeHint').textContent = r && r.why === 'format' ? '코드는 영문과 숫자 12자입니다(예: 7KQ2-M9TX-4HPC).' : '창을 열지 못했습니다.';
+  $('codeHint').textContent = r && r.why === 'format' ? t('코드는 영문과 숫자 12자입니다(예: 7KQ2-M9TX-4HPC).') : t('창을 열지 못했습니다.');
 };
 $('addCancel').onclick = () => { addKey.reset(); $('addDlg').close(); };
 $('addOnly').onclick = () => doAdd(false);
@@ -434,7 +448,7 @@ let keyFor = '';
 function openKey(id) {
   const h = hosts.find((v) => v.id === id);
   if (!h) return;
-  keyFor = id; newKey.reset(); $('keyWho').textContent = shown(h);
+  keyFor = id; newKey.reset(); I18N.withName($('keyText'), t('{0}의 접속 키를 새로 넣습니다. 호스트에서 <b>새 키 발급</b>을 눌렀거나, 호스트의 "접속한 기기"에서 이 PC를 지웠을 때 쓰세요. 이 키로 한 번 접속하면 이 PC가 다시 기기로 등록됩니다. 이름과 접속 기록은 그대로 남습니다.'), shown(h));
   $('keyDlg').showModal();
   $('newKey').focus();
 }
@@ -442,14 +456,14 @@ $('keyCancel').onclick = () => { newKey.reset(); $('keyDlg').close(); };
 $('keyDlg').addEventListener('close', () => newKey.reset());
 $('keyDlg').querySelector('form').onsubmit = async (ev) => {
   ev.preventDefault();
-  if (!newKey.check()) { $('keyHint').className = 'hint bad'; if (!$('newKey').value.trim()) $('keyHint').textContent = '접속 키를 붙여 넣으세요.'; $('newKey').focus(); return; }
+  if (!newKey.check()) { $('keyHint').className = 'hint bad'; if (!$('newKey').value.trim()) $('keyHint').textContent = t('접속 키를 붙여 넣으세요.'); $('newKey').focus(); return; }
   const r = await api.setKey(keyFor, $('newKey').value.trim());
-  if (!r || !r.ok) { $('keyHint').className = 'hint bad'; $('keyHint').textContent = WHY[r && r.why] || '바꾸지 못했습니다.'; return; }
+  if (!r || !r.ok) { $('keyHint').className = 'hint bad'; $('keyHint').textContent = why(r && r.why, '바꾸지 못했습니다.'); return; }
   newKey.reset();
   $('keyDlg').close();
   await load();
   flash(keyFor);
-  toast('키를 바꿨습니다.');
+  toast(t('키를 바꿨습니다.'));
 };
 
 // ---- removing a PC ----
@@ -457,7 +471,7 @@ let delFor = '';
 function askRemove(id) {
   const h = hosts.find((v) => v.id === id);
   if (!h) return;
-  delFor = id; $('delWho').textContent = shown(h);
+  delFor = id; I18N.withName($('delText'), t('{0}을(를) 목록에서 지웁니다. 이 PC에 보관한 그 PC의 접속 키(또는 기기 등록)도 함께 지워지고, 열려 있는 창은 닫힙니다. 호스트 PC의 "접속한 기기"에는 이 PC가 남아 있으니, 다시 쓰지 않을 거라면 거기서도 지우세요.'), shown(h));
   $('delDlg').showModal();
   $('delCancel').focus();
 }
@@ -484,35 +498,52 @@ let updMsgTimer = 0;
 async function checkUpdate() {
   const b = $('updCheck'), m = $('updMsg');
   b.disabled = true;
-  m.textContent = '확인 중…';
+  m.textContent = t('확인 중…');
   const r = await api.checkUpdate().catch(() => null);
   b.disabled = false;
   const a = r && r.available;
-  m.textContent = !r || r.state === 'none' ? '확인하지 못했습니다'
-    : r.state === 'downloading' ? '업데이트를 받는 중…'
-    : r.state === 'ready' ? '업데이트를 설치했습니다. 곧 다시 시작합니다'
-    : a ? (a.required ? `중요 업데이트 ${a.version}을 설치합니다` : `새 버전 ${a.version}이 있습니다`)
-    : r.error ? '확인하지 못했습니다: ' + r.error
-    : '최신 버전입니다';
+  m.textContent = !r || r.state === 'none' ? t('확인하지 못했습니다')
+    : r.state === 'downloading' ? t('업데이트를 받는 중…')
+    : r.state === 'ready' ? t('업데이트를 설치했습니다. 곧 다시 시작합니다')
+    : a ? (a.required ? t('중요 업데이트 {0}을 설치합니다', a.version) : t('새 버전 {0}이 있습니다', a.version))
+    : r.error ? t('확인하지 못했습니다: {0}', r.error)
+    : t('최신 버전입니다');
   m.title = m.textContent;
   clearTimeout(updMsgTimer);
   updMsgTimer = setTimeout(() => { m.textContent = ''; }, 20000);
 }
 
+function showStore() {
+  const info = lastInfo, s = $('store');
+  if (!info) return;
+  s.className = info.store === 'os' ? '' : 'warn';
+  s.textContent = info.store === 'os' ? '🔒 ' + t('접속 키는 이 PC에만, 운영체제가 암호화해 보관합니다')
+    : info.store === 'obscured' ? '⚠ ' + t('이 PC에는 키 보관소(키링)가 없어 접속 키가 가려진 채로만 저장됩니다')
+    : '⚠ ' + t('이 PC에서는 접속 키를 안전하게 보관할 수 없어 PC를 추가할 수 없습니다');
+  s.title = s.textContent;
+}
+function useLang() {
+  const L = api.i18nGet();
+  t = I18N.translator(L.lang, L.strings);
+  I18N.apply(document, t);
+  I18N.fillSelect($('lang'), L.lang);
+  showStore();
+  render();
+}
+I18N.fonts(document);
+$('lang').onchange = () => { api.i18nSet($('lang').value).catch(() => {}); };
+api.onI18n(useLang);
+useLang();
 (async () => {
   const info = (await api.info()) || {};
+  lastInfo = info;
   storeOk = info.store !== 'none';
   $('ver').textContent = info.version ? 'v' + info.version : '';
   if (info.version) document.title = 'My Remote v' + info.version; // the window's title too
   if (info.updates) { $('updCheck').hidden = false; $('updCheck').onclick = checkUpdate; }
   // "나가기": back to the start screen (this list closes; the PCs' windows stay open).
   if (info.startScreen && api.exit) { $('exitStart').hidden = false; $('exitStart').onclick = () => api.exit(); }
-  const s = $('store');
-  s.className = info.store === 'os' ? '' : 'warn';
-  s.textContent = info.store === 'os' ? '🔒 접속 키는 이 PC에만, 운영체제가 암호화해 보관합니다'
-    : info.store === 'obscured' ? '⚠ 이 PC에는 키 보관소(키링)가 없어 접속 키가 가려진 채로만 저장됩니다'
-    : '⚠ 이 PC에서는 접속 키를 안전하게 보관할 수 없어 PC를 추가할 수 없습니다';
-  s.title = s.textContent;
+  showStore();
   $('add').disabled = $('add2').disabled = !storeOk;
   // A key the app kept before it had this list (the loader's "이 브라우저에 키 저장") moves into the list, once.
   try {

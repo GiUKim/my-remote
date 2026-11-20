@@ -47,6 +47,9 @@ function setList(hooks) { list = hooks || null; }
 // are the shell's; a test adds one of its own (client/main.js --trust-page-key=, with --loader= only).
 const pagecheck = require('./pagecheck');
 let testPageKey = '';
+// The texts this file shows itself (the drag ghost) in this PC's language: client/main.js hands its t() over.
+let T = (s) => s;
+function useT(fn) { if (typeof fn === 'function') T = fn; }
 function setTestPageKey(k) { testPageKey = typeof k === 'string' && /^[A-Za-z0-9+/=]{40,120}$/.test(k) ? k : ''; }
 const pageKeys = () => [...pagecheck.releaseKeys(), ...(testPageKey ? [testPageKey] : [])];
 
@@ -293,8 +296,8 @@ async function ghostOn(o) {
   if (ghost !== g || g.win.isDestroyed()) return false;
   // What is shown is text only, put there as text (the page that names it comes from the host).
   const kind = o.kind === 'text' ? 'text' : 'files';
-  const name = String(o.label || '').slice(0, 120) || (kind === 'text' ? '선택한 글자' : '끌어온 항목');
-  const size = await g.win.webContents.executeJavaScript(`set(${JSON.stringify({ kind, name, hint: '＋ 놓으면 이 PC로 복사' })})`).catch(() => null);
+  const name = String(o.label || '').slice(0, 120) || (kind === 'text' ? T('선택한 글자') : T('끌어온 항목'));
+  const size = await g.win.webContents.executeJavaScript(`set(${JSON.stringify({ kind, name, hint: '＋ ' + T('놓으면 이 PC로 복사') })})`).catch(() => null);
   if (ghost !== g || g.win.isDestroyed()) return false;
   if (size && size.w > 0 && size.h > 0) g.win.setContentSize(Math.min(320, size.w), Math.min(80, size.h));
   // Beside the pointer, wherever that is; false when it is over: no button is held any more (where
@@ -621,4 +624,4 @@ function attach(win, { host = null, trust = false, code = '' } = {}) {
   return state;
 }
 
-module.exports = { attach, setList, setTestPageKey, setLocalHost, PRELOAD, ICON, _drop: { safeName, freePath, placeFiles, explorerFolder, stagedPath, moveInto, mayClick, NO_CLICK } };
+module.exports = { attach, setList, useT, setTestPageKey, setLocalHost, PRELOAD, ICON, _drop: { safeName, freePath, placeFiles, explorerFolder, stagedPath, moveInto, mayClick, NO_CLICK } };

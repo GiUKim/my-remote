@@ -9,7 +9,22 @@ const { contextBridge, ipcRenderer } = require('electron');
 // paths are read again from the variable, as boot.js does in the main process.
 try { require('module').Module._initPaths(); } catch {}
 
+// The language (host/i18n.js): this window's texts come from host/i18n/host.json, the client page's from
+// host/i18n/page.json, which the host page sends a client that asks for its language (a 'lang' message).
+const I18N = require('./i18n');
+const catalog = (name) => { try { return require(`./i18n/${name}.json`); } catch { return {}; } };
+// The diagnostics report's texts are in a catalog of their own (English only: page-report.json).
+const HOST_STRINGS = catalog('host'), PAGE_STRINGS = { ...catalog('page'), ...catalog('page-report') };
+
 contextBridge.exposeInMainWorld('hostApi', {
+  // lang(): this PC's language now; setLang(code) -> the language then; onLang(f): f(code) when it changed
+  // (here, in the client app, or in a remote session's toolbar on this PC); strings(code): this window's table;
+  // pageStrings(code): the client page's, for a client that asks.
+  lang: () => ipcRenderer.sendSync('lang-sync'),
+  setLang: (code) => ipcRenderer.invoke('lang-set', String(code || '')),
+  onLang: (fn) => ipcRenderer.on('lang-changed', (_e, code) => fn(String(code || ''))),
+  strings: (code) => I18N.table(HOST_STRINGS, I18N.normalize(code) || 'ko'),
+  pageStrings: (code) => { const c = I18N.normalize(code); return c && c !== 'ko' ? I18N.table(PAGE_STRINGS, c) : null; },
   getConfig: () => ipcRenderer.invoke('cfg'),
   getSources: () => ipcRenderer.invoke('sources'),
   getClientApp: () => ipcRenderer.invoke('client-app'),

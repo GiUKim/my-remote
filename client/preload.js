@@ -94,4 +94,9 @@ contextBridge.exposeInMainWorld('mrShell', {
   modsHeld: () => ipcRenderer.invoke('shell:modsHeld'),
   // A step of a try to connect, for the app's connect.log (from 0.9.5; the page must not rely on it).
   connLog: (line) => ipcRenderer.invoke('shell:connLog', line),
+  // This PC's language for the page (host/i18n.js; from 0.9.6, the page must not rely on it): lang() now, setLang(code)
+  // from the toolbar (this PC's choice, the host's too), onLang(f): f(code) when it changed anywhere on this PC.
+  lang: () => ipcRenderer.sendSync('i18n:lang'),
+  setLang: (code) => ipcRenderer.invoke('i18n:set', String(code || '')),
+  onLang: (f) => { ipcRenderer.on('i18n:changed', (_e, code) => { try { f(String(code || '')); } catch {} }); },
 });

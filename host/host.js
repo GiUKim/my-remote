@@ -1,5 +1,27 @@
 const api = window.hostApi;
 const $ = (id) => document.getElementById(id);
+// The language (host/i18n.js, loaded before this script): t() gives every text this window shows in this PC's
+// language, and a change made anywhere on this PC (here, the client app, a session's toolbar) draws them again
+// at once (relabel). Lines already in the log stay as they were written.
+const I18N = window.MRI18N;
+let t = I18N.translator('ko');
+const relabel = new Set();
+function useLang(code) {
+  t = I18N.translator(code, api.strings(code));
+  I18N.apply(document, t);
+  I18N.fillSelect($('lang'), code);
+  for (const f of relabel) { try { f(); } catch (e) { console.error('relabel', e); } }
+}
+// A name this host gives a connection (whoOf, ask; kept in Korean in the access log as the source of the text):
+// a device's own name, or a few words of ours, said in this language.
+const whoText = (name) => {
+  const s = String(name || ''), m = /^(.*) \((키|앱)\)$/.exec(s);
+  return m ? `${m[1]} (${t(m[2])})` : t(s);
+};
+I18N.fonts(document);
+useLang(api.lang());
+$('lang').onchange = () => { api.setLang($('lang').value).catch(() => {}); };
+api.onLang(useLang);
 const CLIP_MAX = 60000;
 let cfg, keys, chan;
 let session = null;
@@ -11,11 +33,17 @@ let master = null, routes = new Map(), subSeq = 0;
 const openChans = new Set(); // relay subscriptions not let go yet (see subscribe)
 
 function log(s) {
-  const line = `${new Date().toLocaleTimeString()}  ${s}`;
+  const line = `${new Date().toLocaleTimeString(t.lang)}  ${s}`;
   $('log').textContent = (line + '\n' + $('log').textContent).slice(0, 6000);
   api.log(s);
 }
-function status(text, cls) { $('status').textContent = text; $('dot').className = 'dot ' + cls; }
+// The status line: its Korean source and arguments are kept, so that it is said again in a new language.
+let statusNow = null;
+function status(text, cls, ...args) { statusNow = [text, cls, args]; $('status').textContent = t(text, ...args); $('dot').className = 'dot ' + cls; }
+relabel.add(() => { if (statusNow) status(statusNow[0], statusNow[1], ...statusNow[2]); });
+// The numbers under it (every 2 s during a session, see the stats loop): numbers kept, words said again.
+const statsText = (x) => `${x.head} · ${x.relay ? t('TURN 중계') : t('P2P 직접')}${x.limit === 'cpu' ? ' · ' + t('제한: 이 PC 성능') : x.limit === 'bandwidth' ? ' · ' + t('제한: 네트워크') : ''}`;
+relabel.add(() => { if (session && session.statsLine && $('stats').textContent) $('stats').textContent = statsText(session.statsLine); });
 
 // ---- the screen locked or behind a secure prompt ---------------------------------------------
 // The lock screen and UAC prompts are on a desktop this page can neither see nor control. The client
@@ -58,7 +86,7 @@ function forgetPaused() { for (const t of screenGone.timers.values()) clearTimeo
 // it lasts, ask again every 2 s. A lock reported by an event is ended by the matching event.
 setInterval(() => {
   if (!screenGone.lock || screenGone.lockFrom !== 'query' || !session) return;
-  api.hostLocked().then((v) => { if (!v && screenGone.lock && screenGone.lockFrom === 'query') { screenGone.lock = false; unlocked(); log('이 PC의 잠금이 풀렸습니다'); sendLock(); } }, () => {});
+  api.hostLocked().then((v) => { if (!v && screenGone.lock && screenGone.lockFrom === 'query') { screenGone.lock = false; unlocked(); log(t('이 PC의 잠금이 풀렸습니다')); sendLock(); } }, () => {});
 }, 2000);
 
 // ---- the lock screen through the assist service (Windows; host/assist.js, native/winassist.cpp) --------
@@ -106,7 +134,7 @@ function assistState(m) {
   assist.secure = !!m.secure; assist.locked = !!m.locked; assist.input = !!m.input;
   if (!assist.secure) assistForget();
   if (was !== assist.secure) {
-    log(!assist.secure ? '보안 화면이 닫혔습니다' : assist.locked ? '잠금 화면: 클라이언트에 보이고, 원격에서 비밀번호를 입력할 수 있습니다' : '보안 화면(UAC 등): 클라이언트에 보이기만 합니다');
+    log(!assist.secure ? t('보안 화면이 닫혔습니다') : assist.locked ? t('잠금 화면: 클라이언트에 보이고, 원격에서 비밀번호를 입력할 수 있습니다') : t('보안 화면(UAC 등): 클라이언트에 보이기만 합니다'));
   }
   sendLock();
 }
@@ -117,7 +145,7 @@ function assistFrame(m) {
   let frame;
   // GDI leaves the fourth byte 0: BGRX, as the native capturer's pictures (BGRA would make it transparent).
   try { frame = new VideoFrame(m.data, { format: 'BGRX', codedWidth: m.w, codedHeight: m.h, timestamp: frameTs() }); }
-  catch (e) { log('잠금 화면 그림을 쓸 수 없습니다: ' + e.message); return; }
+  catch (e) { log(t('잠금 화면 그림을 쓸 수 없습니다: {0}', e.message)); return; }
   const e = assist.mons.get(i), first = !e;
   if (e && e.last) e.last.close();
   assist.mons.set(i, { last: frame, left: ASSIST_REPEATS, at: performance.now() });
@@ -192,14 +220,14 @@ function nativeChannel() {
       // The lock screen or a permission prompt has the screen, or the capturer is starting again
       // after a mode change or a reset of the graphics card. It keeps trying by itself: the session
       // stays and the client keeps the last picture meanwhile.
-      log(m.on ? `모니터 ${m.i + 1}: 지금은 화면을 읽을 수 없습니다 (${m.error}) — 다시 읽을 수 있게 되면 이어서 보냅니다` : `모니터 ${m.i + 1}: 화면을 다시 읽습니다`);
+      log(m.on ? t('모니터 {0}: 지금은 화면을 읽을 수 없습니다 ({1}) — 다시 읽을 수 있게 되면 이어서 보냅니다', m.i + 1, m.error) : t('모니터 {0}: 화면을 다시 읽습니다', m.i + 1));
       screenPaused(m.i, !!m.on); // the client is told when it lasts (see sendLock)
     } else if (m.t === 'failed' && session && session.native && session.native[m.i]) {
       // A monitor in HDR mode, or one the capturer could not get back (GIVE_UP_MS in
       // native/capture.cpp): go on with the engine's capturer. Only a loop of this session counts:
       // what a loop of an earlier session reported arrives before the first of this session's loops
       // has opened.
-      log(`네이티브 캡처 중단 (모니터 ${m.i + 1}: ${m.error}) — 기본 캡처로 다시 연결합니다`);
+      log(t('네이티브 캡처 중단 (모니터 {0}: {1}) — 기본 캡처로 다시 연결합니다', m.i + 1, m.error));
       if (m.error !== 'size') nativeGiveUp(m.error); // a changed size is a changed monitor setup: that renegotiates by itself
       else sizeRenewAt = performance.now(); // see onDisplaysChanged
       renew(session, '캡처 방식 변경');
@@ -232,7 +260,7 @@ async function openNativeLoops(s, sources) {
     // Replaced or ended meanwhile: close what was opened for it.
     if (session !== s) { port.postMessage({ t: 'close' }); return null; }
     if (!r.ok || r.width !== sources[i].width || r.height !== sources[i].height) {
-      log(`네이티브 캡처를 쓸 수 없습니다 (모니터 ${i + 1}: ${r.ok ? '크기 불일치' : r.error}) — 기본 캡처를 사용합니다`);
+      log(t('네이티브 캡처를 쓸 수 없습니다 (모니터 {0}: {1}) — 기본 캡처를 사용합니다', i + 1, r.ok ? t('크기 불일치') : r.error));
       s.capWhy = `monitor ${i + 1}: ${r.ok ? `size ${r.width}x${r.height}, expected ${sources[i].width}x${sources[i].height}` : r.error}`;
       port.postMessage({ t: 'close' });
       s.native = null;
@@ -271,7 +299,7 @@ function teardown(reason, silent) {
   setTimeout(() => { try { s.pc.close(); } catch {} }, 200);
   $('stats').textContent = '';
   status('대기 중 — 접속을 기다리는 중', 'ok');
-  log('세션 종료: ' + reason);
+  log(t('세션 종료: {0}', t(reason)));
   if (s.connectedAt) {
     // Its 'connect' first, when the address had not come yet (noteConnected then writes nothing).
     if (!s.connectLogged) { s.connectLogged = true; api.access({ ev: 'connect', via: s.route.kind, dev: s.route.id, name: s.who }); }
@@ -330,7 +358,7 @@ function preferCodec(pc, codec) {
       const caps = RTCRtpReceiver.getCapabilities('video').codecs;
       const first = caps.filter((c) => c.mimeType.toLowerCase() === want);
       if (first.length) tr.setCodecPreferences([...first, ...caps.filter((c) => c.mimeType.toLowerCase() !== want)]);
-    } catch (e) { log('코덱 우선순위 설정 실패(기본값 사용): ' + e.message); }
+    } catch (e) { log(t('코덱 우선순위 설정 실패(기본값 사용): {0}', e.message)); }
   }
 }
 
@@ -376,7 +404,7 @@ function applyEncoding(s) {
         p.encodings[0].maxFramerate = cfg.maxFps;
         p.degradationPreference = smooth ? 'balanced' : 'maintain-resolution';
         await sender.setParameters(p);
-      } catch (e) { log('인코더 설정 실패: ' + e.message); }
+      } catch (e) { log(t('인코더 설정 실패: {0}', e.message)); }
       if (session !== s) return; // the next session's capture loops go by the same monitor numbers
       if (s.native && nativePort) {
         nativePort.postMessage({ t: 'show', i, on: !!plan[i] }); // a monitor nobody looks at is not captured
@@ -432,14 +460,14 @@ async function soundNow(s) {
   s.soundLater = null;
   let stream;
   try { stream = await capture(s.sources[0], true, false); }
-  catch (e) { log('시스템 소리 캡처 불가 — 소리 없이 진행: ' + e.message); return; }
+  catch (e) { log(t('시스템 소리 캡처 불가 — 소리 없이 진행: {0}', e.message)); return; }
   stream.getVideoTracks().forEach((t) => t.stop());
   const a = stream.getAudioTracks()[0];
   if (!a) return;
   if (session !== s) return void keepSpareAudio(a);
   s.streams.push(new MediaStream([a])); // the teardown keeps it for the next session, as any session's sound
-  try { await sender.replaceTrack(a); log('잠금이 풀려 시스템 소리도 보냅니다'); }
-  catch (e) { log('시스템 소리를 보낼 수 없습니다: ' + e.message); }
+  try { await sender.replaceTrack(a); log(t('잠금이 풀려 시스템 소리도 보냅니다')); }
+  catch (e) { log(t('시스템 소리를 보낼 수 없습니다: {0}', e.message)); }
 }
 function capture(src, withAudio, refine) {
   const video = { mandatory: {
@@ -471,7 +499,7 @@ function onClientMessage(s, dc, data) {
   } else if (m.t === 'mode') {
     s.mode = m.m === 'smooth' ? 'smooth' : 'sharp';
     applyEncoding(s);
-    log('화질 모드: ' + (s.mode === 'smooth' ? '부드러움 우선' : '선명도 우선'));
+    log(t('화질 모드: {0}', s.mode === 'smooth' ? t('부드러움 우선') : t('선명도 우선')));
   } else if (m.t === 'clip') {
     if (cfg.clipboard && typeof m.s === 'string' && m.s.length <= CLIP_MAX) { s.clip = m.s; api.writeClip(m.s); }
   } else if (m.t === 'dragout') {
@@ -488,6 +516,18 @@ function onClientMessage(s, dc, data) {
   } else if (m.t === 'cs') {
     // Client-side measurements: keep them with ours in the local diagnostics log.
     if (data.length < 6000 && m.s && typeof m.s === 'object') api.diag({ client: m.s, host: s.lastHs || null });
+  } else if (m.t === 'lang') {
+    // The client page's texts in the language of the PC it runs on (host/i18n/page*.json, which always match the
+    // page this host serves), once per language and session: at most one answer per language offered, a dozen
+    // tables of some 15 KB. The page keeps them (see its useLang): someone trying the languages one after another
+    // gets each (a limit of 4 left the fifth one tried in Korean; found by the self-test's walk through all twelve).
+    const l = I18N.normalize(m.l);
+    s.langsSent = s.langsSent || new Set();
+    if (l && l !== 'ko' && I18N.CODES.includes(l) && !s.langsSent.has(l)) {
+      s.langsSent.add(l);
+      const strings = api.pageStrings(l);
+      try { if (strings && dc.readyState === 'open') dc.send(JSON.stringify({ t: 'strings', l, s: strings })); } catch {}
+    }
   } else if (data.length < (m.t === 'text' ? 2000 : 500)) { // 'text': up to 400 characters from a phone's keyboard
     if (m.t === 'md' || m.t === 'kd' || m.t === 'text') s.putTouched = true; // see receiveUpload: no drop at an old place after this
     api.input(data);
@@ -508,7 +548,7 @@ function receiveUpload(s, ch) {
     failed = true;
     txTo(s, { t: 'put', state: 'error', why });
     if (gid) api.putAbort(gid);
-    log('받기 실패: ' + why);
+    log(t('받기 실패: {0}', why));
     try { ch.close(); } catch {}
   };
   const step = async (data) => {
@@ -538,7 +578,7 @@ function receiveUpload(s, ch) {
       const r = await api.putDone(gid, mode === 'drop' && !s.putTouched ? at : null, mode);
       gid = null;
       s.filesIn += n;
-      log(`받기: 파일 ${n}개 — ${r.how}${r.why ? ' (' + r.why + ')' : ''}`);
+      log(t('받기: 파일 {0}개 — {1}', n, r.how + (r.why ? ' (' + r.why + ')' : '')));
       txTo(s, { t: 'put', state: 'done', how: r.how, n: r.n || n, why: r.why || '' });
       try { ch.close(); } catch {}
     }
@@ -563,14 +603,14 @@ async function dragOut(s, button) {
   if (r.kind === 'files') {
     const n = r.files.filter((f) => !f.dir).length;
     s.filesOut += n;
-    log(`끌어내기: 파일 ${n}개를 보냅니다${r.skipped ? ` (${r.skipped}개는 제외: 너무 많거나 큼)` : ''}`);
+    log(t('끌어내기: 파일 {0}개를 보냅니다', n) + (r.skipped ? ' ' + t('({0}개는 제외: 너무 많거나 큼)', r.skipped) : ''));
     txTo(s, { t: 'dragdata', kind: 'files', files: r.files, skipped: r.skipped || 0 });
     sendFiles(s, r.files);
   } else if (r.kind === 'text') {
-    log(`끌어내기: 글자 ${r.s.length}자를 보냅니다`);
+    log(t('끌어내기: 글자 {0}자를 보냅니다', r.s.length));
     txTo(s, { t: 'dragdata', kind: 'text', s: r.s, cut: !!r.cut });
   } else {
-    log('끌어내기: 가져올 것이 없습니다 — ' + r.why);
+    log(t('끌어내기: 가져올 것이 없습니다 — {0}', r.why));
     txTo(s, { t: 'dragdata', kind: 'none', why: r.why });
   }
 }
@@ -618,9 +658,9 @@ async function sendFiles(s, files) {
       api.dragFileDone(f.id);
     }
     ch.send(JSON.stringify({ t: 'filesdone' }));
-    log('끌어내기: 파일 전송을 마쳤습니다');
+    log(t('끌어내기: 파일 전송을 마쳤습니다'));
   } catch (e) {
-    log('끌어내기: 파일 전송 실패 — ' + e.message);
+    log(t('끌어내기: 파일 전송 실패 — {0}', e.message));
     try { ch.send(JSON.stringify({ t: 'fileerror' })); } catch {}
     // Only this transfer's files: a newer drag-out may have offered others meanwhile.
     for (const f of files) if (f.id) api.dragFileDone(f.id);
@@ -688,7 +728,7 @@ async function clipGet(s, seq) {
   if (session !== s) return;
   if (r.kind === 'files') {
     s.filesOut += r.files.filter((f) => !f.dir).length;
-    log(`복사한 파일: ${r.files.filter((f) => !f.dir).length}개를 보냅니다`);
+    log(t('복사한 파일: {0}개를 보냅니다', r.files.filter((f) => !f.dir).length));
     txTo(s, { t: 'dragdata', kind: 'files', files: r.files, skipped: r.skipped || 0, clip: true });
     sendFiles(s, r.files);
   } else txTo(s, { t: 'dragdata', kind: 'none', why: r.why, clip: true });
@@ -707,12 +747,13 @@ async function pairDevice(s) {
   const r = await api.devices.pair(p).catch(() => null);
   if (session !== s) return;
   if (!r || !r.ok) {
-    log('이 클라이언트 앱을 기기로 등록하지 못했습니다' + (r && r.why === 'full' ? ' (등록된 기기가 너무 많습니다: 쓰지 않는 기기를 지우세요)' : r && r.why === 'nostore' ? ' (이 PC의 암호화 저장소를 쓸 수 없습니다)' : ''));
+    log(r && r.why === 'full' ? t('이 클라이언트 앱을 기기로 등록하지 못했습니다 (등록된 기기가 너무 많습니다: 쓰지 않는 기기를 지우세요)')
+      : r && r.why === 'nostore' ? t('이 클라이언트 앱을 기기로 등록하지 못했습니다 (이 PC의 암호화 저장소를 쓸 수 없습니다)') : t('이 클라이언트 앱을 기기로 등록하지 못했습니다'));
     txTo(s, { t: 'device', ok: false, why: r ? r.why : 'error' });
     return;
   }
   txTo(s, { t: 'device', ok: true, id: r.id, secret: r.secret });
-  log(`${p.pc || '이 클라이언트 앱'}을(를) 기기로 등록했습니다 — 다음부터 키 없이 접속합니다`);
+  log(p.pc ? t('{0}을(를) 기기로 등록했습니다 — 다음부터 키 없이 접속합니다', p.pc) : t('이 클라이언트 앱을 기기로 등록했습니다 — 다음부터 키 없이 접속합니다'));
 }
 // The address the session's connection uses (the remote end of the selected candidate pair), for the log.
 // The engine does not reveal a peer-reflexive one (the client's own addresses come hidden behind mDNS
@@ -760,12 +801,12 @@ async function startSession(hello, route) {
     route, pair: pairWish(hello, route), filesIn: 0, filesOut: 0, connectedAt: 0, bind: hello.bind || null, allowed: hello.allowed || '',
   });
   s.who = whoOf(route, s.pair);
-  log(`접속 요청 수신 (${s.who}) — 화면 캡처 시작`);
+  log(t('접속 요청 수신 ({0}) — 화면 캡처 시작', whoText(s.who)));
   status('연결 협상 중…', 'wait');
   const sources = await (s.sourcesP = api.getSources());
   if (session !== s) return;
-  if (!sources.length) { log('캡처할 모니터를 찾지 못했습니다'); teardown('모니터 없음', true); return; }
-  for (const src of sources) if (src.hdr) log(`주의: 모니터 ${src.idx + 1}은 Windows HDR이 켜져 있어 원격 화면에서 색이 밝게 날아갑니다. 이 PC의 설정 > 시스템 > 디스플레이에서 그 모니터의 HDR을 끄면 정상으로 보입니다.`);
+  if (!sources.length) { log(t('캡처할 모니터를 찾지 못했습니다')); teardown('모니터 없음', true); return; }
+  for (const src of sources) if (src.hdr) log(t('주의: 모니터 {0}은 Windows HDR이 켜져 있어 원격 화면에서 색이 밝게 날아갑니다. 이 PC의 설정 > 시스템 > 디스플레이에서 그 모니터의 HDR을 끄면 정상으로 보입니다.', src.idx + 1));
   const pc = (s.pc = new RTCPeerConnection({ iceServers: cfg.iceServers }));
   s.sources = sources;
   s.need = new Map(sources.map((_, i) => [i, { w: 0, h: 0 }])); // w,h 0 = full size
@@ -788,7 +829,7 @@ async function startSession(hello, route) {
   if (!s.native && !s.capWhy) s.capWhy = cfg.capture === 'engine' ? 'config' : nativeOff() ? `given up: ${nativeOffWhy}` : !api.nativeCapture() ? `no capturer: ${api.nativeWhy ? api.nativeWhy() : '?'}` : 'not opened';
   s.cursorHidden = s.native ? true : await api.hideCursor(true);
   if (session !== s) return;
-  log(s.native ? '화면 캡처: 네이티브' : `화면 캡처: 기본(브라우저 엔진) — ${s.capWhy}`);
+  log(s.native ? t('화면 캡처: 네이티브') : t('화면 캡처: 기본(브라우저 엔진) — {0}', s.capWhy));
   Object.assign(s, pickCodec(hello));
   const refine = s.codec === 'AV1' ? (cfg.refine === 'always' ? 'always' : cfg.refine !== false) : false;
 
@@ -805,7 +846,7 @@ async function startSession(hello, route) {
       if (kept) { stream = new MediaStream([kept]); audio = true; audioReuses++; }
       else if (!unreadable) {
         try { stream = await capture(sources[i], true, refine); audio = true; }
-        catch (e) { log('시스템 소리 캡처 불가 — 소리 없이 진행: ' + e.message); }
+        catch (e) { log(t('시스템 소리 캡처 불가 — 소리 없이 진행: {0}', e.message)); }
       }
     }
     if (s.native) {
@@ -829,14 +870,14 @@ async function startSession(hello, route) {
   if (cfg.audio && unreadable && !audio) {
     s.soundLater = pc.addTransceiver('audio', { direction: 'sendonly', streams: [new MediaStream()] }).sender;
     audio = true;
-    log('잠금 화면 상태에서 접속: 화면과 소리는 잠금이 풀리면 이어서 보냅니다');
+    log(t('잠금 화면 상태에서 접속: 화면과 소리는 잠금이 풀리면 이어서 보냅니다'));
   }
   preferCodec(pc, s.codec);
 
   pc.onconnectionstatechange = () => {
     if (session !== s) return;
     const st = pc.connectionState;
-    log('연결 상태: ' + st);
+    log(t('연결 상태: {0}', st));
     if (st === 'connected') {
       clearTimeout(s.dropTimer);
       if (s.stale) return; // ended as soon as its channel opens (see renew)
@@ -848,7 +889,7 @@ async function startSession(hello, route) {
         if (s.allowed === 'first') api.gate.firstUsed(); // a new install's free first connection is up: no other gets one
         noteConnected(s);
       }
-    } else if (st === 'failed' || st === 'closed') teardown('연결 ' + st);
+    } else if (st === 'failed' || st === 'closed') teardown(st === 'failed' ? '연결 실패' : '연결 닫힘');
     else if (st === 'disconnected') { clearTimeout(s.dropTimer); s.dropTimer = setTimeout(() => teardown('연결 끊김'), 15000); }
   };
 
@@ -867,7 +908,7 @@ async function startSession(hello, route) {
     monitors: sources.map((src, i) => ({ idx: i, mid: mids[i], x: src.x, y: src.y, width: src.width, height: src.height, primary: src.primary, hdr: src.hdr || undefined })),
   });
   if (session !== s) return; // ended while the offer was being posted: no timers for it
-  log(`offer 전송 (모니터 ${sources.length}개${audio ? ', 소리 포함' : ''})`);
+  log(audio ? t('offer 전송 (모니터 {0}개, 소리 포함)', sources.length) : t('offer 전송 (모니터 {0}개)', sources.length));
   // Give up if the client never completes the handshake.
   s.dropTimer = setTimeout(() => { if (session === s && pc.connectionState !== 'connected') teardown('협상 시간 초과'); }, 30000);
 
@@ -904,12 +945,13 @@ async function startSession(hello, route) {
     try { if (s.dc.readyState === 'open') s.dc.send(JSON.stringify({ t: 'hs', ...s.lastHs })); } catch {}
     if (last) {
       const mbps = ((bytes - last.bytes) * 8) / ((now - last.t) / 1000) / 1e6;
-      const why = limit === 'cpu' ? ' · 제한: 이 PC 성능' : limit === 'bandwidth' ? ' · 제한: 네트워크' : '';
       // The encoder's name is hidden by Chromium unless the page captures something through the browser (on
-      // a PC without a sound device nothing is): then only the codec.
-      const text = `${codec}${impl ? ` (${impl})` : ''} · ${fps.sort((a, b) => a[0] - b[0]).map((x) => x[1]).join('/')} fps · ${mbps.toFixed(1)} Mbps · RTT ${rtt != null ? Math.round(rtt * 1000) + ' ms' : '?'} · ${kind === 'relay' ? 'TURN 중계' : 'P2P 직접'}${why}`;
+      // a PC without a sound device nothing is): then only the codec. Its words are put in by statsText, again
+      // when the language changes.
+      s.statsLine = { head: `${codec}${impl ? ` (${impl})` : ''} · ${fps.sort((a, b) => a[0] - b[0]).map((x) => x[1]).join('/')} fps · ${mbps.toFixed(1)} Mbps · RTT ${rtt != null ? Math.round(rtt * 1000) + ' ms' : '?'}`, relay: kind === 'relay', limit };
+      const text = statsText(s.statsLine);
       $('stats').textContent = text;
-      if (!s.loggedStats) { s.loggedStats = true; log('전송 상태: ' + text); }
+      if (!s.loggedStats) { s.loggedStats = true; log(t('전송 상태: {0}', text)); }
     }
     last = { bytes, t: now };
   }, 2000));
@@ -945,7 +987,7 @@ function stalled(s, encoded) {
   if (performance.now() - stallRenewAt < STALL_RENEW_MS) return false; // it came back at once: not again and again
   stallRenewAt = performance.now();
   stallRenews++;
-  log(`모니터 ${stuck + 1}: 화면을 보내는데 인코더가 4초째 받지 않습니다 — 연결을 새로 맺습니다`);
+  log(t('모니터 {0}: 화면을 보내는데 인코더가 4초째 받지 않습니다 — 연결을 새로 맺습니다', stuck + 1));
   renew(s, '인코더 멈춤');
   return true;
 }
@@ -1098,7 +1140,8 @@ function ask(m, route, g) {
     if (now - busy.logged >= 60000) {
       busy.logged = now;
       api.access({ ev: 'denied', via, name, why: 'busy' });
-      log(`새 기기 요청이 겹치거나 너무 잦아 받지 않았습니다${busy.n > 1 ? ` (지난 1분 ${busy.n}번)` : ''}. 모르는 요청이 계속되면 키가 샌 것일 수 있습니다: 새 키 발급(등록된 기기도 모두 삭제)`);
+      log(busy.n > 1 ? t('새 기기 요청이 겹치거나 너무 잦아 받지 않았습니다 (지난 1분 {0}번). 모르는 요청이 계속되면 키가 샌 것일 수 있습니다: 새 키 발급(등록된 기기도 모두 삭제)', busy.n)
+        : t('새 기기 요청이 겹치거나 너무 잦아 받지 않았습니다. 모르는 요청이 계속되면 키가 샌 것일 수 있습니다: 새 키 발급(등록된 기기도 모두 삭제)'));
       busy.n = 0;
     }
     return;
@@ -1110,7 +1153,8 @@ function ask(m, route, g) {
   route.send({ t: 'confirm', sid: m.sid, ts: Date.now(), code, otp: p.otp, locked: !!g.locked, wait: GATE_WAIT }).catch(() => {});
   showAsk(p);
   api.gate.alert(name);
-  log(`${via === 'code' ? '1회용 코드로 접속을 요청했습니다' : '새 기기가 접속을 요청했습니다: ' + name} · 확인 숫자 ${code} — 이 창에서 허용하거나 거부하세요`);
+  log(via === 'code' ? t('1회용 코드로 접속을 요청했습니다 · 확인 숫자 {0} — 이 창에서 허용하거나 거부하세요', code)
+    : t('새 기기가 접속을 요청했습니다: {0} · 확인 숫자 {1} — 이 창에서 허용하거나 거부하세요', whoText(name), code));
   api.access({ ev: 'asked', via, name });
 }
 function endAsk() {
@@ -1125,8 +1169,8 @@ function refuse(why) {
   if (!p) return;
   p.route.send({ t: 'denied', sid: p.m.sid, ts: Date.now(), why }).catch(() => {});
   api.access({ ev: 'denied', via: p.route.kind === 'code' ? 'code' : 'key', name: p.name, why });
-  if (p.route.kind === 'code') { log(`${p.name}: ${why === 'timeout' ? '2분 안에 허용하지 않아 끝냈습니다' : '거부했습니다'}`); return; }
-  log(`${p.name}: ${why === 'refused' ? '거부했습니다. 내가 보낸 요청이 아니라면 키가 샌 것일 수 있습니다: 새 키 발급(등록된 기기도 모두 삭제)' : why === 'timeout' ? '2분 안에 허용하지 않아 끝냈습니다' : '막았습니다'}`);
+  if (p.route.kind === 'code') { log(`${whoText(p.name)}: ${why === 'timeout' ? t('2분 안에 허용하지 않아 끝냈습니다') : t('거부했습니다')}`); return; }
+  log(`${whoText(p.name)}: ${why === 'refused' ? t('거부했습니다. 내가 보낸 요청이 아니라면 키가 샌 것일 수 있습니다: 새 키 발급(등록된 기기도 모두 삭제)') : why === 'timeout' ? t('2분 안에 허용하지 않아 끝냈습니다') : t('막았습니다')}`);
 }
 async function allow(how) {
   const p = endAsk();
@@ -1139,32 +1183,33 @@ async function allow(how) {
     showOneTime();
   } else allowPk(p.m.pk);
   api.access({ ev: 'approved', via: p.route.kind === 'code' ? 'code' : 'key', name: p.name, how });
-  log(`${p.name}: 허용했습니다 (${GATE_HOW[how] || how})`);
+  log(`${whoText(p.name)}: ${t('허용했습니다 ({0})', GATE_HOW[how] ? t(GATE_HOW[how]) : how)}`);
   try { await startSession(p.m, p.route); } catch (e) {
-    log('오류: ' + e.message);
+    log(t('오류: {0}', e.message));
     api.sourcesFailed();
     if (session && session.sid === p.m.sid) teardown('오류', true);
   }
 }
 // The waiting request in this window: who, the number its screen shows too, 허용 / 거부, the time left.
 let askTick = 0;
-const ASK_TEXT = $('askText').textContent;
+const ASK_TEXT = '그 기기 화면에도 같은 숫자가 보입니다. 내가 접속하는 것이 맞을 때만 허용하세요. 클라이언트 앱은 허용하면 기기로 등록되어 다음부터 묻지 않습니다(브라우저는 매번 묻습니다).'; // said through t()
 function showAsk(p) {
   const byCode = p.route.kind === 'code';
-  $('askTitle').textContent = byCode ? '1회용 코드로 접속하려고 합니다' : '새 기기가 접속하려고 합니다';
-  $('askText').textContent = byCode ? '상대 화면에도 같은 숫자가 보입니다. 내가 코드를 알려 준 사람이 맞을 때만 허용하세요. 허용하면 그 사람이 이 PC를 보고 조작할 수 있습니다(기기로 등록되지는 않습니다).' : ASK_TEXT;
-  $('askWho').textContent = p.name;
+  $('askTitle').textContent = byCode ? t('1회용 코드로 접속하려고 합니다') : t('새 기기가 접속하려고 합니다');
+  $('askText').textContent = byCode ? t('상대 화면에도 같은 숫자가 보입니다. 내가 코드를 알려 준 사람이 맞을 때만 허용하세요. 허용하면 그 사람이 이 PC를 보고 조작할 수 있습니다(기기로 등록되지는 않습니다).') : t(ASK_TEXT);
+  $('askWho').textContent = whoText(p.name);
   $('askCode').textContent = p.code;
   $('ask').style.display = '';
   $('askYes').onclick = () => { if (pending === p) allow('host'); };
   $('askNo').onclick = () => { if (pending === p) refuse('refused'); };
   clearInterval(askTick);
-  const left = () => { const s = Math.max(0, Math.round((GATE_WAIT - (performance.now() - p.since)) / 1000)); $('askLeft').textContent = `— ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} 남음`; };
+  const left = () => { const s = Math.max(0, Math.round((GATE_WAIT - (performance.now() - p.since)) / 1000)); $('askLeft').textContent = t('— {0} 남음', `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`); };
   left();
   askTick = setInterval(left, 1000);
   window.scrollTo(0, 0);
 }
 function hideAsk() { clearInterval(askTick); $('ask').style.display = 'none'; }
+relabel.add(() => { if (pending) showAsk(pending); });
 
 // ---- one-time codes: help from someone who has no key (the user's go-ahead, 2026-11-17) ----------------------
 // The person at this PC has this window make a code (signal.js newCode) and gives it to whoever is to help. The
@@ -1186,7 +1231,7 @@ async function makeOneTimeCode() {
   o.timer = setTimeout(() => { if (oneTime === o && !o.pk) endOneTime('expired'); }, ONE_TIME_MS);
   await subscribe();
   showOneTime();
-  log('1회용 코드를 만들었습니다: 10분 안에 한 번 쓸 수 있고, 들어오기 전에 이 창에서 허용해야 합니다');
+  log(t('1회용 코드를 만들었습니다: 10분 안에 한 번 쓸 수 있고, 들어오기 전에 이 창에서 허용해야 합니다'));
 }
 function endOneTime(why) {
   const o = oneTime;
@@ -1197,7 +1242,7 @@ function endOneTime(why) {
   if (session && session.route.kind === 'code') teardown('1회용 접속 끝냄');
   subscribe();
   showOneTime();
-  if (why !== 'replaced') log({ expired: '1회용 코드가 쓰이지 않고 만료되었습니다', done: '1회용 접속이 끝나 코드도 끝났습니다', ended: '1회용 코드를 끝냈습니다' }[why] || '1회용 코드를 끝냈습니다');
+  if (why !== 'replaced') log(t({ expired: '1회용 코드가 쓰이지 않고 만료되었습니다', done: '1회용 접속이 끝나 코드도 끝났습니다', ended: '1회용 코드를 끝냈습니다' }[why] || '1회용 코드를 끝냈습니다'));
 }
 let otTick = 0;
 function showOneTime() {
@@ -1206,7 +1251,7 @@ function showOneTime() {
   $('ot').classList.toggle('on', !!o);
   $('otBox').style.display = o ? '' : 'none';
   $('otNote').style.display = o ? 'none' : '';
-  $('otBtn').textContent = o ? '새 코드' : '코드 만들기';
+  $('otBtn').textContent = o ? t('새 코드') : t('코드 만들기');
   $('otBtn').style.display = o && o.pk ? 'none' : ''; // a new code would end the session the person allowed
   if (!o) { $('otState').textContent = ''; return; }
   $('otCode').textContent = RD.showCode(o.code);
@@ -1216,19 +1261,20 @@ function showOneTime() {
     if (oneTime !== o) return;
     const live = session && session.route.kind === 'code';
     if (o.pk) {
-      $('otState').textContent = live ? '— 접속 중' : '— 접속 끝남';
-      $('otText').textContent = live ? '도와주는 사람이 이 PC에 접속해 있습니다. 끝내기를 누르면 바로 끊기고 코드도 사라집니다.'
-        : '접속이 끊겼습니다. 잠시 안에 다시 붙지 않으면 코드가 사라집니다.';
+      $('otState').textContent = live ? t('— 접속 중') : t('— 접속 끝남');
+      $('otText').textContent = live ? t('도와주는 사람이 이 PC에 접속해 있습니다. 끝내기를 누르면 바로 끊기고 코드도 사라집니다.')
+        : t('접속이 끊겼습니다. 잠시 안에 다시 붙지 않으면 코드가 사라집니다.');
     } else {
       const s = Math.max(0, Math.round((o.until - Date.now()) / 1000));
-      $('otState').textContent = `— ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} 남음`;
-      $('otText').textContent = '이 코드를 도와줄 사람에게 알려 주세요. 그 사람이 My Remote 클라이언트의 접속 키 칸에 이 코드를 넣으면 '
-        + (o.auto ? '허용 카드 없이 바로 연결됩니다.' : '이 창에 허용 카드가 뜹니다.');
+      $('otState').textContent = t('— {0} 남음', `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
+      $('otText').textContent = o.auto ? t('이 코드를 도와줄 사람에게 알려 주세요. 그 사람이 My Remote 클라이언트의 접속 키 칸에 이 코드를 넣으면 허용 카드 없이 바로 연결됩니다.')
+        : t('이 코드를 도와줄 사람에게 알려 주세요. 그 사람이 My Remote 클라이언트의 접속 키 칸에 이 코드를 넣으면 이 창에 허용 카드가 뜹니다.');
     }
   };
   tick();
   otTick = setInterval(tick, 1000);
 }
+relabel.add(() => showOneTime());
 
 // Who is on the other end, for the log and the access log. A device's name as the host window has it now
 // (a rename does not make a new subscription: devNames, filled by showDevices).
@@ -1254,7 +1300,7 @@ async function onMessage(m, route) {
       r.at = performance.now();
       route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: 'blocked' }).catch(() => {});
       const name = deviceName(route);
-      log(`차단한 기기의 접속을 거부했습니다: ${name}${r.n > 1 ? ` (지난 1분 ${r.n}번)` : ''}`);
+      log(r.n > 1 ? t('차단한 기기의 접속을 거부했습니다: {0} (지난 1분 {1}번)', whoText(name), r.n) : t('차단한 기기의 접속을 거부했습니다: {0}', whoText(name)));
       api.access({ ev: 'denied', via: 'device', dev: route.id, name, why: 'blocked' });
       r.n = 0;
     }
@@ -1269,10 +1315,10 @@ async function onMessage(m, route) {
       const fresh = m.have !== app.hash;
       // `sig`: the release's signature of the page (main.js pageSig), which the client app checks before it runs it.
       await route.send({ t: 'app', sid: m.sid, ts: Date.now(), hash: app.hash, html: fresh ? app.html : undefined, sig: app.sig || undefined });
-      log((fresh ? '클라이언트 화면을 최신 버전으로 전송했습니다' : '클라이언트 화면이 이미 최신입니다') + (route.kind === 'device' ? ` (${route.name})` : ''));
+      log((fresh ? t('클라이언트 화면을 최신 버전으로 전송했습니다') : t('클라이언트 화면이 이미 최신입니다')) + (route.kind === 'device' ? ` (${whoText(route.name)})` : ''));
     } catch (e) {
       // The loader says so and can be tried again. A session that is live has nothing to do with it.
-      log('클라이언트 화면 전송 실패: ' + e.message);
+      log(t('클라이언트 화면 전송 실패: {0}', e.message));
     }
   } else if (m.t === 'hello') {
     if (!firstTime(m)) return; // replay
@@ -1290,8 +1336,8 @@ async function onMessage(m, route) {
       route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: cyc }).catch(() => {});
       if (performance.now() - (cycleSaid.get(cyc) || -1e12) >= 60000) {
         cycleSaid.set(cyc, performance.now());
-        log(cyc === 'self' ? '이 PC의 클라이언트 앱이 이 PC 자신에 접속하려 해서 막았습니다 (자기 화면을 끝없이 비추고, 입력이 되돌아옵니다)'
-          : '이 PC가 지금 조종하고 있는 PC에서 거꾸로 이 PC에 접속하려 해서 막았습니다 (서로를 조종하면 입력이 두 PC 사이를 끝없이 오갑니다)');
+        log(cyc === 'self' ? t('이 PC의 클라이언트 앱이 이 PC 자신에 접속하려 해서 막았습니다 (자기 화면을 끝없이 비추고, 입력이 되돌아옵니다)')
+          : t('이 PC가 지금 조종하고 있는 PC에서 거꾸로 이 PC에 접속하려 해서 막았습니다 (서로를 조종하면 입력이 두 PC 사이를 끝없이 오갑니다)'));
         api.access({ ev: 'denied', via: route.kind === 'device' ? 'device' : route.kind === 'code' ? 'code' : 'key', dev: route.kind === 'device' ? route.id : undefined, name: whoOf(route, m.pair), why: cyc });
       }
       return;
@@ -1315,7 +1361,7 @@ async function onMessage(m, route) {
         showOneTime();
         m.allowed = 'auto';
         api.access({ ev: 'approved', via: 'code', name: '1회용 코드로 접속', how: 'auto' });
-        log('1회용 코드로 접속: 자동 허용이 켜져 있어 바로 연결합니다');
+        log(t('1회용 코드로 접속: 자동 허용이 켜져 있어 바로 연결합니다'));
       } else { ask(m, route, { otp: false, locked: false }); return; }
     } else if (route.kind === 'key') {
       // New devices confirmed here (see ask): a page allowed a moment ago may come again without asking.
@@ -1333,7 +1379,7 @@ async function onMessage(m, route) {
       }
     }
     try { await startSession(m, route); } catch (e) {
-      log('오류: ' + e.message);
+      log(t('오류: {0}', e.message));
       api.sourcesFailed(); // the monitors main keeps listed may be out of date: it asks Windows again next time
       // Only the session this hello started; a newer one may have taken its place meanwhile. No 'bye':
       // that would tell the client not to try again.
@@ -1354,13 +1400,13 @@ async function onMessage(m, route) {
     const reply = { t: 'otp', sid: m.sid, ts: Date.now(), ok: false, why: r.why, left: r.left };
     p.tried.set(code, reply);
     p.route.send(reply).catch(() => {});
-    if (r.why === 'locked') log(`${p.name}: 인증 앱 코드를 여러 번 틀려 코드 확인을 잠시 막았습니다. 이 창의 허용은 그대로 됩니다`);
+    if (r.why === 'locked') log(`${whoText(p.name)}: ${t('인증 앱 코드를 여러 번 틀려 코드 확인을 잠시 막았습니다. 이 창의 허용은 그대로 됩니다')}`);
   } else if (m.t === 'cancel' && pending && m.sid === pending.m.sid && route.key === pending.route.key) {
     // The client gave up waiting (its 취소), signed like its code: the next request need not wait for this one.
     const p = pending;
     if (!(await verifySig(p.m.bind, `cancel\n${m.sid}`, m.sig)) || pending !== p) return;
     endAsk();
-    log(`${p.name}: 요청을 취소했습니다`);
+    log(`${whoText(p.name)}: ${t('요청을 취소했습니다')}`);
   } else if (m.t === 'answer' && session && m.sid === session.sid && session.route.key === route.key && session.pc && session.pc.signalingState === 'have-local-offer' && !session.answered) {
     const s = session;
     // From the page that said hello (signed with its key), so that nobody else who holds the key and reads
@@ -1372,9 +1418,9 @@ async function onMessage(m, route) {
     s.answered = true;
     try {
       await s.pc.setRemoteDescription({ type: 'answer', sdp: hintBitrate(m.sdp, Math.round(cfg.startBitrateMbps * 1000), Math.round(cfg.minBitrateMbps * 1000), Math.round(cfg.maxTotalMbps * 1000)) });
-      log('answer 수신 — 연결 수립 중');
+      log(t('answer 수신 — 연결 수립 중'));
     } catch (e) {
-      log('오류: ' + e.message);
+      log(t('오류: {0}', e.message));
       if (session === s) teardown('오류', true);
     }
   }
@@ -1387,37 +1433,42 @@ async function onMessage(m, route) {
 // version is shown.
 // (showUpdate is a function of its own so that the self-test can show it made-up updates.)
 let updateLater = '', updateTold = false; // the version the person put off (until the host starts again); a going back, said once
+let lastUpdate = null; // what showUpdate showed last: shown again in a new language
+relabel.add(() => { if (lastUpdate) showUpdate(lastUpdate); });
 function showUpdate(u) {
   if (!u) return;
-  $('ver').textContent = 'v' + u.version + (u.installed ? '' : ' · 소스 폴더에서 실행 중');
+  lastUpdate = u;
+  $('ver').textContent = 'v' + u.version + (u.installed ? '' : ' · ' + t('소스 폴더에서 실행 중'));
   document.title = 'My Remote Host v' + u.version; // the window's title too
   // "업데이트 확인": the installed app with a feed (from a source folder updates come by git).
   $('updCheck').style.display = u.installed && u.state && u.state !== 'off' && u.state !== 'none' ? '' : 'none';
   $('updCheck').disabled = ['checking', 'downloading', 'ready'].includes(u.state);
   // "나가기": back to the start screen (two big buttons); the host keeps running. Not in the isolated runs.
   $('exitStart').style.display = u.startScreen ? '' : 'none';
-  $('ver').title = !u.installed ? '소스 폴더에서 실행 중입니다. 업데이트는 git pull과 설치 스크립트로 합니다.'
-    : u.error ? '업데이트를 확인하지 못했습니다: ' + u.error
-    : u.checkedAt ? '최신 버전입니다 · 확인 ' + new Date(u.checkedAt).toLocaleTimeString() : '';
+  $('ver').title = !u.installed ? t('소스 폴더에서 실행 중입니다. 업데이트는 git pull과 설치 스크립트로 합니다.')
+    : u.error ? t('업데이트를 확인하지 못했습니다: {0}', u.error)
+    : u.checkedAt ? t('최신 버전입니다 · 확인 {0}', new Date(u.checkedAt).toLocaleTimeString(t.lang)) : '';
   const a = u.available, card = $('upd');
-  if (!updateTold) for (const r of u.rolledBack || []) log(`버전 ${r.version}은 이 PC에서 시작하지 못해 이전 버전으로 되돌렸습니다 (${r.why})`);
+  if (!updateTold) for (const r of u.rolledBack || []) log(t('버전 {0}은 이 PC에서 시작하지 못해 이전 버전으로 되돌렸습니다 ({1})', r.version, r.why));
   updateTold = true;
   if (!a || (a.version === updateLater && !a.required && u.state === 'available')) { card.style.display = 'none'; return; }
   card.style.display = '';
   const pack = a.kind === 'package';
-  $('updTitle').textContent = a.required ? `중요 업데이트 ${a.version}` : `새 버전 ${a.version}이 있습니다`;
-  $('updText').textContent = u.state === 'downloading' ? `받는 중… ${Math.round((u.progress || 0) * 100)}%`
-    : u.state === 'ready' ? (a.required ? '설치했습니다. 원격 접속이 없을 때 호스트를 다시 시작합니다(늦어도 30분 뒤).' : '설치했습니다. 다시 시작합니다…')
-    : pack ? '이 버전은 새 설치 파일이 필요합니다. 내려받아 다시 설치해 주세요(접속 키와 설정은 그대로 남습니다).'
-    : a.required ? '이 버전의 심각한 문제를 고친 업데이트라 자동으로 설치합니다.' + (u.error ? ` (실패: ${u.error} — 다시 시도합니다)` : '')
-    : `현재 v${u.version} · ${(a.size / 1024 / 1024).toFixed(1)} MB` + (u.error ? ` · 실패: ${u.error}` : '');
+  $('updTitle').textContent = a.required ? t('중요 업데이트 {0}', a.version) : t('새 버전 {0}이 있습니다', a.version);
+  $('updText').textContent = u.state === 'downloading' ? t('받는 중… {0}%', Math.round((u.progress || 0) * 100))
+    : u.state === 'ready' ? (a.required ? t('설치했습니다. 원격 접속이 없을 때 호스트를 다시 시작합니다(늦어도 30분 뒤).') : t('설치했습니다. 다시 시작합니다…'))
+    : pack ? t('이 버전은 새 설치 파일이 필요합니다. 내려받아 다시 설치해 주세요(접속 키와 설정은 그대로 남습니다).')
+    : a.required ? t('이 버전의 심각한 문제를 고친 업데이트라 자동으로 설치합니다.') + (u.error ? ' ' + t('(실패: {0} — 다시 시도합니다)', u.error) : '')
+    : t('현재 v{0} · {1} MB', u.version, (a.size / 1024 / 1024).toFixed(1)) + (u.error ? ' · ' + t('실패: {0}', u.error) : '');
   const ul = $('updNotes');
   ul.textContent = '';
-  for (const line of (a.notes && a.notes.ko) || []) { const li = document.createElement('li'); li.textContent = line; ul.append(li); }
+  // In this language when the release has it (ko and en so far), else English, else Korean.
+  const notes = a.notes ? a.notes[t.lang] || a.notes.en || a.notes.ko : null;
+  for (const line of notes || []) { const li = document.createElement('li'); li.textContent = line; ul.append(li); }
   const busy = u.state === 'downloading' || u.state === 'ready';
   $('updGo').style.display = busy || (a.required && !pack) ? 'none' : '';
-  $('updGo').textContent = pack ? '내려받기 페이지 열기' : '지금 업데이트';
-  $('updGo').onclick = () => { if (pack) api.update.page(); else { if (session) log('업데이트를 설치하고 다시 시작합니다. 접속 중인 클라이언트는 잠시 뒤 다시 연결됩니다.'); api.update.install(); } };
+  $('updGo').textContent = pack ? t('내려받기 페이지 열기') : t('지금 업데이트');
+  $('updGo').onclick = () => { if (pack) api.update.page(); else { if (session) log(t('업데이트를 설치하고 다시 시작합니다. 접속 중인 클라이언트는 잠시 뒤 다시 연결됩니다.')); api.update.install(); } };
   $('updLater').style.display = busy || a.required ? 'none' : '';
   $('updLater').onclick = () => { updateLater = a.version; card.style.display = 'none'; };
 }
@@ -1426,7 +1477,7 @@ function showUpdate(u) {
 let updMsgTimer = 0;
 async function checkUpdate() {
   $('updCheck').disabled = true;
-  $('updMsg').textContent = '확인 중…';
+  $('updMsg').textContent = t('확인 중…');
   let u = null;
   try { u = await api.update.check(true); } catch {} // an update found is asked about in a dialog of main's
   updateChecked(u);
@@ -1436,15 +1487,15 @@ function updateChecked(u) {
   $('updCheck').disabled = false;
   updateLater = ''; // the person asked: one put off before is shown again
   if (u) showUpdate(u);
-  m.textContent = !u ? '확인하지 못했습니다' : u.available ? '' : u.error ? '확인하지 못했습니다: ' + u.error : '최신 버전입니다';
-  if (m.textContent) log('업데이트 확인: ' + m.textContent + (u && !u.available && !u.error ? ` (v${u.version})` : ''));
+  m.textContent = !u ? t('확인하지 못했습니다') : u.available ? '' : u.error ? t('확인하지 못했습니다: {0}', u.error) : t('최신 버전입니다');
+  if (m.textContent) log(t('업데이트 확인: {0}', m.textContent + (u && !u.available && !u.error ? ` (v${u.version})` : '')));
   clearTimeout(updMsgTimer);
   updMsgTimer = setTimeout(() => { m.textContent = ''; }, 20000);
 }
 function watchUpdates() {
   if (!api.update) return;
   $('updCheck').onclick = checkUpdate;
-  $('exitStart').onclick = () => api.startScreen().then((ok) => { if (!ok) log('처음 화면을 열지 못했습니다'); }, () => {});
+  $('exitStart').onclick = () => api.startScreen().then((ok) => { if (!ok) log(t('처음 화면을 열지 못했습니다')); }, () => {});
   api.update.status().then(showUpdate, () => {});
   api.update.onChange(showUpdate);
 }
@@ -1456,8 +1507,9 @@ const ASSIST_WHY = {
   remote: '원격 접속 중에는 할 수 없습니다. Windows가 이 PC 화면에 관리자 승인 창을 띄우는데, 그 창은 원격에서 누를 수 없습니다. 이 PC 앞에서 해 주세요',
 };
 function assistDone(what, r) {
-  if (r.ok) log(what === 'install' ? '잠금 화면 지원을 설치했습니다' : '잠금 화면 지원을 제거했습니다');
-  else log(`잠금 화면 지원 ${what === 'install' ? '설치' : '제거'}: ${ASSIST_WHY[r.why] || r.why}`);
+  const why = ASSIST_WHY[r.why] ? t(ASSIST_WHY[r.why]) : r.why;
+  if (r.ok) log(what === 'install' ? t('잠금 화면 지원을 설치했습니다') : t('잠금 화면 지원을 제거했습니다'));
+  else log(what === 'install' ? t('잠금 화면 지원 설치: {0}', why) : t('잠금 화면 지원 제거: {0}', why));
   showAssist(r.status);
 }
 // The offer at the host's first start (main.js): the card follows it.
@@ -1465,6 +1517,8 @@ if (api.assist && api.assist.onChanged) api.assist.onChanged((m) => {
   if (m && m.busy) api.assist.status().then((st) => showAssist({ ...st, busy: true }), () => {});
   else if (m && m.result) assistDone('install', m.result);
 });
+let lastAssist = null; // shown again in a new language as it was (a "busy" one too)
+relabel.add(() => { if (lastAssist) showAssist(lastAssist); });
 async function showAssist(st) {
   if (!api.assist) return;
   st = st || await api.assist.status().catch(() => null);
@@ -1481,10 +1535,11 @@ async function showAssist(st) {
   } else if (!st.current) { state = '업데이트 필요'; text = '이 버전의 호스트에 맞게 잠금 화면 지원을 바꿔야 합니다(Windows 확인 창이 뜹니다).'; go = '업데이트'; }
   else if (st.state !== 'running') { state = '멈춤'; text = '잠금 화면 지원 서비스가 멈춰 있습니다. 다시 설치하면 켜집니다.'; go = '다시 설치'; }
   else { state = '켜짐'; text = '이 PC가 잠겨 있어도 원격에서 잠금 화면을 보고 비밀번호를 입력할 수 있습니다. 관리자 권한 확인 창(UAC)은 원격에서 보기만 됩니다.'; }
-  $('assistState').textContent = '— ' + state;
-  $('assistText').textContent = text;
+  lastAssist = st;
+  $('assistState').textContent = '— ' + t(state);
+  $('assistText').textContent = t(text);
   $('assistGo').style.display = go && !st.busy ? '' : 'none';
-  $('assistGo').textContent = go;
+  $('assistGo').textContent = go ? t(go) : '';
   $('assistOff').style.display = installed && !st.busy ? '' : 'none';
   const act = async (what) => {
     showAssist({ ...st, busy: true });
@@ -1497,8 +1552,10 @@ async function showAssist(st) {
 
 // ---- client apps with a token of their own (host/devices.js), and the access log ---------------------
 const two = (n) => String(n).padStart(2, '0');
-const fmtTime = (t) => { if (!t) return ''; const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()} ${two(d.getHours())}:${two(d.getMinutes())}`; };
+// Month, day and time as this language writes them (11/20 09:41, 20.11. 09:41, 11月20日 09:41).
+const fmtTime = (ms) => { if (!ms) return ''; try { return new Date(ms).toLocaleString(t.lang, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${two(d.getHours())}:${two(d.getMinutes())}`; } };
 let devShowSeq = 0;
+relabel.add(() => showDevices());
 async function showDevices() {
   const my = ++devShowSeq;
   const r = await api.devices.list().catch(() => null);
@@ -1507,10 +1564,10 @@ async function showDevices() {
   for (const d of r.list) devNames.set(d.id, d.name || '이름 없는 기기');
   const box = $('devList');
   box.textContent = '';
-  $('devsNote').textContent = (r.list.length ? `— ${r.list.length}대` : '') + (r.note ? ' · 기기 목록 파일을 읽지 못했습니다 (원래 파일은 사본으로 남겨 두었습니다)' : '');
+  $('devsNote').textContent = (r.list.length ? t('— {0}대', r.list.length) : '') + (r.note ? ' · ' + t('기기 목록 파일을 읽지 못했습니다 (원래 파일은 사본으로 남겨 두었습니다)') : '');
   if (!r.list.length) {
     const p = document.createElement('small');
-    p.textContent = '아직 없습니다. 클라이언트 앱에서 접속 키로 한 번 접속하면 그 PC가 여기에 등록되고, 다음부터는 키 없이 접속합니다. 잃어버린 PC는 여기서 차단하거나 삭제하면 그 PC만 끊깁니다.';
+    p.textContent = t('아직 없습니다. 클라이언트 앱에서 접속 키로 한 번 접속하면 그 PC가 여기에 등록되고, 다음부터는 키 없이 접속합니다. 잃어버린 PC는 여기서 차단하거나 삭제하면 그 PC만 끊깁니다.');
     box.append(p);
     return;
   }
@@ -1520,21 +1577,21 @@ async function showDevices() {
     row.className = 'dev';
     row.dataset.id = d.id;
     const name = document.createElement('b');
-    name.textContent = d.name || '이름 없는 기기';
+    name.textContent = d.name || t('이름 없는 기기');
     const tag = document.createElement('span');
     tag.className = 'tag';
-    if (d.blocked) { tag.textContent = '차단됨'; tag.classList.add('bad'); } else if (d.id === live) { tag.textContent = '접속 중'; tag.classList.add('on'); } else tag.style.display = 'none';
+    if (d.blocked) { tag.textContent = t('차단됨'); tag.classList.add('bad'); } else if (d.id === live) { tag.textContent = t('접속 중'); tag.classList.add('on'); } else tag.style.display = 'none';
     const btns = document.createElement('span');
     btns.className = 'btns';
     const button = (text, fn) => { const b = document.createElement('button'); b.className = 'sub mini'; b.textContent = text; b.onclick = fn; btns.append(b); };
-    button('이름 바꾸기', () => renameDevice(d, name));
-    button(d.blocked ? '차단 해제' : '차단', () => api.devices.block(d.id, !d.blocked).then((ok) => { if (ok) log(`${d.name || '기기'}: ${d.blocked ? '차단을 풀었습니다' : '차단했습니다 — 이 기기는 더 이상 접속할 수 없습니다'}`); }));
-    button('삭제', () => api.devices.remove(d.id).then((ok) => { if (ok) log(`${d.name || '기기'}: 삭제했습니다`); }));
+    button(t('이름 바꾸기'), () => renameDevice(d, name));
+    button(d.blocked ? t('차단 해제') : t('차단'), () => api.devices.block(d.id, !d.blocked).then((ok) => { if (ok) log(`${d.name || t('기기')}: ${d.blocked ? t('차단을 풀었습니다') : t('차단했습니다 — 이 기기는 더 이상 접속할 수 없습니다')}`); }));
+    button(t('삭제'), () => api.devices.remove(d.id).then((ok) => { if (ok) log(`${d.name || t('기기')}: ${t('삭제했습니다')}`); }));
     const top = document.createElement('div');
     top.className = 'row';
     top.append(name, tag, btns);
     const meta = document.createElement('small');
-    meta.textContent = [d.osName, d.last ? `마지막 접속 ${fmtTime(d.last)}${d.lastIp ? ' (' + d.lastIp + ')' : ''}` : '키 없이 접속한 적 아직 없음', `등록 ${fmtTime(d.added)}`].filter(Boolean).join(' · ');
+    meta.textContent = [d.osName, d.last ? t('마지막 접속 {0}', fmtTime(d.last) + (d.lastIp ? ' (' + d.lastIp + ')' : '')) : t('키 없이 접속한 적 아직 없음'), t('등록 {0}', fmtTime(d.added))].filter(Boolean).join(' · ');
     row.append(top, meta);
     box.append(row);
   }
@@ -1558,51 +1615,59 @@ function renameDevice(d, el) {
   input.onblur = () => end(true);
 }
 // "접속 기록": what came to this host, the newest first (main.js keeps it in access.log, 90 days).
-const ACCESS_WHAT = { connect: '접속', end: '종료', denied: '거부', paired: '기기 등록', asked: '허용 요청', approved: '허용' };
+// (Words of their own, not the buttons' '허용'/'거부' or the tray's '종료': a translation reads them as what happened.)
+const ACCESS_WHAT = { connect: '접속', end: '접속 종료', denied: '거부됨', paired: '기기 등록', asked: '허용 요청', approved: '허용됨' };
 const ACCESS_WHY = { blocked: '차단된 기기', refused: '거부함', timeout: '2분 안에 허용하지 않음', busy: '요청이 겹치거나 너무 잦음', locked: '코드를 여러 번 틀림', self: '이 PC 자신에 접속', loop: '서로를 조종' };
 async function showAccess() {
   const box = $('accessList');
   if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+  await renderAccess();
+  box.style.display = '';
+}
+// The entries keep Korean words of ours (a reason, a name like 키로 접속): said in this language when shown.
+async function renderAccess() {
+  const box = $('accessList');
   const list = await api.accessLog().catch(() => []);
   box.textContent = '';
-  if (!list.length) { const p = document.createElement('small'); p.textContent = '기록이 없습니다.'; box.append(p); }
+  if (!list.length) { const p = document.createElement('small'); p.textContent = t('기록이 없습니다.'); box.append(p); }
   for (const e of list) {
-    const parts = [fmtTime(e.t), ACCESS_WHAT[e.ev] || e.ev, e.name || (e.via === 'device' ? '기기' : e.via === 'code' ? '1회용 코드' : '키로 접속')];
+    const parts = [fmtTime(e.t), ACCESS_WHAT[e.ev] ? t(ACCESS_WHAT[e.ev]) : e.ev, e.name ? whoText(e.name) : e.via === 'device' ? t('기기') : e.via === 'code' ? t('1회용 코드') : t('키로 접속')];
     if (e.ip) parts.push(e.ip);
     if (e.ev === 'end') {
-      parts.push(`${Math.max(1, Math.round((e.dur || 0) / 60))}분`);
-      if (e.in || e.out) parts.push(`파일 받음 ${e.in || 0} · 보냄 ${e.out || 0}`);
+      parts.push(t('{0}분', Math.max(1, Math.round((e.dur || 0) / 60))));
+      if (e.in || e.out) parts.push(t('파일 받음 {0} · 보냄 {1}', e.in || 0, e.out || 0));
     }
-    if (e.ev === 'denied') parts.push(ACCESS_WHY[e.why] || e.why || '');
-    if (e.ev === 'approved') parts.push(GATE_HOW[e.how] || e.how || '');
+    if (e.ev === 'denied') parts.push(ACCESS_WHY[e.why] ? t(ACCESS_WHY[e.why]) : e.why || '');
+    if (e.ev === 'approved') parts.push(GATE_HOW[e.how] ? t(GATE_HOW[e.how]) : e.how || '');
     const line = document.createElement('div');
     line.textContent = parts.filter(Boolean).join(' · ');
     box.append(line);
   }
-  box.style.display = '';
 }
+relabel.add(() => { if ($('accessList').style.display !== 'none') renderAccess(); });
 
 // ---- the settings: new devices confirmed, and the authenticator app (main.js 'gate', 'otp-*') ------------
 const GATE_WHY = { remote: '원격 접속 중에는 할 수 없습니다. 이 PC 앞에서 하세요(접속한 사람이 보안 설정을 풀 수 없게 막아 둔 것입니다)', none: '다시 시도하세요' };
+relabel.add(() => showGate());
 async function showGate(info) {
   info = info && 'confirmNew' in info ? info : await api.gate.info().catch(() => null);
   if (!info) return;
-  $('gateState').textContent = info.confirmNew ? '켜짐' : '꺼짐';
+  $('gateState').textContent = info.confirmNew ? t('켜짐') : t('꺼짐');
   $('gateState').className = info.confirmNew ? 'on' : 'off';
-  $('gateBtn').textContent = info.confirmNew ? '끄기' : '켜기';
-  $('otpState').textContent = info.otp ? (info.locked ? '켜짐 (코드를 여러 번 틀려 잠시 막힘)' : '켜짐') : '꺼짐';
+  $('gateBtn').textContent = info.confirmNew ? t('끄기') : t('켜기');
+  $('otpState').textContent = info.otp ? (info.locked ? t('켜짐 (코드를 여러 번 틀려 잠시 막힘)') : t('켜짐')) : t('꺼짐');
   $('otpState').className = info.otp ? 'on' : 'off';
-  $('otpBtn').textContent = info.otp ? '끄기' : '설정';
+  $('otpBtn').textContent = info.otp ? t('끄기') : t('설정');
   $('gateNote').textContent = !info.confirmNew
-    ? '꺼져 있으면 접속 키만 있으면 어느 기기든 접속합니다. 키가 샐 때를 대비해 켜 두기를 권합니다.'
-    : (info.firstFree ? '처음 접속하는 클라이언트 앱 하나는 묻지 않고 등록합니다. 그다음부터 새 기기는 이 창에서 허용해야 접속됩니다.'
-      : '등록되지 않은 기기(브라우저 포함)는 이 창에서 허용해야 접속됩니다. 이미 등록한 기기로 원격 접속해 이 창의 허용을 눌러도 됩니다.')
-      + (info.otp ? ' 휴대폰 인증 앱의 코드로도 허용됩니다.' : ' 아무도 이 PC 앞에 없을 때를 위해 휴대폰 인증 앱을 설정해 둘 수 있습니다(선택).');
+    ? t('꺼져 있으면 접속 키만 있으면 어느 기기든 접속합니다. 키가 샐 때를 대비해 켜 두기를 권합니다.')
+    : (info.firstFree ? t('처음 접속하는 클라이언트 앱 하나는 묻지 않고 등록합니다. 그다음부터 새 기기는 이 창에서 허용해야 접속됩니다.')
+      : t('등록되지 않은 기기(브라우저 포함)는 이 창에서 허용해야 접속됩니다. 이미 등록한 기기로 원격 접속해 이 창의 허용을 눌러도 됩니다.'))
+      + ' ' + (info.otp ? t('휴대폰 인증 앱의 코드로도 허용됩니다.') : t('아무도 이 PC 앞에 없을 때를 위해 휴대폰 인증 앱을 설정해 둘 수 있습니다(선택).'));
 }
 $('gateBtn').onclick = async () => {
   const info = await api.gate.info();
   const r = await api.gate.set(!info.confirmNew);
-  log(r.ok ? `새 기기 확인을 ${r.confirmNew ? '켰습니다' : '껐습니다'}` : '새 기기 확인: ' + (GATE_WHY[r.why] || r.why));
+  log(r.ok ? (r.confirmNew ? t('새 기기 확인을 켰습니다') : t('새 기기 확인을 껐습니다')) : t('새 기기 확인: {0}', GATE_WHY[r.why] ? t(GATE_WHY[r.why]) : r.why));
   showGate(r);
 };
 const otpForm = (on) => {
@@ -1613,13 +1678,13 @@ $('otpBtn').onclick = async () => {
   const info = await api.gate.info();
   if (info.otp) {
     const r = await api.otp.off();
-    log(r.ok ? '휴대폰 인증 앱을 껐습니다' : '휴대폰 인증 앱: ' + (GATE_WHY[r.why] || r.why));
+    log(r.ok ? t('휴대폰 인증 앱을 껐습니다') : t('휴대폰 인증 앱: {0}', GATE_WHY[r.why] ? t(GATE_WHY[r.why]) : r.why));
     showGate(r);
     return;
   }
   const r = await api.otp.begin();
-  if (!r.ok) { log('휴대폰 인증 앱: ' + (GATE_WHY[r.why] || r.why)); return; }
-  try { $('otpQr').innerHTML = QR.svg(r.uri, { scale: 4 }); } catch (e) { $('otpQr').textContent = ''; log('QR 코드를 만들지 못했습니다: 아래 키를 인증 앱에 직접 넣으세요'); } // our own markup: numbers only
+  if (!r.ok) { log(t('휴대폰 인증 앱: {0}', GATE_WHY[r.why] ? t(GATE_WHY[r.why]) : r.why)); return; }
+  try { $('otpQr').innerHTML = QR.svg(r.uri, { scale: 4 }); } catch (e) { $('otpQr').textContent = ''; log(t('QR 코드를 만들지 못했습니다: 아래 키를 인증 앱에 직접 넣으세요')); } // our own markup: numbers only
   $('otpSecret').textContent = r.secret.replace(/(.{4})/g, '$1 ').trim();
   $('otpMsg').textContent = '';
   otpForm(true);
@@ -1627,9 +1692,9 @@ $('otpBtn').onclick = async () => {
 };
 $('otpOk').onclick = async () => {
   const r = await api.otp.confirm($('otpCode').value.trim());
-  if (!r.ok) { $('otpMsg').textContent = r.why === 'code' ? '코드가 맞지 않습니다. 앱에 지금 보이는 6자리를 넣으세요.' : '설정하지 못했습니다: ' + (GATE_WHY[r.why] || r.why); return; }
+  if (!r.ok) { $('otpMsg').textContent = r.why === 'code' ? t('코드가 맞지 않습니다. 앱에 지금 보이는 6자리를 넣으세요.') : t('설정하지 못했습니다: {0}', GATE_WHY[r.why] ? t(GATE_WHY[r.why]) : r.why); return; }
   otpForm(false);
-  log('휴대폰 인증 앱을 설정했습니다. 휴대폰을 잃어버리면 등록한 다른 기기로 접속해 이 창에서 허용하거나, 이 PC 앞에서 다시 설정하세요');
+  log(t('휴대폰 인증 앱을 설정했습니다. 휴대폰을 잃어버리면 등록한 다른 기기로 접속해 이 창에서 허용하거나, 이 PC 앞에서 다시 설정하세요'));
   showGate(r);
 };
 $('otpCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('otpOk').click(); });
@@ -1644,26 +1709,27 @@ $('otpCancel').onclick = () => otpForm(false);
   showDevices();
   showGate();
   $('accessBtn').onclick = showAccess;
-  log('시그널링 서버: ' + cfg.server);
-  log('호스트 시작: ' + new Date().toLocaleString());
-  if (cfg.viewOnly) log('주의: 이 PC에서는 원격 입력을 넣을 수 없어 보기 전용으로 동작합니다 (' + cfg.viewOnly + ')');
-  if (cfg.updateNote) log('주의: ' + cfg.updateNote);
+  log(t('시그널링 서버: {0}', cfg.server));
+  log(t('호스트 시작: {0}', new Date().toLocaleString(t.lang)));
+  if (cfg.viewOnly) log(t('주의: 이 PC에서는 원격 입력을 넣을 수 없어 보기 전용으로 동작합니다 ({0})', cfg.viewOnly));
+  if (cfg.updateNote) log(t('주의: {0}', cfg.updateNote));
   watchUpdates();
   showAssist();
 
   let shown = false;
-  $('show').onclick = () => { shown = !shown; $('key').textContent = shown ? cfg.key : '••••••••••••••••••••••••'; $('show').textContent = shown ? '숨기기' : '표시'; };
-  $('copy').onclick = async () => { await api.copyKey(); log('접속 키를 클립보드에 복사했습니다'); };
+  $('show').onclick = () => { shown = !shown; $('key').textContent = shown ? cfg.key : '••••••••••••••••••••••••'; $('show').textContent = shown ? t('숨기기') : t('표시'); };
+  relabel.add(() => { $('show').textContent = shown ? t('숨기기') : t('표시'); });
+  $('copy').onclick = async () => { await api.copyKey(); log(t('접속 키를 클립보드에 복사했습니다')); };
   $('regen').onclick = () => api.regenKey();
   $('kick').onclick = () => teardown('사용자가 끊음');
   api.onKick(() => teardown('사용자가 끊음'));
-  $('otBtn').onclick = () => { makeOneTimeCode().catch((e) => log('1회용 코드를 만들지 못했습니다: ' + e.message)); };
+  $('otBtn').onclick = () => { makeOneTimeCode().catch((e) => log(t('1회용 코드를 만들지 못했습니다: {0}', e.message))); };
   $('otEnd').onclick = () => endOneTime('ended');
   $('otAuto').onclick = () => {
     const o = oneTime;
     if (!o || o.pk) return;
     o.auto = !o.auto;
-    log(o.auto ? '1회용 코드: 자동 허용을 켰습니다 — 코드를 넣은 사람은 허용 없이 바로 접속합니다' : '1회용 코드: 자동 허용을 껐습니다 — 들어오기 전에 이 창에서 허용해야 합니다');
+    log(o.auto ? t('1회용 코드: 자동 허용을 켰습니다 — 코드를 넣은 사람은 허용 없이 바로 접속합니다') : t('1회용 코드: 자동 허용을 껐습니다 — 들어오기 전에 이 창에서 허용해야 합니다'));
     showOneTime();
   };
   showOneTime();
@@ -1671,7 +1737,7 @@ $('otpCancel').onclick = () => otpForm(false);
   // client is told why its keys and clicks do nothing meanwhile.
   api.onInputStorm((o) => {
     const sec = Math.round((Number(o.ms) || 0) / 1000);
-    log(`같은 키나 클릭이 사람보다 빠르게 계속 들어와 입력을 ${sec}초 멈췄습니다 (이 PC를 이 PC에서 보거나, 두 PC가 서로를 조종하고 있지 않은지 확인하세요)`);
+    log(t('같은 키나 클릭이 사람보다 빠르게 계속 들어와 입력을 {0}초 멈췄습니다 (이 PC를 이 PC에서 보거나, 두 PC가 서로를 조종하고 있지 않은지 확인하세요)', sec));
     if (session) txTo(session, { t: 'storm', ms: Number(o.ms) || 0 });
   });
   api.onHostLock((on) => {
@@ -1679,7 +1745,7 @@ $('otpCancel').onclick = () => otpForm(false);
     if (screenGone.lock === on) return;
     screenGone.lock = on;
     if (!on) unlocked();
-    log(on ? '이 PC가 잠겼습니다' : '이 PC의 잠금이 풀렸습니다');
+    log(on ? t('이 PC가 잠겼습니다') : t('이 PC의 잠금이 풀렸습니다'));
     sendLock();
   });
   api.onDisplaysChanged(async () => {
@@ -1694,8 +1760,8 @@ $('otpCancel').onclick = () => otpForm(false);
       const [had, now] = await Promise.all([s.sourcesP, api.getSources()]).catch(() => []);
       if (session !== s || (had && now && JSON.stringify(had) === JSON.stringify(now))) return;
     }
-    log('호스트 모니터 구성 변경 감지 — 세션을 다시 협상합니다');
+    log(t('호스트 모니터 구성 변경 감지 — 세션을 다시 협상합니다'));
     renew(s, '모니터 구성 변경');
   });
-  $('export').onclick = async () => { const p = await api.exportClient(); if (p) log('클라이언트 파일 저장: ' + p); };
+  $('export').onclick = async () => { const p = await api.exportClient(); if (p) log(t('클라이언트 파일 저장: {0}', p)); };
 })();

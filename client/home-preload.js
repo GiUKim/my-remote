@@ -3,6 +3,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('mrHome', {
+  // The language (host/i18n.js, through client/main.js): get() -> { lang, strings } for this window's texts,
+  // set(code) -> the language then (this PC's choice, the host's too), onChange(f): f(code) when it changed anywhere.
+  i18nGet: () => ipcRenderer.sendSync('i18n:sync'),
+  i18nSet: (code) => ipcRenderer.invoke('i18n:set', String(code || '')),
+  onI18n: (f) => { ipcRenderer.on('i18n:changed', (_e, code) => { try { f(String(code || '')); } catch {} }); },
   info: () => ipcRenderer.invoke('home:info'),           // { version, store: 'os' | 'obscured' | 'none', rolledBack, updates }
   list: () => ipcRenderer.invoke('home:list'),           // { hosts: [{ id, name, pc, os, osName, monitors, addedAt, lastAt, open, connected }], note }
   add: (o) => ipcRenderer.invoke('home:add', o),         // { key, name } -> { ok, id, why }

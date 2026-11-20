@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>My Remote</title>
 <style>
-  html, body { height: 100%; margin: 0; background: #14171c; color: #e6e8eb; font: 14px/1.5 "Segoe UI", "Malgun Gothic", sans-serif; }
+  html, body { height: 100%; margin: 0; background: #14171c; color: #e6e8eb; font: 14px/1.5 var(--mr-font, "Segoe UI", sans-serif); overflow-wrap: anywhere; }
   body { display: flex; align-items: center; justify-content: center; }
   .box { width: min(460px, 90vw); background: #1d2229; border: 1px solid #2c333d; border-radius: 10px; padding: 22px; }
   input[type=password] { width: 100%; box-sizing: border-box; font: 14px Consolas, monospace; padding: 8px; border-radius: 6px; border: 1px solid #3a4350; background: #0e1014; color: #fff; margin: 8px 0; }
@@ -13,14 +13,16 @@
   button:disabled { opacity: .5; cursor: default; }
   #msg { color: #e0b341; min-height: 1.5em; margin-top: 8px; }
   small { color: #8b94a1; }
+  .lang { display: inline-flex; align-items: center; gap: 4px; color: #8b94a1; font-size: 12px; }
+  .lang select { font: inherit; font-size: 12.5px; background: #343c48; color: #fff; border: 0; border-radius: 5px; padding: 3px 6px; cursor: pointer; }
 </style>
 </head>
 <body>
 <div class="box">
-  <h2 style="margin:0 0 6px">My Remote</h2>
-  <small id="hint">호스트 프로그램의 접속 키, 또는 호스트에서 받은 1회용 코드를 입력하세요.</small>
-  <input id="key" type="password" placeholder="접속 키 또는 1회용 코드" autocomplete="off" spellcheck="false">
-  <div style="margin-top:12px"><button id="go">접속</button></div>
+  <div style="display:flex;align-items:center;gap:8px;margin:0 0 6px"><h2 style="margin:0;flex:1">My Remote</h2><label class="lang" title="Language"><span aria-hidden="true">🌐</span><select id="lang" aria-label="Language"></select></label></div>
+  <small id="hint" data-i18n>호스트 프로그램의 접속 키, 또는 호스트에서 받은 1회용 코드를 입력하세요.</small>
+  <input id="key" type="password" placeholder="접속 키 또는 1회용 코드" autocomplete="off" spellcheck="false" data-i18n-placeholder>
+  <div style="margin-top:12px"><button id="go" data-i18n>접속</button></div>
   <div id="msg"></div>
 </div>
 <script>
@@ -37,14 +39,36 @@
 // window.mrShell.bootDevice): the same exchange on the token's own topics (RD.DEVICE). A host refuses a
 // blocked token: { t: 'denied', sid, why }. From 0.9.0 the field also takes a one-time code the host window
 // made (RD.codeOf): the same exchange on the code's own topics (RD.deriveCode); the page gets the code as `key`.
+// The texts of this file and of the page are in every language (host/i18n.js and its catalogs, put in by
+// build-client.js from 0.9.6 on): this one is said in this PC's language, and the page gets its catalog
+// (__mrBoot.i18n), so that it speaks that language before the host has sent it anything.
 // Everything is wrapped in a function so nothing here collides with the page it loads.
 (() => {
 /*__SIGNAL_JS__*/
+/*__I18N_JS__*/
 const SERVER = '__SERVER__';
 const $ = (id) => document.getElementById(id);
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch {} },
+};
+const I18N = window.MRI18N;
+const CATALOG = /*__I18N_CATALOG__*/null || { page: null, loader: {} };
+// This PC's language: the client app's, else what this browser keeps (mr_lang, the page uses it too), else the browser's.
+const langNow = () => {
+  try { if (window.mrShell && typeof window.mrShell.lang === 'function') { const l = I18N.normalize(window.mrShell.lang()); if (l) return l; } } catch {}
+  return I18N.normalize(store.get('mr_lang')) || I18N.pick(navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language]);
+};
+let tl = I18N.translator('ko');
+const useLang = (l) => { tl = I18N.translator(l, I18N.table(CATALOG.loader, l)); I18N.apply(document, tl); I18N.fillSelect($('lang'), l); };
+I18N.fonts(document);
+useLang(langNow());
+$('lang').onchange = () => {
+  const l = I18N.normalize($('lang').value);
+  if (!l) return;
+  store.set('mr_lang', l);
+  try { if (window.mrShell && typeof window.mrShell.setLang === 'function') window.mrShell.setLang(l).catch(() => {}); } catch {}
+  useLang(l);
 };
 const preset = location.hash.slice(1) || '__PRESET__';
 const params = new URLSearchParams(preset);
@@ -59,7 +83,7 @@ async function launch(html, key, updated, sig) {
   let signed;
   if (app) { try { signed = (await app.pageCheck({ statement: sig && sig.statement, sig: sig && sig.sig, sha256: await digest(html) })) === true; } catch { signed = false; } }
   // Replace this document with the client page. The window object is kept, so the page can read __mrBoot.
-  window.__mrBoot = { key: device ? '' : key, device: device || undefined, remember: false, preset, updated, signed };
+  window.__mrBoot = { key: device ? '' : key, device: device || undefined, remember: false, preset, updated, signed, i18n: CATALOG.page || undefined };
   document.open();
   document.write(html);
   document.close();
@@ -83,13 +107,13 @@ async function go(fresh) {
   // The field takes an access key or a one-time code the host window made (signal.js codeOf; from 0.9.0).
   const code = device ? '' : RD.codeOf(key);
   let keys;
-  try { keys = device ? await RD.derive(device.secret, RD.DEVICE) : code ? await RD.deriveCode(code) : await RD.derive(key); } catch (e) { fail(/형식/.test(e.message) ? '접속 키나 1회용 코드의 형식이 올바르지 않습니다' : '오류: ' + e.message); return; }
+  try { keys = device ? await RD.derive(device.secret, RD.DEVICE) : code ? await RD.deriveCode(code) : await RD.derive(key); } catch (e) { fail(/형식/.test(e.message) ? tl('접속 키나 1회용 코드의 형식이 올바르지 않습니다') : tl('오류: {0}', e.message)); return; }
   const cached = fresh ? null : store.get('mr_app_html');
   const have = cached ? store.get('mr_app_hash') || '' : '';
   const sid = RD.rand(16);
   let done = false, chan = null;
   try {
-    msg('호스트에 연결하는 중…');
+    msg(tl('호스트에 연결하는 중…'));
     chan = RD.channel({
       server: SERVER, subTopic: keys.topicClient, pubTopic: keys.topicHost, rxKey: keys.h2c, txKey: keys.c2h,
       onMessage: async (m) => {
@@ -97,7 +121,7 @@ async function go(fresh) {
         if (m.t === 'denied') {
           done = true;
           chan.close();
-          fail(m.why === 'blocked' ? '이 PC는 호스트에서 차단되었습니다. 호스트 PC의 "접속한 기기"에서 차단을 풀 수 있습니다.' : '호스트가 접속을 거부했습니다.');
+          fail(m.why === 'blocked' ? tl('이 PC는 호스트에서 차단되었습니다. 호스트 PC의 "접속한 기기"에서 차단을 풀 수 있습니다.') : tl('호스트가 접속을 거부했습니다.'));
           return;
         }
         if (m.t !== 'app') return;
@@ -117,24 +141,24 @@ async function go(fresh) {
           if (same) launch(cached, key, false, sig);
           else { fail(''); go(true); }
         } else {
-          fail('호스트에서 클라이언트 화면을 받지 못했습니다. 다시 시도해 주세요.');
+          fail(tl('호스트에서 클라이언트 화면을 받지 못했습니다. 다시 시도해 주세요.'));
         }
       },
     });
-    await Promise.race([chan.ready, new Promise((_, rej) => setTimeout(() => rej(new Error('중개 서버에 연결할 수 없습니다')), 10000))]);
+    await Promise.race([chan.ready, new Promise((_, rej) => setTimeout(() => rej(new Error(tl('중개 서버에 연결할 수 없습니다'))), 10000))]);
     await chan.send({ t: 'ver', sid, ts: Date.now(), have });
     setTimeout(() => {
       if (done) return;
       done = true;
       chan.close();
-      fail(device ? '호스트가 응답하지 않습니다. 호스트가 꺼져 있거나, 호스트에서 이 PC의 등록을 지웠을 수 있습니다. 지웠다면 PC 목록의 "키 바꾸기"로 접속 키를 다시 넣으면 다시 등록됩니다.'
-        : code ? '응답이 없습니다. 1회용 코드가 틀렸거나, 만료되었거나(10분), 이미 쓰였을 수 있습니다. 호스트 PC에서 새 코드를 받아 다시 넣어 보세요.'
-        : '호스트가 응답하지 않습니다. 호스트 프로그램이 켜져 있는지와 접속 키를 확인하세요.');
+      fail(device ? tl('호스트가 응답하지 않습니다. 호스트가 꺼져 있거나, 호스트에서 이 PC의 등록을 지웠을 수 있습니다. 지웠다면 PC 목록의 "키 바꾸기"로 접속 키를 다시 넣으면 다시 등록됩니다.')
+        : code ? tl('응답이 없습니다. 1회용 코드가 틀렸거나, 만료되었거나(10분), 이미 쓰였을 수 있습니다. 호스트 PC에서 새 코드를 받아 다시 넣어 보세요.')
+        : tl('호스트가 응답하지 않습니다. 호스트 프로그램이 켜져 있는지와 접속 키를 확인하세요.'));
     }, 15000);
   } catch (e) {
     done = true;
     if (chan) chan.close();
-    fail('오류: ' + e.message);
+    fail(tl('오류: {0}', e.message));
   }
 }
 
@@ -150,9 +174,9 @@ if (shell) {
   shell.bootDevice().then((d) => {
     if (!d || typeof d.secret !== 'string') { if (params.has('auto') && $('key').value) go(); return; }
     device = { id: String(d.id || ''), secret: d.secret, server: SERVER }; // the relay this loader is built for, always
-    $('hint').textContent = '이 PC는 호스트에 기기로 등록되어 있어 키 없이 접속합니다.';
+    $('hint').textContent = tl('이 PC는 호스트에 기기로 등록되어 있어 키 없이 접속합니다.');
     $('key').style.display = 'none';
-    $('go').textContent = '다시 연결';
+    $('go').textContent = tl('다시 연결');
     go();
   }, () => { if (params.has('auto') && $('key').value) go(); });
 } else if (params.has('auto') && $('key').value) go();

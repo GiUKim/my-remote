@@ -119,6 +119,10 @@ sudo chown root:root ~/MyRemote/chrome-sandbox && sudo chmod 4755 ~/MyRemote/chr
   </tr>
 </table>
 
+**🌐 12개 언어**: 한국어, English, 日本語, 简体中文, 繁體中文, Español, Français, Deutsch, Português (Brasil), Русский, Tiếng Việt, Bahasa Indonesia.
+처음에는 PC의 언어를 따르고, 처음 화면·호스트 창·PC 목록·원격 화면 툴바의 🌐 칸 어디에서 바꿔도 그 PC의 앱 전체에 적용됩니다.
+번역의 원칙과 용어는 [docs/i18n.md](docs/i18n.md)에 있습니다. 어색한 표현은 이슈로 알려 주세요.
+
 ## ⌨️ 단축키
 
 | | 키 | 동작 |

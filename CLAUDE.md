@@ -1078,6 +1078,20 @@ the client app instead).
   only remembered, never sent (on a Mac the change counter changes on every reading, so text is
   compared), and readings never overlap on either side. Host files fetched onto the client's clipboard
   and pasted back into the picture are not sent back: the host's own Ctrl+V pastes its originals.
+- **Languages** (2026-11-20, the user's wish; read [docs/i18n.md](docs/i18n.md)): 12 languages, one setting per
+  PC (`<appData>/my-remote/settings.json`, `host/settings.js`) that the start screen, the host window, the PC list
+  and the toolbar's 🌐 all change, each program following the others' changes. The Korean text in the code is the
+  key: `t('키 복사')` (`tr` in the page, `tl` in the loader, `T` in `client/shell.js`), catalogs in `host/i18n/`,
+  fallback English then Korean. Rules: never build a sentence from pieces (`t('… {0} …', x)`); a new or changed
+  Korean text needs its entry in every language (`node release/i18n-sources.js --missing`), and
+  `release/test-i18n.js` (CI) fails otherwise, also when a button quoted in a sentence is not that button's own
+  translation; the same Korean word used for two meanings needs two sources (the access log's `접속 종료`/`허용됨`/
+  `거부됨` against the buttons' `종료`/`허용`/`거부`). Isolated runs start in Korean (their checks read Korean)
+  unless `MY_REMOTE_LANG` is set; a person changing the language of a test run's window fails those checks (seen
+  once). The client page carries no catalog (the loader's 40-chunk reply): the loader brings it, else the host
+  sends the page's texts on request (`lang`/`strings`), kept per page hash. The picker is a hidden `<select>` shown
+  as a button with SVG flags (Windows draws flag emoji as letters; `I18N.picker`); its keys stay in the page
+  (`local()`). The 진단 report is English for every language but Korean (`page-report.json`).
 - **Phones and tablets** (`TOUCH`: `(pointer: coarse)`, or `#touch` for tests; `attachTouch`). A
   finger's pointer events are taken before the mouse handling (capture listeners at the target,
   `stopImmediatePropagation`): a tap clicks, a long press (550 ms) clicks the right button, holding
@@ -1430,7 +1444,7 @@ that asks host or client and the shortcuts in the real Start menu, the client ap
 Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하는 벤치마크, 버그를 잡는 CI/CD"):
 
 - **`.github/workflows/ci.yml`** on every push to `main`, every pull request, by hand and weekly:
-  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-devices.js`, `test-qr.js`, `test-totp.js`, `test-pagecheck.js`, `test-appsync.js`, `test-shellswap.js` with sh, `test-watchdog.js`), `native` (`release/ci-native.js`:
+  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-devices.js`, `test-qr.js`, `test-totp.js`, `test-pagecheck.js`, `test-appsync.js`, `test-shellswap.js` with sh, `test-watchdog.js`, `test-cycle.js`, `test-keylock.js`, `test-i18n.js`), `native` (`release/ci-native.js`:
   every committed binary rebuilt from `native/` with Ubuntu 22.04's mingw-w64 and compared byte for byte),
   `Windows` (`test-assist.js`, `test-shellswap.js` with PowerShell, `test-watchdog.js`, the self-test with `--client-app-check` (from 2026-11-16: device tokens, and safeStorage's key that only a normal quit writes, are Windows matters), `test-app.js --packaged`), `Linux X11` (the self-test with
   `--input-check --clip-check --client-app-check` under Xvfb, `test-app.js --packaged`) and the `performance
@@ -1494,6 +1508,7 @@ Run from `host/` with Electron's env var cleared.
 | `electron . --selftest --shell-check` | Same, plus the client app's one-click layout on the real screens. Fullscreen windows cover every monitor for a few seconds, so ask the user first |
 | `electron . --selftest --dump-phone=<file.png>` | Pictures of the phone layout: client windows of a phone's size (915x412 and 412x915, `#touch`) with the key row open, written as `<file>-landscape.png` and `<file>-portrait.png`. About 30 s, opens no window |
 | `electron . --selftest --dump-panel=<file.png>` | Quick look at the arrangement panel: connects, draws the panel as if the client had two screens, writes pictures (`<file>.png`, `-ctrl-drag`, `-swap-drag`, `-together`) and exits. About 20 s, opens no window |
+| `electron . --selftest --dump-lang=<folder>` | The whole self-test, and its language check writes pictures of the toolbar, the shortcuts and diagnostics dialogs and the host window in every language into `<folder>` (`page-bar-de.png`, `host-ru.png`, ...), for a look at what a longer language does to the layout |
 | `node native/build.js user@host[:folder]` | Builds the native modules on a Linux machine with mingw-w64: `host/bin/capture.dll` + `capture.dll.json` (commit them with the source), `tools/native/capprobe.dll`. After a change in `native/` |
 | `npm run bench -- --native-probe --capture-probe ...` | Bench with a native observer of the same display: reports when the picture was on the host's own screen and how long after that the capturer in use had it. Needs `tools/native/capprobe.dll` |
 | `electron . --selftest --dragout-check` | Only real drags out of a real Explorer window this check opens on a temp folder (`dragcheck.js`): A straight on the host, B and C through a client window running the real page in the client app's shell (held outside; let go at once, before Explorer started its drag). INJECTS INPUT for about half a minute, so only with the user's agreement; skipped when the clipboard holds more than text, which is put back |
@@ -1515,6 +1530,8 @@ Run from `host/` with Electron's env var cleared.
 | `node release/test-assist.js` | The host's side of the Windows assist service (`host/assist.js`) against a fake service and helper on test pipes: protocol and version, the pipe-server session checks, input routing per state and its encoding, pictures in pieces, Ctrl+Alt+Del, reconnecting, installing refused during a remote session, the first-start offer. Windows only (skips elsewhere); no input reaches the PC (the sink is recorded, never installed) and nothing runs elevated (`T.elevate`). A few seconds |
 | `host\bin\winassist.exe install`, `uninstall`, `status`, `grab <file.bmp>`, `grabmon <prefix>` | The assist service itself: install/uninstall need an elevated prompt (the host window's card does this through UAC). `grab` writes the current input desktop to a BMP (a secure one only when run as LocalSystem); `grabmon` every monitor as the helper sends them (`<prefix>-<n>.bmp`, rectangles printed). Both are pictures of the person's screen: delete them after looking |
 | `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept, device tokens (kept, the key let go only for the token that worked, a key given again replaces the token). A second |
+| `node release/test-i18n.js` | The translations (every text of the code in every language, no Korean left, holes, tags, plural forms, French spacing, a quoted button name read as that button), the translator, the PC's language setting. Seconds, no Electron |
+| `node release/i18n-sources.js [surface] [--missing]` | The Korean texts each part of the app shows, read from the code; `--missing` lists the ones a catalog lacks (host, page, client, loader) |
 | `node release/test-devices.js` | The host's device tokens (`host/devices.js`) and access log (`host/accesslog.js`) in plain Node: tokens never as text, the same app pairing again, blocking, removal, the limit, a file that cannot be read never written over, a broken file kept; log entries with known fields only, kept 90 days and under 2 MB. A second |
 | `node release/test-pagecheck.js` | The client app's check of a host's page (`client/pagecheck.js`): signed by a release key or not, a changed statement, another page, a manifest that is no statement; and that `release/build.js` signs the page a host builds for the default relay (a real build with a test key). Seconds |
 | `node release/test-qr.js`, `node release/test-totp.js` | The QR codes (`host/qr.js`) against the standard's worked example, format and version information and the layout; the one-time codes (`host/totp.js`) against RFC 6238's test values, base32, recovery codes. For the opt-in authenticator app of "Devices". A second |
@@ -1588,6 +1605,8 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/cursor-guard.js` | Separate small process that restores the cursors if the host process dies (Windows) |
 | `host/inputguard.js`, `host/framecheck.js` | A worker thread of the host's main process that frees the input thread from a window loop (Windows; see "A press on the host's own window frame"); the opt-in real-input check `--frame-check` |
 | `host/signal.js` | Shared by host and client: key derivation, encrypted signaling channel |
+| `host/i18n.js`, `host/i18n/*.json`, `host/settings.js` | The languages: the translator, the markup relabeller, the fonts per script, the flag picker (one file for the main processes, the host window, and inlined into the page and the loader); the catalogs; the PC's one setting (see `docs/i18n.md`) |
+| `release/i18n-sources.js`, `release/test-i18n.js` | The Korean texts read from the code (`--missing` lists what a catalog lacks); the test of the catalogs and the translator |
 | `host/loader.template.html` | Loader source: asks for the key, fetches the client page from the host, runs it |
 | `host/client.template.html` | The client page itself. Built in memory at host start and sent to loaders; never shipped as a file |
 | `host/build-client.js` | Builds both pages (`build`, `buildLoader`); the CLI writes the loader file |

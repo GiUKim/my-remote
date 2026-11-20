@@ -5,10 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, interactive-widget=resizes-content">
 <title>My Remote</title>
 <style>
-  html, body { height: 100%; margin: 0; background: #000; color: #e6e8eb; font: 14px/1.5 "Segoe UI", "Malgun Gothic", sans-serif; overflow: hidden; user-select: none; }
+  html, body { height: 100%; margin: 0; background: #000; color: #e6e8eb; font: 14px/1.5 var(--mr-font); overflow: hidden; user-select: none; }
   input, textarea { user-select: text; }
   video { -webkit-user-drag: none; }
-  #bar { height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: #1d2229; border-bottom: 1px solid #2c333d; box-sizing: border-box; white-space: nowrap; overflow: hidden; }
+  /* One line. What does not fit (a long language, a narrow window) is scrolled to, never cut off: the wheel moves it
+     sideways (see the wiring below), the scroll bar stays hidden. */
+  #bar { height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: #1d2229; border-bottom: 1px solid #2c333d; box-sizing: border-box; white-space: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  #bar::-webkit-scrollbar { display: none; }
+  #bar > * { flex: none; }
+  .langPick { display: inline-flex; align-items: center; gap: 3px; color: #8b94a1; }
   :fullscreen #bar { display: none; }
   /* fullscreen: the bar over the picture, in the middle, while the pointer rests at the top (attachPeek) */
   :fullscreen #bar.peek { display: flex; position: fixed; top: 0; left: 50%; transform: translateX(-50%); width: max-content; max-width: 98vw; z-index: 6; border: 1px solid #2c333d; border-top: 0; border-radius: 0 0 8px 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .55); }
@@ -91,119 +96,121 @@
 <body>
 <div id="bar">
   <span id="mons"></span>
-  <button id="kbdBtn" class="touchOnly" title="휴대폰 키보드로 입력합니다 (한글 포함)">⌨ 키보드</button>
-  <button id="keyBtn" class="touchOnly" title="Esc, Tab, Ctrl, 방향키 같은 특수 키">특수키</button>
-  <button id="zoomBtn" class="touchOnly" style="display:none" title="확대한 화면을 원래 크기로">확대 해제</button>
-  <button id="spread" class="deskOnly" title="이 PC의 모니터마다 호스트 모니터를 하나씩, 좌우 순서를 맞춰 펼칩니다">모니터에 펼치기</button>
-  <button id="arrBtn" class="deskOnly" title="어느 호스트 모니터를 이 PC의 어느 모니터에 띄울지 끌어다 놓아 정합니다">모니터 배치</button>
-  <button id="fs" title="전체화면에서는 Alt+Tab, Win 키 등도 원격으로 전달됩니다">전체화면</button>
-  <select id="fit" class="deskOnly" title="이 창의 표시 방식">
-    <option value="fit">화면에 맞춤</option>
-    <option value="1:1">원본 크기 (1:1)</option>
+  <button id="kbdBtn" class="touchOnly" title="휴대폰 키보드로 입력합니다 (한글 포함)" data-i18n-title data-i18n>⌨ 키보드</button>
+  <button id="keyBtn" class="touchOnly" title="Esc, Tab, Ctrl, 방향키 같은 특수 키" data-i18n-title data-i18n>특수키</button>
+  <button id="zoomBtn" class="touchOnly" style="display:none" title="확대한 화면을 원래 크기로" data-i18n-title data-i18n>확대 해제</button>
+  <button id="spread" class="deskOnly" title="이 PC의 모니터마다 호스트 모니터를 하나씩, 좌우 순서를 맞춰 펼칩니다" data-i18n-title data-i18n>모니터에 펼치기</button>
+  <button id="arrBtn" class="deskOnly" title="어느 호스트 모니터를 이 PC의 어느 모니터에 띄울지 끌어다 놓아 정합니다" data-i18n-title data-i18n>모니터 배치</button>
+  <button id="fs" title="전체화면에서는 Alt+Tab, Win 키 등도 원격으로 전달됩니다" data-i18n-title data-i18n>전체화면</button>
+  <select id="fit" class="deskOnly" title="이 창의 표시 방식" data-i18n-title>
+    <option value="fit" data-i18n>화면에 맞춤</option>
+    <option value="1:1" data-i18n>원본 크기 (1:1)</option>
   </select>
-  <select id="mode" class="deskOnly" title="네트워크가 부족할 때 무엇을 지킬지">
-    <option value="sharp">선명도 우선 (문서·코드)</option>
-    <option value="smooth">부드러움 우선 (영상·스크롤)</option>
+  <select id="mode" class="deskOnly" title="네트워크가 부족할 때 무엇을 지킬지" data-i18n-title>
+    <option value="sharp" data-i18n>선명도 우선 (문서·코드)</option>
+    <option value="smooth" data-i18n>부드러움 우선 (영상·스크롤)</option>
   </select>
-  <button id="snd" style="display:none">소리 켜짐</button>
-  <button id="keys" class="deskOnly">단축키</button>
-  <button id="diagBtn" title="느리거나 끊길 때 원인을 찾기 위한 측정값">진단</button>
-  <button id="bye">연결 끊기</button>
-  <button id="homeBtn" style="display:none" title="등록한 PC 목록을 엽니다. 다른 PC도 동시에 열 수 있습니다">PC 목록</button>
-  <b id="ro" style="display:none;color:#e0b341">보기 전용 (조작 불가)</b>
+  <button id="snd" style="display:none" data-i18n>소리 켜짐</button>
+  <button id="keys" class="deskOnly" data-i18n>단축키</button>
+  <button id="diagBtn" title="느리거나 끊길 때 원인을 찾기 위한 측정값" data-i18n-title data-i18n>진단</button>
+  <label class="langPick" title="Language"><span aria-hidden="true">🌐</span><select id="lang" aria-label="Language"></select></label>
+  <button id="bye" data-i18n>연결 끊기</button>
+  <button id="homeBtn" style="display:none" title="등록한 PC 목록을 엽니다. 다른 PC도 동시에 열 수 있습니다" data-i18n-title data-i18n>PC 목록</button>
+  <b id="ro" style="display:none;color:#e0b341" data-i18n>보기 전용 (조작 불가)</b>
   <span id="stats" class="deskOnly"></span>
 </div>
-<div id="stage"><div id="empty">이 창에 표시할 호스트 모니터가 없습니다.<br><b>모니터 배치</b>에서 모니터를 끌어다 놓거나 위쪽의 모니터 버튼을 누르세요.</div><div id="ov"></div></div>
+<div id="stage"><div id="empty" data-i18n-html>이 창에 표시할 호스트 모니터가 없습니다.<br><b>모니터 배치</b>에서 모니터를 끌어다 놓거나 위쪽의 모니터 버튼을 누르세요.</div><div id="ov"></div></div>
 <div id="keyrow"></div>
-<textarea id="kbd" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="원격 입력"></textarea>
+<textarea id="kbd" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="원격 입력" data-i18n-aria></textarea>
 <audio id="audio" autoplay></audio>
 <div id="help"><div class="box">
-  <h3 style="margin:0 0 10px">단축키</h3>
+  <h3 style="margin:0 0 10px" data-i18n>단축키</h3>
   <table>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd> <kbd>→</kbd></td><td>이 창에 보이는 모니터를 이전/다음으로</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd></td><td>해당 번호 모니터로</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>↑</kbd> 또는 <kbd>0</kbd></td><td>전체 보기 (모든 모니터를 실제 배치대로)</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>↓</kbd></td><td>화면에 맞춤 ↔ 원본 크기(1:1)</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Enter</kbd></td><td>전체화면 켜기/끄기</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd> <kbd>→</kbd></td><td data-i18n>이 창에 보이는 모니터를 이전/다음으로</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd></td><td data-i18n>해당 번호 모니터로</td></tr>
+    <tr><td data-i18n-html><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>↑</kbd> 또는 <kbd>0</kbd></td><td data-i18n>전체 보기 (모든 모니터를 실제 배치대로)</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>↓</kbd></td><td data-i18n>화면에 맞춤 ↔ 원본 크기(1:1)</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Enter</kbd></td><td data-i18n>전체화면 켜기/끄기</td></tr>
   </table>
-  <p><small>이 조합들은 호스트로 전달되지 않습니다. 호스트의 프로그램에서 같은 조합을 써야 하면 아래를 끄세요.</small></p>
-  <label><input id="hk" type="checkbox"> 단축키 사용</label>
+  <p><small data-i18n>이 조합들은 호스트로 전달되지 않습니다. 호스트의 프로그램에서 같은 조합을 써야 하면 아래를 끄세요.</small></p>
+  <label><input id="hk" type="checkbox"> <span data-i18n>단축키 사용</span></label>
   <table style="margin-top:10px">
-    <tr><td>끌어서 창 밖에 놓기</td><td>호스트에서 끌던 파일·글자를 이 PC의 놓은 자리로 가져옵니다 (창 모드)</td></tr>
-    <tr><td><kbd>Ctrl</kbd> 누른 채 끌어서 나가기</td><td>기다리지 않고 바로 이 PC 쪽으로 넘어갑니다. 끌던 것이 없으면 호스트에서는 버튼만 놓습니다</td></tr>
-    <tr><td>이 PC의 파일을 원격 화면에 놓기</td><td>호스트에서 그 자리에 끌어다 놓은 것처럼 놓입니다</td></tr>
+    <tr><td data-i18n>끌어서 창 밖에 놓기</td><td data-i18n>호스트에서 끌던 파일·글자를 이 PC의 놓은 자리로 가져옵니다 (창 모드)</td></tr>
+    <tr><td data-i18n-html><kbd>Ctrl</kbd> 누른 채 끌어서 나가기</td><td data-i18n>기다리지 않고 바로 이 PC 쪽으로 넘어갑니다. 끌던 것이 없으면 호스트에서는 버튼만 놓습니다</td></tr>
+    <tr><td data-i18n>이 PC의 파일을 원격 화면에 놓기</td><td data-i18n>호스트에서 그 자리에 끌어다 놓은 것처럼 놓입니다</td></tr>
   </table>
-  <div style="margin-top:12px"><button id="helpClose">닫기</button></div>
+  <div style="margin-top:12px"><button id="helpClose" data-i18n>닫기</button></div>
 </div></div>
 <div id="diag"><div class="box" style="width:min(640px,92vw)">
-  <h3 style="margin:0 0 8px">진단</h3>
+  <h3 style="margin:0 0 8px" data-i18n>진단</h3>
   <textarea id="diagText" readonly spellcheck="false"></textarea>
   <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <button id="diagCopy">복사</button>
-    <button id="diagRefresh" style="background:#343c48">새로 고침</button>
-    <button id="diagClose" style="background:#343c48">닫기</button>
-    <span style="margin-left:auto"><small>영상 코덱</small>
+    <button id="diagCopy" data-i18n>복사</button>
+    <button id="diagRefresh" style="background:#343c48" data-i18n>새로 고침</button>
+    <button id="diagClose" style="background:#343c48" data-i18n>닫기</button>
+    <span style="margin-left:auto"><small data-i18n>영상 코덱</small>
       <select id="codec">
-        <option value="">호스트 기본값</option>
-        <option value="H264">H.264 (그래픽카드 가속)</option>
-        <option value="H264HQ">H.264 최고 화질 (매우 빠른 회선 전용)</option>
+        <option value="" data-i18n>호스트 기본값</option>
+        <option value="H264" data-i18n>H.264 (그래픽카드 가속)</option>
+        <option value="H264HQ" data-i18n>H.264 최고 화질 (매우 빠른 회선 전용)</option>
         <option value="VP9">VP9</option>
-        <option value="AV1">AV1 (글자가 선명, 호스트 CPU 사용)</option>
+        <option value="AV1" data-i18n>AV1 (글자가 선명, 호스트 CPU 사용)</option>
       </select></span>
   </div>
-  <p style="margin:8px 0 0"><small>코덱을 바꾸면 즉시 다시 연결합니다. 끊김이 있을 때 다른 코덱과 비교해 보세요. "최고 화질"은 화면이 바뀐 순간부터 원본과 구별하기 어렵지만 수십 Mbps를 쓰므로, 양쪽 회선이 모두 빠를 때만 좋습니다. 느린 회선에서는 오히려 끊깁니다.</small></p>
+  <p style="margin:8px 0 0"><small data-i18n>코덱을 바꾸면 즉시 다시 연결합니다. 끊김이 있을 때 다른 코덱과 비교해 보세요. "최고 화질"은 화면이 바뀐 순간부터 원본과 구별하기 어렵지만 수십 Mbps를 쓰므로, 양쪽 회선이 모두 빠를 때만 좋습니다. 느린 회선에서는 오히려 끊깁니다.</small></p>
 </div></div>
 <div id="arr"><div id="arrBox">
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px">
-    <h3 style="margin:0">모니터 배치</h3>
-    <button id="arrHelp" title="사용법">?</button>
+    <h3 style="margin:0" data-i18n>모니터 배치</h3>
+    <button id="arrHelp" title="사용법" data-i18n-title>?</button>
     <small id="arrMsg"></small>
-    <button id="arrClose" style="margin-left:auto">닫기</button>
+    <button id="arrClose" style="margin-left:auto" data-i18n>닫기</button>
   </div>
   <div id="arrTip">
-    <b>위</b>는 호스트 PC(원격으로 조작하는 PC)의 모니터이고 지금 화면이 그대로 보입니다. <b>아래</b>는 이 PC의 모니터입니다. 같은 색과 선으로 이어진 것끼리 짝입니다.<br>
-    <i>끌어다 놓기</i>자리를 바꿉니다. 꺼진 모니터에 놓으면 그쪽으로 옮깁니다.<br>
-    <i>Ctrl + 끌어다 놓기</i>옮기지 않고 같은 화면에 나란히 함께 띄웁니다.<br>
-    <i>호스트 모니터 클릭</i>끕니다. 다시 클릭하면 있던 자리에 켭니다.<br>
-    <i>위 ↔ 아래로 끌기</i>그 화면에 그 모니터를 띄웁니다.<br>
-    <i>기본 배치</i>왼쪽부터 순서대로 짝짓습니다.<br>
-    <i>전체화면으로 시작</i>창을 모두 전체화면으로 바꾸고 닫습니다.<br>
-    바꾼 배치는 바로 적용되고 다음에도 기억됩니다.
+    <span data-i18n-html><b>위</b>는 호스트 PC(원격으로 조작하는 PC)의 모니터이고 지금 화면이 그대로 보입니다. <b>아래</b>는 이 PC의 모니터입니다. 같은 색과 선으로 이어진 것끼리 짝입니다.</span><br>
+    <span data-i18n-html><i>끌어다 놓기</i>자리를 바꿉니다. 꺼진 모니터에 놓으면 그쪽으로 옮깁니다.</span><br>
+    <span data-i18n-html><i>Ctrl + 끌어다 놓기</i>옮기지 않고 같은 화면에 나란히 함께 띄웁니다.</span><br>
+    <span data-i18n-html><i>호스트 모니터 클릭</i>끕니다. 다시 클릭하면 있던 자리에 켭니다.</span><br>
+    <span data-i18n-html><i>위 ↔ 아래로 끌기</i>그 화면에 그 모니터를 띄웁니다.</span><br>
+    <span data-i18n-html><i>기본 배치</i>왼쪽부터 순서대로 짝짓습니다.</span><br>
+    <span data-i18n-html><i>전체화면으로 시작</i>창을 모두 전체화면으로 바꾸고 닫습니다.</span><br>
+    <span data-i18n>바꾼 배치는 바로 적용되고 다음에도 기억됩니다.</span>
   </div>
   <div id="arrArea">
-    <div class="arrTitle">호스트 PC<span class="osTag" id="arrHostOs"></span></div>
+    <div class="arrTitle"><span data-i18n>호스트 PC</span><span class="osTag" id="arrHostOs"></span></div>
     <div class="arrRow" id="arrHost"></div>
     <div style="height:58px"></div>
     <div class="arrRow" id="arrClient"></div>
-    <div class="arrTitle">이 PC<span class="osTag" id="arrClientOs"></span></div>
+    <div class="arrTitle"><span data-i18n>이 PC</span><span class="osTag" id="arrClientOs"></span></div>
     <svg id="arrWires"></svg>
   </div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
-    <button id="arrPerm" style="display:none;background:#343c48">이 PC의 다른 모니터도 사용</button>
-    <button id="arrReset" style="margin-left:auto;background:#343c48">기본 배치</button>
-    <button id="arrGo" style="background:#2b6cff">전체화면으로 시작</button>
+    <button id="arrPerm" style="display:none;background:#343c48" data-i18n>이 PC의 다른 모니터도 사용</button>
+    <button id="arrReset" style="margin-left:auto;background:#343c48" data-i18n>기본 배치</button>
+    <button id="arrGo" style="background:#2b6cff" data-i18n>전체화면으로 시작</button>
   </div>
 </div></div>
 <div id="ask"><div class="box">
-  <h3 style="margin:0 0 8px">호스트의 허용을 기다리는 중</h3>
-  <small>이 기기는 아직 이 호스트에 등록되지 않았습니다. 호스트 PC 화면에 뜬 요청에서 <b>허용</b>을 누르세요(이미 등록한 다른 기기로 호스트에 접속해 눌러도 됩니다). 요청에 아래와 같은 숫자가 보여야 합니다.</small>
+  <h3 style="margin:0 0 8px" data-i18n>호스트의 허용을 기다리는 중</h3>
+  <small data-i18n-html>이 기기는 아직 이 호스트에 등록되지 않았습니다. 호스트 PC 화면에 뜬 요청에서 <b>허용</b>을 누르세요(이미 등록한 다른 기기로 호스트에 접속해 눌러도 됩니다). 요청에 아래와 같은 숫자가 보여야 합니다.</small>
   <div class="code" id="askCode"></div>
   <div id="askOtp" style="display:none; margin-top:10px">
-    <small>또는 휴대폰 인증 앱의 6자리 코드:</small>
-    <div style="margin-top:6px"><input id="askIn" inputmode="numeric" autocomplete="one-time-code" maxlength="7" spellcheck="false"> <button id="askGo">확인</button></div>
+    <small data-i18n>또는 휴대폰 인증 앱의 6자리 코드:</small>
+    <div style="margin-top:6px"><input id="askIn" inputmode="numeric" autocomplete="one-time-code" maxlength="7" spellcheck="false"> <button id="askGo" data-i18n>확인</button></div>
   </div>
   <div id="askMsg"></div>
-  <div style="margin-top:10px"><button id="askCancel" style="background:#343c48">취소</button></div>
+  <div style="margin-top:10px"><button id="askCancel" style="background:#343c48" data-i18n>취소</button></div>
 </div></div>
 <div id="panel"><div class="box">
   <h2 style="margin:0 0 6px">My Remote</h2>
-  <small id="keyHint">호스트 프로그램의 접속 키, 또는 호스트에서 받은 1회용 코드를 입력하세요.</small>
-  <input id="key" type="password" placeholder="접속 키 또는 1회용 코드" autocomplete="off" spellcheck="false">
-  <div style="margin-top:12px"><button id="go">접속</button></div>
+  <small id="keyHint" data-i18n>호스트 프로그램의 접속 키, 또는 호스트에서 받은 1회용 코드를 입력하세요.</small>
+  <input id="key" type="password" placeholder="접속 키 또는 1회용 코드" autocomplete="off" spellcheck="false" data-i18n-placeholder>
+  <div style="margin-top:12px"><button id="go" data-i18n>접속</button></div>
   <div id="msg"></div>
 </div></div>
 
 <script>/*__SIGNAL_JS__*/</script>
+<script>/*__I18N_JS__*/</script>
 <script>
 const SERVER = '__SERVER__';
 const CLIP_MAX = 60000, MAX_RETRY = 10;
@@ -221,13 +228,40 @@ const shell = window.mrShell || null;
 const hash = new URLSearchParams(boot ? boot.preset : location.hash.slice(1) || '__PRESET__');
 let READONLY = hash.has('ro'); // let: the self-test lifts it while it traces (nothing is sent then, see send)
 if (READONLY) $('ro').style.display = '';
+// ---- the language (host/i18n.js, inlined above; 2026-11-20) --------------------------------------------------
+// This PC's language: the client app's (mrShell.lang, from 0.9.6), else what this browser keeps (mr_lang), else the
+// browser's own. The texts: a catalog of this page's texts in every language that the loader brings (__mrBoot.i18n,
+// loaders from 0.9.6 on), what the host sent before for this very page (mr_i18n:<page>:<lang>), and once connected
+// the host's own ('lang' -> 'strings'), which always matches its page; later ones win. tr(source, ...args): the
+// Korean source of a text, said in this language. The toolbar's 🌐 changes it for this PC (in the client app for
+// the whole app, the host on this PC included); a change made elsewhere on this PC reaches the page at once.
+const I18N = window.MRI18N;
+const PAGE_ID = store.get('mr_app_hash') || '';
+function langNow() {
+  try { if (shell && typeof shell.lang === 'function') { const l = I18N.normalize(shell.lang()); if (l) return l; } } catch {}
+  return I18N.normalize(store.get('mr_lang')) || I18N.pick(navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language]);
+}
+let LANG = 'ko', tr = I18N.translator('ko'), hostStrings = false;
+const hostTables = {}; // what the host sent in this page's life, by language (the host answers each once a session)
+function useLang(l, fromHost) {
+  LANG = l;
+  const loader = boot && boot.i18n && typeof boot.i18n === 'object' ? I18N.table(boot.i18n, l) : null;
+  let kept = null;
+  try { kept = PAGE_ID && l !== 'ko' ? JSON.parse(store.get(`mr_i18n:${PAGE_ID}:${l}`) || 'null') : null; } catch {}
+  const host = fromHost || hostTables[l] || kept;
+  tr = I18N.translator(l, loader, host);
+  hostStrings = l === 'ko' || !!host;
+}
+useLang(langNow());
+I18N.fonts(document);
+I18N.apply(document, tr);
 // A phone or tablet: the main pointer is a finger (see "phones and tablets" below). '#touch' forces it
 // (the self-test's picture of the phone layout).
 const TOUCH = matchMedia('(pointer: coarse)').matches || hash.has('touch');
 if (TOUCH) document.documentElement.classList.add('touch');
 const BLOCKED_WHEN_RO = new Set(['mm', 'md', 'mu', 'mw', 'kd', 'ku', 'text', 'reset', 'clip', 'dragout', 'dragq', 'clipget']);
 const CURSORS = new Set(['default', 'text', 'wait', 'crosshair', 'nwse-resize', 'nesw-resize', 'ew-resize', 'ns-resize', 'move', 'not-allowed', 'pointer', 'progress', 'help']);
-const HINT = 'Ctrl+Alt+←/→ 모니터 전환 · ↑ 전체 보기 · ↓ 원본 크기 · Enter 전체화면 끝내기';
+const HINT = 'Ctrl+Alt+←/→ 모니터 전환 · ↑ 전체 보기 · ↓ 원본 크기 · Enter 전체화면 끝내기'; // tr(HINT) where shown
 
 let keys = null, pc = null, dc = null, chan = null, sid = null;
 let want = false, ever = false, retry = 0, retryTimer = 0, helloTimer = 0;
@@ -284,11 +318,11 @@ function normSel(list) {
   return !l.length ? 'none' : l.length === 1 ? l[0] : l.length === monitors.length ? 'all' : l;
 }
 function label(sel) {
-  if (sel === 'none') return '표시할 모니터 없음';
-  if (Array.isArray(sel)) return '모니터 ' + sel.map((i) => i + 1).join(' + ');
-  if (sel === 'all') return `전체 보기 (모니터 ${monitors.length}개)`;
+  if (sel === 'none') return tr('표시할 모니터 없음');
+  if (Array.isArray(sel)) return tr('모니터 {0}', sel.map((i) => i + 1).join(' + '));
+  if (sel === 'all') return tr('전체 보기 (모니터 {0}개)', monitors.length);
   const m = monitors[sel];
-  return m ? `모니터 ${sel + 1} · ${m.width}×${m.height}` : '';
+  return m ? `${tr('모니터 {0}', sel + 1)} · ${m.width}×${m.height}` : '';
 }
 
 // ---- views: layout and what each window shows --------------------------------
@@ -299,7 +333,7 @@ function makeView(win, root, isMain) {
     cmdKeys: new Set(),
   };
   const t = (view.toastEl = win.document.createElement('div'));
-  t.style.cssText = 'position:absolute;left:50%;top:28px;transform:translateX(-50%);z-index:4;display:none;padding:8px 16px;border-radius:8px;background:rgba(20,23,28,.92);border:1px solid #3a4350;color:#e6e8eb;font:14px "Segoe UI","Malgun Gothic",sans-serif;white-space:nowrap;pointer-events:none';
+  t.style.cssText = 'position:absolute;left:50%;top:28px;transform:translateX(-50%);z-index:4;display:none;padding:8px 16px;border-radius:8px;background:rgba(20,23,28,.92);border:1px solid #3a4350;color:#e6e8eb;font:14px var(--mr-font);width:max-content;max-width:min(760px,calc(100% - 32px));box-sizing:border-box;text-align:center;overflow-wrap:anywhere;pointer-events:none';
   root.appendChild(t);
   if (hostLock) setTimeout(showLock); // a window opened while the host's screen is locked says so too
   // The browser's own text selection and drag-and-drop must never start in this window: a drag that
@@ -321,15 +355,15 @@ function makeView(win, root, isMain) {
   doc.addEventListener('drop', (ev) => {
     guard(ev);
     if (carried(ev) !== 'files') return;
-    if (READONLY) toast(view, '보기 전용이라 파일을 보낼 수 없습니다', 3000);
-    else if (!onPicture(ev)) toast(view, '파일은 호스트 화면 위에 놓아야 보낼 수 있습니다', 3000);
+    if (READONLY) toast(view, tr('보기 전용이라 파일을 보낼 수 없습니다'), 3000);
+    else if (!onPicture(ev)) toast(view, tr('파일은 호스트 화면 위에 놓아야 보낼 수 있습니다'), 3000);
   }, true);
   attachKeys(view);
   const relayout = () => { layout(view); scheduleView(); };
   win.addEventListener('resize', relayout);
   win.document.addEventListener('fullscreenchange', () => {
     setTimeout(relayout, 60);
-    const say = [hotkeysOn ? HINT : '', TOUCH ? '' : '화면 맨 위에 마우스를 잠시 두면 메뉴'].filter(Boolean).join(' · ');
+    const say = [hotkeysOn ? tr(HINT) : '', TOUCH ? '' : tr('화면 맨 위에 마우스를 잠시 두면 메뉴')].filter(Boolean).join(' · ');
     if (win.document.fullscreenElement && say) toast(view, say, 4000);
   });
   win.document.addEventListener('visibilitychange', scheduleView);
@@ -368,7 +402,7 @@ function attachPeek(view) {
     if (st.shown || !covering() || st.lastY >= 2 || blocked()) return;
     st.shown = true;
     window.__rd.peeks = (window.__rd.peeks || 0) + 1;
-    if (view.isMain) { $('fs').textContent = '전체화면 끝내기'; $('bar').classList.add('peek'); return; }
+    if (view.isMain) { $('fs').textContent = tr('전체화면 끝내기'); $('bar').classList.add('peek'); return; }
     if (!st.el) st.el = peekMenu(view);
     fillPeek(view, st.el);
     st.el.style.display = 'flex';
@@ -379,8 +413,8 @@ function attachPeek(view) {
     st.shown = false;
     const m = menu();
     // The focus left in the menu (a select opened and closed as it was) would keep the keys on this PC.
-    const back = m && m.contains(doc.activeElement);
-    if (view.isMain) m.classList.remove('peek'); else if (m) m.style.display = 'none';
+    const back = m && (m.contains(doc.activeElement) || !!(doc.activeElement && doc.activeElement.closest && doc.activeElement.closest('.mrLangList')));
+    if (view.isMain) { m.classList.remove('peek'); if ($('lang').mrClose) $('lang').mrClose(); } else if (m) m.style.display = 'none';
     if (back && view.panes[0]) view.panes[0].video.focus();
   };
   view.peek.hide = hide;
@@ -389,7 +423,10 @@ function attachPeek(view) {
     if (ev.pointerType === 'touch' || !covering()) { stopDwell(); hide(); return; }
     if (st.shown) {
       const r = menu().getBoundingClientRect();
-      const near = ev.clientX >= r.left - PEEK_NEAR && ev.clientX <= r.right + PEEK_NEAR && ev.clientY <= r.bottom + PEEK_NEAR;
+      // The language list opened from it (fixed below it, outside it) counts as part of it.
+      const list = doc.querySelector('.mrLangList'), lr = list && list.getBoundingClientRect();
+      const near = (ev.clientX >= r.left - PEEK_NEAR && ev.clientX <= r.right + PEEK_NEAR && ev.clientY <= r.bottom + PEEK_NEAR)
+        || !!(lr && ev.clientX >= lr.left && ev.clientX <= lr.right && ev.clientY >= lr.top && ev.clientY <= lr.bottom);
       if (near) { clearTimeout(st.leave); st.leave = 0; } else if (!st.leave) st.leave = setTimeout(hide, PEEK_LEAVE);
       return;
     }
@@ -407,7 +444,7 @@ function attachPeek(view) {
     stopDwell();
     if (st.shown && !st.leave) st.leave = setTimeout(hide, PEEK_LEAVE);
   }, true);
-  win.addEventListener('pointerdown', (ev) => { stopDwell(); if (st.shown && !(menu() && menu().contains(ev.target))) hide(); }, true);
+  win.addEventListener('pointerdown', (ev) => { stopDwell(); if (st.shown && !(menu() && menu().contains(ev.target)) && !(ev.target.closest && ev.target.closest('.mrLangList'))) hide(); }, true);
   win.addEventListener('blur', () => { stopDwell(); hide(); });
   doc.addEventListener('fullscreenchange', () => { if (!covering()) { stopDwell(); hide(); } else if (st.shown && !view.isMain && st.el) fillPeek(view, st.el); });
 }
@@ -415,7 +452,7 @@ function attachPeek(view) {
 function peekMenu(view) {
   const box = view.win.document.createElement('div');
   box.style.cssText = 'position:fixed;top:0;left:50%;transform:translateX(-50%);z-index:6;display:none;align-items:center;gap:6px;height:34px;padding:0 8px;' +
-    'background:#1d2229;border:1px solid #2c333d;border-top:0;border-radius:0 0 8px 8px;box-shadow:0 6px 18px rgba(0,0,0,.55);white-space:nowrap;font:14px "Segoe UI","Malgun Gothic",sans-serif';
+    'background:#1d2229;border:1px solid #2c333d;border-top:0;border-radius:0 0 8px 8px;box-shadow:0 6px 18px rgba(0,0,0,.55);white-space:nowrap;font:14px var(--mr-font)';
   view.win.document.body.appendChild(box);
   return box;
 }
@@ -430,12 +467,12 @@ function fillPeek(view, box) {
     b.onclick = (e) => { e.stopPropagation(); fn(); };
     box.append(b);
   };
-  monitors.forEach((m, i) => add(`모니터 ${i + 1}`, view.sel === i, () => { setSel(view, i); fillPeek(view, box); focus(); }, `${m.width}×${m.height} — 이 창에 표시`));
-  if (monitors.length > 1) add('전체 보기', view.sel === 'all', () => { setSel(view, 'all'); fillPeek(view, box); focus(); }, '모든 모니터를 실제 배치대로 이 창에');
+  monitors.forEach((m, i) => add(tr('모니터 {0}', i + 1), view.sel === i, () => { setSel(view, i); fillPeek(view, box); focus(); }, `${m.width}×${m.height} — ${tr('이 창에 표시')}`));
+  if (monitors.length > 1) add(tr('전체 보기'), view.sel === 'all', () => { setSel(view, 'all'); fillPeek(view, box); focus(); }, tr('모든 모니터를 실제 배치대로 이 창에'));
   const full = !!view.win.document.fullscreenElement;
-  add(full ? '전체화면 끝내기' : '전체화면', false, () => { view.peek.hide(); toggleFullscreen(view); focus(); });
-  add('창 닫기', false, () => view.win.close(), '이 모니터의 창을 닫습니다 (모니터 배치에서 다시 열 수 있습니다)');
-  add('연결 끊기', false, () => $('bye').click());
+  add(full ? tr('전체화면 끝내기') : tr('전체화면'), false, () => { view.peek.hide(); toggleFullscreen(view); focus(); });
+  add(tr('창 닫기'), false, () => view.win.close(), tr('이 모니터의 창을 닫습니다 (모니터 배치에서 다시 열 수 있습니다)'));
+  add(tr('연결 끊기'), false, () => $('bye').click());
 }
 // A window nobody sees: hidden or minimized. A browser says so in visibilityState; the client app keeps
 // its windows running and never does, so its preload marks the document instead (from 2026-11-13 on).
@@ -609,7 +646,7 @@ function setFit(view, fit) {
   view.zoom = 1;
   if (view === mainView) $('zoomBtn').style.display = 'none';
   layout(view);
-  toast(view, fit === '1:1' ? '원본 크기 (1:1) — 가장자리로 밀면 화면이 이동합니다' : '화면에 맞춤');
+  toast(view, fit === '1:1' ? tr('원본 크기 (1:1) — 가장자리로 밀면 화면이 이동합니다') : tr('화면에 맞춤'));
   renderBar();
   scheduleView();
   saveLayout();
@@ -874,7 +911,7 @@ function ghost(on) {
   if (!(shell && shell.dragGhost)) return;
   ghostAt = on ? performance.now() : 0;
   const w = hostDragWhat, n = w && w.kind === 'files' ? Number(w.n) || 0 : 0;
-  const label = !w ? '' : w.kind === 'text' ? '선택한 글자' : n > 1 ? `${String(w.name || '파일')} 외 ${n - 1}개` : String(w.name || '');
+  const label = !w ? '' : w.kind === 'text' ? tr('선택한 글자') : n > 1 ? tr('{0} 외 {1}개', String(w.name || tr('파일')), n - 1) : String(w.name || '');
   Promise.resolve(shell.dragGhost(on ? { on: true, kind: w && w.kind === 'text' ? 'text' : 'files', label } : { on: false })).catch(() => {});
 }
 // Until when a drag-out is being decided or carried out (let go outside every window). The host still
@@ -892,7 +929,7 @@ function startDrop(d) {
   drop = d;
   window.__rd.dragouts++;
   window.__rd.xfer.out++;
-  toast(where(d), '호스트에서 가져오는 중…', 6000);
+  toast(where(d), tr('호스트에서 가져오는 중…'), 6000);
 }
 // The window a message about a drop belongs in: the one it was let go from, while it is open.
 const where = (d) => (d && d.view && !d.view.win.closed ? d.view : mainView);
@@ -902,13 +939,13 @@ const WHY = {
   empty: '끌던 것이 파일이나 글자가 아닙니다', toobig: '파일이 너무 많거나 큽니다 (최대 5000개, 2 GB)',
 };
 // The host leaves out what it cannot send (beyond 5000 files or 2 GB, or what it could not read) and says how many.
-const skippedNote = (d) => (d && d.skipped > 0 ? ` (${d.skipped}개는 제외: 너무 많거나 크거나 읽을 수 없음)` : '');
+const skippedNote = (d) => (d && d.skipped > 0 ? ' ' + tr('({0}개는 제외: 너무 많거나 크거나 읽을 수 없음)', d.skipped) : '');
 // What was being brought over will not (all) arrive: the connection ended, the host gave up, ...
 function dropFailed(d, text) {
   if (d) clearTimeout(d.wait);
   if (drop === d) drop = null;
   window.__rd.xfer.failed++;
-  toast(where(d), text || '파일을 받지 못했습니다', 5000);
+  toast(where(d), text || tr('파일을 받지 못했습니다'), 5000);
 }
 let receiving = null; // the files being received now: { d, abort() } (see receiveFiles)
 async function gotDragData(m) {
@@ -922,10 +959,10 @@ async function gotDragData(m) {
     let how = '';
     if (canDrop()) { await d.ready; how = await shell.dropText(d.id, m.s).catch(() => ''); }
     if (!how) gotClip(m.s);
-    toast(where(d), how === 'pasted' ? '놓은 곳에 붙여 넣었습니다' + (m.cut ? ' (너무 길어 앞부분만)' : '') : '가져온 글자를 복사해 두었습니다. 붙여 넣을 곳에서 Ctrl+V를 누르세요', how === 'pasted' ? 2500 : 6000);
+    toast(where(d), how === 'pasted' ? (m.cut ? tr('놓은 곳에 붙여 넣었습니다 (너무 길어 앞부분만)') : tr('놓은 곳에 붙여 넣었습니다')) : tr('가져온 글자를 복사해 두었습니다. 붙여 넣을 곳에서 Ctrl+V를 누르세요'), how === 'pasted' ? 2500 : 6000);
   } else if (m.kind === 'files' && Array.isArray(m.files)) {
     d.skipped = Number(m.skipped) || 0;
-    toast(where(d), `파일 ${m.files.filter((f) => !f.dir).length}개를 받는 중…` + skippedNote(d), 600000);
+    toast(where(d), tr('파일 {0}개를 받는 중…', m.files.filter((f) => !f.dir).length) + skippedNote(d), 600000);
     // The files follow on a channel of their own (receiveFiles). The host gives up when that does not
     // open within 8 s; then say so here too, instead of showing "receiving" for ten minutes.
     if (!d.channel) d.wait = setTimeout(() => { if (drop === d && !d.channel) dropFailed(d); }, 12000);
@@ -935,7 +972,7 @@ async function gotDragData(m) {
     drop = null;
     window.__rd.xfer.none++;
     window.__rd.xfer.why = String(m.why || '');
-    toast(where(d), '가져올 수 있는 것이 없습니다' + (WHY[m.why] ? ' — ' + WHY[m.why] : ''), 5000);
+    toast(where(d), tr('가져올 수 있는 것이 없습니다') + (WHY[m.why] ? ' — ' + tr(WHY[m.why]) : ''), 5000);
   }
 }
 // A browser keeps what arrives in memory until it saves the file. So that a file of a gigabyte or two
@@ -987,7 +1024,7 @@ function receiveFiles(ch) {
         cur.loose += data.byteLength;
         if (cur.loose >= RECV_FOLD) { cur.blobs.push(new Blob(cur.parts)); cur.parts = []; cur.loose = 0; }
       }
-      if (performance.now() - shownAt > 400) { shownAt = performance.now(); toast(where(d), `파일 받는 중… ${(bytes / 1048576).toFixed(1)} MB`, 600000); }
+      if (performance.now() - shownAt > 400) { shownAt = performance.now(); toast(where(d), tr('파일 받는 중… {0} MB', (bytes / 1048576).toFixed(1)), 600000); }
       return;
     }
     const m = JSON.parse(data);
@@ -1016,9 +1053,9 @@ function receiveFiles(ch) {
       if (receiving === me) receiving = null;
       if (drop === d) drop = null;
       window.__rd.xfer.files++;
-      const what = tops.size === 1 && files > 1 ? `"${[...tops][0]}" (파일 ${files}개)` : `파일 ${files}개`, note = skippedNote(d);
+      const what = tops.size === 1 && files > 1 ? tr('"{0}" (파일 {1}개)', [...tops][0], files) : tr('파일 {0}개', files), note = skippedNote(d);
       // The browser saves each file as a download; with several it may first ask whether to allow that.
-      if (!app) { toast(where(d), `${what} 다운로드를 시작했습니다${note}` + (files > 1 ? ' · 브라우저가 여러 파일 다운로드를 물으면 허용하세요' : ''), 8000); return; }
+      if (!app) { toast(where(d), tr('{0} 다운로드를 시작했습니다', what) + note + (files > 1 ? ' · ' + tr('브라우저가 여러 파일 다운로드를 물으면 허용하세요') : ''), 8000); return; }
       if (d) await d.ready;
       const r = (await shell.dropFiles(d ? d.id : null, ids, group)) || {};
       // Files copied on the host, now on this PC's clipboard too: pasted back into the picture, they need
@@ -1029,8 +1066,8 @@ function receiveFiles(ch) {
       }
       window.__rd.xfer.how = r.how || 'none';
       window.__rd.xfer.placed++;
-      toast(where(d), r.how === 'saved' ? `${what}를 "${r.where}"에 넣었습니다${note}` : r.how === 'pasted' ? `${what}를 놓은 곳에 붙여 넣었습니다${note}`
-        : r.how === 'clipboard' ? `${what}를 받았습니다. 넣을 폴더에서 Ctrl+V를 누르세요${note}` : '받은 파일을 놓지 못했습니다', r.how === 'clipboard' ? 9000 : 4000);
+      toast(where(d), r.how === 'saved' ? tr('{0}를 "{1}"에 넣었습니다', what, r.where) + note : r.how === 'pasted' ? tr('{0}를 놓은 곳에 붙여 넣었습니다', what) + note
+        : r.how === 'clipboard' ? tr('{0}를 받았습니다. 넣을 폴더에서 Ctrl+V를 누르세요', what) + note : tr('받은 파일을 놓지 못했습니다'), r.how === 'clipboard' ? 9000 : 4000);
     } else if (m.t === 'fileerror') throw new Error('host');
   };
   ch.onmessage = (e) => { queue = queue.then(() => step(e.data)).catch(fail); };
@@ -1118,15 +1155,15 @@ function dropEntries(dt) {
 function tellSkipped(view, pasted) {
   const s = (window.__rd.lastDrop || {}).skipped;
   if (!s || !s.length) return;
-  const names = `${s.slice(0, 2).join(', ')}${s.length > 2 ? ` 외 ${s.length - 2}개` : ''}`;
-  toast(view, pasted ? `폴더는 붙여넣기로 보낼 수 없어 빼고 보냅니다: ${names} · 폴더는 호스트 화면에 끌어다 놓으면 통째로 갑니다` : `폴더를 읽지 못해 빼고 보냅니다: ${names}`, 7000);
+  const names = s.length > 2 ? tr('{0} 외 {1}개', s.slice(0, 2).join(', '), s.length - 2) : s.slice(0, 2).join(', ');
+  toast(view, pasted ? tr('폴더는 붙여넣기로 보낼 수 없어 빼고 보냅니다: {0} · 폴더는 호스트 화면에 끌어다 놓으면 통째로 갑니다', names) : tr('폴더를 읽지 못해 빼고 보냅니다: {0}', names), 7000);
 }
 async function upload(view, mode, at, got) {
   if (READONLY || !pc || !got) return false;
   const list = got.files, bytes = list.reduce((a, f) => a + f.file.size, 0);
   if (!list.length && !got.dirs.length) return false;
-  if (putting) { toast(view, '앞의 파일을 아직 보내는 중입니다', 3000); return false; }
-  if (list.length > PUT_MAX_FILES || bytes > PUT_MAX_BYTES) { toast(view, '파일이 너무 많거나 큽니다 (최대 5000개, 2 GB)', 5000); return false; }
+  if (putting) { toast(view, tr('앞의 파일을 아직 보내는 중입니다'), 3000); return false; }
+  if (list.length > PUT_MAX_FILES || bytes > PUT_MAX_BYTES) { toast(view, tr('파일이 너무 많거나 큽니다 (최대 5000개, 2 GB)'), 5000); return false; }
   const me = (putting = {});
   putView = view;
   window.__rd.xfer.inStart++;
@@ -1144,16 +1181,16 @@ async function upload(view, mode, at, got) {
         ch.send(await file.slice(off, off + CHUNK).arrayBuffer());
         sent += Math.min(CHUNK, file.size - off);
         while (ch.bufferedAmount > 4 * 1024 * 1024 && ch.readyState === 'open') await sleep(15); // a closed channel keeps its count
-        if (performance.now() - shownAt > 400) { shownAt = performance.now(); toast(view, `호스트로 보내는 중… ${(sent / 1048576).toFixed(1)} / ${(bytes / 1048576).toFixed(1)} MB`, 600000); }
+        if (performance.now() - shownAt > 400) { shownAt = performance.now(); toast(view, tr('호스트로 보내는 중… {0} / {1} MB', (sent / 1048576).toFixed(1), (bytes / 1048576).toFixed(1)), 600000); }
       }
       ch.send(JSON.stringify({ t: 'fileend' }));
     }
     ch.send(JSON.stringify({ t: 'done' }));
-    if (bytes > 2e6) toast(view, '호스트로 보냈습니다', 4000);
+    if (bytes > 2e6) toast(view, tr('호스트로 보냈습니다'), 4000);
     return true;
   } catch (e) {
     window.__rd.xfer.inFailed++;
-    toast(view, '호스트로 보내지 못했습니다', 5000);
+    toast(view, tr('호스트로 보내지 못했습니다'), 5000);
     try { ch.close(); } catch {}
     return false;
   } finally { if (putting === me) putting = null; } // a new connection may have started another one meanwhile
@@ -1177,7 +1214,7 @@ function maybeFetchClipFiles() {
   if (liveViews().some((v) => !v.win.closed && v.win.document.hasFocus())) return; // still in one of ours
   h.asked = true;
   if (h.bytes > CLIP_FILES_AUTO) {
-    toast(mainView, `호스트에서 복사한 파일이 커서(${(h.bytes / 1048576).toFixed(0)} MB) 가져오지 않았습니다. 필요하면 끌어내기로 가져오세요`, 8000);
+    toast(mainView, tr('호스트에서 복사한 파일이 커서({0} MB) 가져오지 않았습니다. 필요하면 끌어내기로 가져오세요', (h.bytes / 1048576).toFixed(0)), 8000);
     return;
   }
   drop = { id: null, ready: null, view: mainView, clip: true };
@@ -1192,12 +1229,12 @@ function gotPut(m) {
     window.__rd.xfer.inDone++;
     window.__rd.xfer.inHow = String(m.how || '');
     const n = Number(m.n) || 0;
-    toast(v, m.how === 'dropped' ? `파일 ${n}개를 놓았습니다` : m.how === 'pasted' ? `파일 ${n}개를 붙여 넣었습니다`
-      : m.how === 'clipboard' ? `파일 ${n}개를 호스트의 클립보드에 올렸습니다. 넣을 곳에서 Ctrl+V를 누르세요`
-      : m.how === 'staged' ? `파일 ${n}개를 받았습니다 (시험 모드라 놓지 않음)` : '호스트에서 파일을 놓지 못했습니다', m.how === 'clipboard' ? 8000 : 4000);
+    toast(v, m.how === 'dropped' ? tr('파일 {0}개를 놓았습니다', n) : m.how === 'pasted' ? tr('파일 {0}개를 붙여 넣었습니다', n)
+      : m.how === 'clipboard' ? tr('파일 {0}개를 호스트의 클립보드에 올렸습니다. 넣을 곳에서 Ctrl+V를 누르세요', n)
+      : m.how === 'staged' ? tr('파일 {0}개를 받았습니다 (시험 모드라 놓지 않음)', n) : tr('호스트에서 파일을 놓지 못했습니다'), m.how === 'clipboard' ? 8000 : 4000);
   } else if (m.state === 'error') {
     window.__rd.xfer.inFailed++;
-    toast(v, '호스트에서 파일을 받지 못했습니다' + (m.why === 'toobig' ? ' — 너무 많거나 큽니다' : ''), 5000);
+    toast(v, m.why === 'toobig' ? tr('호스트에서 파일을 받지 못했습니다 — 너무 많거나 큽니다') : tr('호스트에서 파일을 받지 못했습니다'), 5000);
   }
 }
 
@@ -1231,7 +1268,7 @@ function attachPointer(view, pane) {
     view.dragOut = on;
     ghost(on);
     applyCursor();
-    if (on) toast(view, canDrop() ? '놓으면 이 PC로 복사됩니다 (폴더·바탕화면·프로그램 위에 놓으세요)' : '놓으면 다운로드로 받습니다', 3000);
+    if (on) toast(view, canDrop() ? tr('놓으면 이 PC로 복사됩니다 (폴더·바탕화면·프로그램 위에 놓으세요)') : tr('놓으면 다운로드로 받습니다'), 3000);
   };
   // The three handlers below also get the events of a pointer pressed here that arrive elsewhere (hold).
   const onPicture = (t) => view.panes.some((p) => p.video === t);
@@ -1349,7 +1386,7 @@ function attachPointer(view, pane) {
     dropEntries(ev.dataTransfer).then((got) => { tellSkipped(view); if (got.files.length || got.dirs.length) upload(view, 'drop', p, got); }).catch((e) => {
       window.__rd.xfer.inFailed++;
       window.__rd.xfer.inWhy = String(e && (e.name || e.message) || 'error').slice(0, 40);
-      toast(view, '놓은 파일을 읽지 못했습니다', 5000);
+      toast(view, tr('놓은 파일을 읽지 못했습니다'), 5000);
     });
   });
   for (const t of ['contextmenu', 'auxclick', 'dragstart']) v.addEventListener(t, (ev) => ev.preventDefault());
@@ -1545,7 +1582,7 @@ $('keyBtn').onclick = () => {
 if (TOUCH) {
   const upright = matchMedia('(orientation: portrait)');
   let said = false;
-  const hint = () => { if (upright.matches && !said && monitors.length) { said = true; toast(mainView, '휴대폰을 가로로 돌리면 화면이 크게 보입니다 · 두 손가락으로 확대할 수 있습니다', 5000); } };
+  const hint = () => { if (upright.matches && !said && monitors.length) { said = true; toast(mainView, tr('휴대폰을 가로로 돌리면 화면이 크게 보입니다 · 두 손가락으로 확대할 수 있습니다'), 5000); } };
   upright.addEventListener('change', hint);
   setInterval(hint, 3000);
 }
@@ -1573,7 +1610,7 @@ function hotkey(view, ev) {
   else if (c === 'ArrowRight') cycle(view, 1);
   else if (c === 'ArrowUp') setSel(view, 'all');
   else if (c === 'ArrowDown') { if (typeof view.sel === 'number') setFit(view, view.fit === '1:1' ? 'fit' : '1:1'); }
-  else if (digit) { const n = Number(digit[2]); if (n === 0) setSel(view, 'all'); else if (monitors[n - 1]) setSel(view, n - 1); else toast(view, `모니터 ${n}은(는) 없습니다`); }
+  else if (digit) { const n = Number(digit[2]); if (n === 0) setSel(view, 'all'); else if (monitors[n - 1]) setSel(view, n - 1); else toast(view, tr('모니터 {0}은(는) 없습니다', n)); }
   else toggleFullscreen(view);
   return true;
 }
@@ -1594,7 +1631,8 @@ const systemKey = (ev) => ev.code === 'PrintScreen' || (!MAC && ((/^Meta/.test(e
 const fullscreenNow = (doc) => !!doc.fullscreenElement || !!window.__rd.forceFull; // forceFull: the self-test (a hidden window cannot go fullscreen)
 function attachKeys(view) {
   const win = view.win, doc = win.document;
-  const local = () => { const tag = doc.activeElement && doc.activeElement.tagName; return !dc || (view.isMain && arr.open) || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA'; };
+  // (The language button and its list are this page's own controls too: their arrows and Enter stay here.)
+  const local = () => { const a = doc.activeElement, tag = a && a.tagName; return !dc || (view.isMain && arr.open) || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || !!(a && a.closest && a.closest('.mrLangBtn, .mrLangList')); };
   const sentDown = new Set(); // keys whose press went to the host: their release goes there too, whatever happens meanwhile
   // A paste shortcut is held back until the browser's paste event has given us
   // the clipboard text, so the host receives "clipboard, then Ctrl+V" in order.
@@ -1665,7 +1703,7 @@ function attachKeys(view) {
       view.pasteKey = null;
       dropEntries(ev.clipboardData).then((got) => { tellSkipped(view, true); if (got.files.length || got.dirs.length) upload(view, 'paste', null, got); }).catch(() => {
         window.__rd.xfer.inFailed++;
-        toast(view, '붙여 넣은 파일을 읽지 못했습니다', 5000);
+        toast(view, tr('붙여 넣은 파일을 읽지 못했습니다'), 5000);
       });
       return;
     }
@@ -1686,16 +1724,16 @@ function renderBar() {
   if (!mainView) return;
   monitors.forEach((m, i) => {
     const b = document.createElement('button');
-    b.textContent = `모니터 ${i + 1}`;
+    b.textContent = tr('모니터 {0}', i + 1);
     b.className = mainView.sel === i || (Array.isArray(mainView.sel) && mainView.sel.includes(i)) ? 'on' : '';
-    b.title = `${m.width}×${m.height} — 이 창에 표시 (Ctrl+Alt+${i + 1})` + (m.hdr ? '\n주의: 호스트에서 이 모니터의 HDR이 켜져 있어 색이 실제보다 밝게 보입니다. 호스트 PC의 디스플레이 설정에서 HDR을 끄면 해결됩니다.' : '');
+    b.title = `${m.width}×${m.height} — ${tr('이 창에 표시')} (Ctrl+Alt+${i + 1})` + (m.hdr ? '\n' + tr('주의: 호스트에서 이 모니터의 HDR이 켜져 있어 색이 실제보다 밝게 보입니다. 호스트 PC의 디스플레이 설정에서 HDR을 끄면 해결됩니다.') : '');
     if (m.hdr) b.textContent += ' ⚠';
     b.onclick = () => setSel(mainView, i);
     box.append(b);
     if (!TOUCH) { // a phone has one screen: no windows of their own
       const p = document.createElement('button');
       p.textContent = '↗';
-      p.title = '새 창으로 분리';
+      p.title = tr('새 창으로 분리');
       p.onclick = () => popOut(i);
       box.append(p);
     }
@@ -1703,9 +1741,9 @@ function renderBar() {
   });
   if (monitors.length > 1) {
     const a = document.createElement('button');
-    a.textContent = '전체 보기';
+    a.textContent = tr('전체 보기');
     a.className = mainView.sel === 'all' ? 'on' : '';
-    a.title = '모든 모니터를 실제 배치대로 한 창에 (Ctrl+Alt+↑)';
+    a.title = tr('모든 모니터를 실제 배치대로 한 창에') + ' (Ctrl+Alt+↑)';
     a.onclick = () => setSel(mainView, 'all');
     box.append(a, ' ');
   }
@@ -1732,7 +1770,9 @@ function openView(sel, scr, screenIdx) {
   const d = w.document;
   d.title = 'My Remote';
   d.body.textContent = '';
-  d.body.style.cssText = 'margin:0;background:#000;overflow:hidden;height:100vh;font:14px "Segoe UI","Malgun Gothic",sans-serif;color:#e6e8eb;user-select:none';
+  d.documentElement.lang = LANG; // its fonts (I18N.fonts): a window of its own has none of this page's styles
+  I18N.fonts(d);
+  d.body.style.cssText = 'margin:0;background:#000;overflow:hidden;height:100vh;font:14px var(--mr-font);color:#e6e8eb;user-select:none';
   const root = d.createElement('div');
   root.style.cssText = 'position:absolute;inset:0;overflow:hidden;touch-action:none'; // as #stage: a touch on the picture is input for the host
   d.body.appendChild(root);
@@ -1744,15 +1784,15 @@ function openView(sel, scr, screenIdx) {
   const cover = d.createElement('div');
   cover.style.cssText = 'position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;gap:16px;align-items:center;justify-content:center;background:rgba(10,12,15,.62);cursor:pointer';
   const big = d.createElement('div');
-  big.textContent = '클릭하면 전체화면으로 전환됩니다';
-  big.style.cssText = 'font-size:22px';
+  big.textContent = tr('클릭하면 전체화면으로 전환됩니다');
+  big.style.cssText = 'font-size:22px;text-align:center;padding:0 16px';
   const small = d.createElement('button');
-  small.textContent = '창 모드로 계속 쓰기';
-  small.style.cssText = 'font:13px sans-serif;padding:6px 14px;border:0;border-radius:5px;background:#343c48;color:#fff;cursor:pointer';
+  small.textContent = tr('창 모드로 계속 쓰기');
+  small.style.cssText = 'font:13px var(--mr-font);padding:6px 14px;border:0;border-radius:5px;background:#343c48;color:#fff;cursor:pointer';
   cover.append(big, small);
   const corner = d.createElement('button');
-  corner.textContent = '전체화면';
-  corner.style.cssText = 'position:fixed;top:8px;right:8px;z-index:5;display:none;font:13px sans-serif;padding:5px 12px;border:0;border-radius:5px;background:#2b6cff;color:#fff;cursor:pointer;opacity:.85';
+  corner.textContent = tr('전체화면');
+  corner.style.cssText = 'position:fixed;top:8px;right:8px;z-index:5;display:none;font:13px var(--mr-font);padding:5px 12px;border:0;border-radius:5px;background:#2b6cff;color:#fff;cursor:pointer;opacity:.85';
   cover.onclick = (e) => {
     cover.remove();
     if (e.target === small) corner.style.display = ''; else goFullscreen(w);
@@ -1781,7 +1821,7 @@ async function popOut(i) {
     j = pick != null ? pick : free.length ? free[0] : null;
     if (j != null) scr = cs.list[j];
   }
-  if (!openView(i, scr, j)) alert('팝업이 차단되었습니다. 주소창에서 이 페이지의 팝업을 허용해 주세요.');
+  if (!openView(i, scr, j)) alert(tr('팝업이 차단되었습니다. 주소창에서 이 페이지의 팝업을 허용해 주세요.'));
   else if (mainView.sel === i) {
     // The monitor moved to its own window; show another one here.
     const other = monitors.findIndex((m) => !liveViews().some((v) => v.sel === m.idx));
@@ -1822,9 +1862,9 @@ function clickForFullscreen() {
   cover.id = 'fsCover';
   cover.style.cssText = 'position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;gap:16px;align-items:center;justify-content:center;background:rgba(10,12,15,.62);cursor:pointer';
   const big = document.createElement('div'), small = document.createElement('button');
-  big.textContent = '클릭하면 전체화면으로 전환됩니다';
-  big.style.cssText = 'font-size:22px';
-  small.textContent = '창 모드로 계속 쓰기';
+  big.textContent = tr('클릭하면 전체화면으로 전환됩니다');
+  big.style.cssText = 'font-size:22px;text-align:center;padding:0 16px';
+  small.textContent = tr('창 모드로 계속 쓰기');
   cover.append(big, small);
   const gone = () => { cover.remove(); document.removeEventListener('fullscreenchange', onFs); };
   const onFs = () => { if (document.fullscreenElement) gone(); }; // went fullscreen some other way (button, shortcut)
@@ -1839,7 +1879,7 @@ function clickForFullscreen() {
 async function spread() {
   const cs = await clientScreens();
   if (!cs || cs.list.length < 2) {
-    toast(mainView, cs ? '이 PC에서 모니터가 1개만 감지되었습니다' : '창 관리 권한을 허용해야 모니터에 펼칠 수 있습니다', 3000);
+    toast(mainView, cs ? tr('이 PC에서 모니터가 1개만 감지되었습니다') : tr('창 관리 권한을 허용해야 모니터에 펼칠 수 있습니다'), 3000);
     return;
   }
   const N = monitors.length, M = cs.list.length;
@@ -1870,8 +1910,8 @@ async function spread() {
   // windows first (asking for fullscreen first can keep them on this screen) and then needs
   // one click in each window - in this one too once a window was opened: that used up the click.
   if (shell) await shell.fullscreenAll(); else if (!(await goFullscreen(window))) clickForFullscreen();
-  if (blocked) toast(mainView, `창 ${blocked}개가 팝업 차단으로 열리지 못했습니다. 주소창에서 팝업을 "항상 허용"으로 바꾸거나 한 번 더 누르세요.`, 6000);
-  else if (N > M) toast(mainView, `호스트 모니터 ${N}개 중 ${M}개를 펼쳤습니다. 나머지는 Ctrl+Alt+←/→ 로 전환하세요.`, 5000);
+  if (blocked) toast(mainView, tr('창 {0}개가 팝업 차단으로 열리지 못했습니다. 주소창에서 팝업을 "항상 허용"으로 바꾸거나 한 번 더 누르세요.', blocked), 6000);
+  else if (N > M) toast(mainView, tr('호스트 모니터 {0}개 중 {1}개를 펼쳤습니다. 나머지는 Ctrl+Alt+←/→ 로 전환하세요.', N, M), 5000);
 }
 
 // ---- arrangement panel: which host monitor goes on which screen of this PC ---------
@@ -2058,17 +2098,17 @@ function arrBuild() {
   for (const t of [...arr.host, ...arr.client]) tileVideos(t, []); // the old tiles' players go with them
   $('arrHost').textContent = ''; $('arrClient').textContent = '';
   arr.host = monitors.map((m, i) => {
-    const t = monTile('host', i, m.width * ks, m.height * ks, `${m.width}×${m.height}${m.primary ? ' · 주 모니터' : ''}${m.hdr ? ' · HDR ⚠' : ''}`);
-    if (m.hdr) t.el.title = '호스트에서 이 모니터의 HDR이 켜져 있어 색이 실제보다 밝게 보입니다. 호스트 PC의 디스플레이 설정에서 HDR을 끄면 해결됩니다.';
+    const t = monTile('host', i, m.width * ks, m.height * ks, `${m.width}×${m.height}${m.primary ? ' · ' + tr('주 모니터') : ''}${m.hdr ? ' · HDR ⚠' : ''}`);
+    if (m.hdr) t.el.title = tr('호스트에서 이 모니터의 HDR이 켜져 있어 색이 실제보다 밝게 보입니다. 호스트 PC의 디스플레이 설정에서 HDR을 끄면 해결됩니다.');
     tileVideos(t, [i]);
     $('arrHost').appendChild(t.el);
     return t;
   });
   const sc = cs.list.map((s) => ({ w: s.width, h: s.height, px: `${Math.round(s.width * (s.devicePixelRatio || s.scale || 1))}×${Math.round(s.height * (s.devicePixelRatio || s.scale || 1))}` })), kc = fit(sc, 210);
   arr.client = cs.list.map((s, c) => {
-    const t = monTile('client', c, sc[c].w * kc, sc[c].h * kc, sc[c].px + (c === cs.cur ? ' · 현재 창' : ''));
+    const t = monTile('client', c, sc[c].w * kc, sc[c].h * kc, sc[c].px + (c === cs.cur ? ' · ' + tr('현재 창') : ''));
     t.el.style.setProperty('--c', COLORS[c % COLORS.length]);
-    t.note.textContent = '비어 있음';
+    t.note.textContent = tr('비어 있음');
     $('arrClient').appendChild(t.el);
     return t;
   });
@@ -2081,9 +2121,9 @@ function arrPaint(A, aim) {
     const c = A[h];
     t.el.classList.toggle('off', c == null);
     t.el.classList.toggle('aim', !!aim && aim.kind === 'host' && aim.i === h);
-    if (c == null) { t.el.style.removeProperty('--c'); t.note.textContent = '꺼짐'; }
+    if (c == null) { t.el.style.removeProperty('--c'); t.note.textContent = tr('꺼짐'); }
     else t.el.style.setProperty('--c', COLORS[c % COLORS.length]);
-    t.tag.textContent = c == null ? '' : `내 모니터 ${c + 1}`;
+    t.tag.textContent = c == null ? '' : tr('내 모니터 {0}', c + 1);
     t.tag.style.visibility = c == null ? 'hidden' : '';
   });
   arr.client.forEach((t, c) => {
@@ -2091,7 +2131,7 @@ function arrPaint(A, aim) {
     tileVideos(t, list);
     t.el.classList.toggle('off', !list.length);
     t.el.classList.toggle('aim', !!aim && aim.kind === 'client' && aim.i === c);
-    t.tag.textContent = list.length ? '호스트 ' + list.map((h) => h + 1).join(' + ') : '';
+    t.tag.textContent = list.length ? tr('호스트 {0}', list.map((h) => h + 1).join(' + ')) : '';
     t.tag.style.visibility = list.length ? '' : 'hidden';
   });
   arr.shown = A;
@@ -2151,8 +2191,8 @@ async function arrOpen() {
   arr.prev = arr.A.slice();
   arrBuild();
   arrPaint(arr.A);
-  arrMsg(arr.cs.limited ? '이 브라우저는 이 PC의 모니터를 하나만 알려 줍니다. 여러 모니터에 펼치려면 아래 버튼으로 권한을 허용하세요.'
-    : blocked ? '다른 모니터의 창이 팝업 차단으로 열리지 못했습니다. 주소창에서 이 페이지의 팝업을 허용한 뒤 모니터를 다시 놓아 주세요.' : '');
+  arrMsg(arr.cs.limited ? tr('이 브라우저는 이 PC의 모니터를 하나만 알려 줍니다. 여러 모니터에 펼치려면 아래 버튼으로 권한을 허용하세요.')
+    : blocked ? tr('다른 모니터의 창이 팝업 차단으로 열리지 못했습니다. 주소창에서 이 페이지의 팝업을 허용한 뒤 모니터를 다시 놓아 주세요.') : '');
   sendView(false);
 }
 function arrClose() {
@@ -2169,7 +2209,7 @@ function arrCommit(A) {
   arr.A = A;
   arrPaint(A);
   const blocked = applyAssign(A, arr.cs);
-  arrMsg(blocked ? '창이 팝업 차단으로 열리지 못했습니다. 주소창에서 이 페이지의 팝업을 허용한 뒤 다시 놓아 주세요.' : '', 7000);
+  arrMsg(blocked ? tr('창이 팝업 차단으로 열리지 못했습니다. 주소창에서 이 페이지의 팝업을 허용한 뒤 다시 놓아 주세요.') : '', 7000);
   if (blocked) arrSync();
 }
 // A plain click on a host monitor turns it off; another click brings it back where it was.
@@ -2204,8 +2244,8 @@ function arrDragMove(x, y, copy) {
       const v = document.createElement('video');
       v.muted = true; v.autoplay = true; v.playsInline = true; v.srcObject = monitors[d.tile.i].stream;
       g.appendChild(v); v.play().catch(() => {});
-    } else g.textContent = d.tile.kind === 'host' ? `호스트 ${d.tile.i + 1}` : `내 모니터 ${d.tile.i + 1}`;
-    g.appendChild(document.createElement('b')).textContent = '+ 함께 표시';
+    } else g.textContent = d.tile.kind === 'host' ? tr('호스트 {0}', d.tile.i + 1) : tr('내 모니터 {0}', d.tile.i + 1);
+    g.appendChild(document.createElement('b')).textContent = '+ ' + tr('함께 표시');
     document.body.appendChild(g);
   }
   d.x = x; d.y = y; d.copy = copy;
@@ -2278,28 +2318,28 @@ let hostLock = ''; // '', 'lock' or 'secure' (see 'lock' in the host's host.js)
 // monitors `ds` (every monitor from a service of 2026-11-18 on, the primary only before), `d` the one with the
 // password box; `input`: what is typed reaches it (the lock screen; a UAC prompt is view only).
 let hostLockLive = null;
-const LOCK_TEXT = {
+const LOCK_TEXT = { // said through tr() where shown
   lock: ['호스트 PC가 잠겨 있습니다', '잠금 화면은 원격으로 보이지도 조작되지도 않습니다. 호스트 PC 앞에서 잠금을 풀면 화면이 이어집니다. (Windows 호스트는 호스트 창에서 "잠금 화면에서도 원격 조종"을 설치하면 원격에서 풀 수 있습니다.)'],
   secure: ['지금은 호스트 화면을 볼 수 없습니다', '권한 확인 창(UAC)이나 잠금 화면 같은 보안 화면은 원격으로 보이지도 조작되지도 않습니다. 호스트 PC 앞에서 직접 응답해야 합니다.'],
 };
 const liveLockText = (l) => hostLock === 'lock'
-  ? ['호스트 PC가 잠겨 있습니다', `잠금 화면은 모니터 ${l.d + 1}에 보입니다. 그 화면에서 비밀번호를 입력해 잠금을 풀 수 있습니다.`]
-  : ['호스트에 권한 확인 창(UAC)이 떠 있습니다', `모니터 ${l.d + 1}에 보입니다. 원격에서는 보기만 할 수 있고, 응답은 호스트 PC 앞에서 해야 합니다.`];
+  ? [tr('호스트 PC가 잠겨 있습니다'), tr('잠금 화면은 모니터 {0}에 보입니다. 그 화면에서 비밀번호를 입력해 잠금을 풀 수 있습니다.', l.d + 1)]
+  : [tr('호스트에 권한 확인 창(UAC)이 떠 있습니다'), tr('모니터 {0}에 보입니다. 원격에서는 보기만 할 수 있고, 응답은 호스트 PC 앞에서 해야 합니다.', l.d + 1)];
 function showLock() {
   const live = hostLock ? hostLockLive : null;
   for (const view of liveViews()) {
     // The window that shows the secure desktop itself: a bar at the top instead of a cover, so the lock
     // screen stays visible and can be typed into.
     const onLive = !!live && selList(view.sel).some((i) => live.ds.includes(i));
-    const text = onLive ? null : live ? liveLockText(live) : LOCK_TEXT[hostLock];
+    const text = onLive ? null : live ? liveLockText(live) : LOCK_TEXT[hostLock] ? LOCK_TEXT[hostLock].map((s) => tr(s)) : null;
     let el = view.lockEl;
     if (el || text) {
       if (!el) {
         const d = view.win.document;
         el = view.lockEl = d.createElement('div');
-        el.style.cssText = 'position:absolute;inset:0;z-index:3;display:none;align-items:center;justify-content:center;background:rgba(8,10,14,.55);pointer-events:none';
+        el.style.cssText = 'position:absolute;inset:0;z-index:3;display:none;align-items:center;justify-content:center;background:rgba(8,10,14,.55);pointer-events:none;overflow-wrap:anywhere';
         const box = d.createElement('div'), head = d.createElement('div'), body = d.createElement('div');
-        box.style.cssText = 'max-width:min(88%,560px);padding:16px 22px;border-radius:10px;background:rgba(20,23,28,.94);border:1px solid #3a4350;color:#e6e8eb;font:14px/1.6 "Segoe UI","Malgun Gothic",sans-serif;text-align:center';
+        box.style.cssText = 'max-width:min(88%,560px);padding:16px 22px;border-radius:10px;background:rgba(20,23,28,.94);border:1px solid #3a4350;color:#e6e8eb;font:14px/1.6 var(--mr-font);text-align:center';
         head.style.cssText = 'font-size:18px;font-weight:600;margin-bottom:6px';
         box.append(head, body);
         el.appendChild(box);
@@ -2313,18 +2353,18 @@ function showLock() {
       if (!bar) {
         const d = view.win.document;
         bar = view.lockBar = d.createElement('div');
-        bar.style.cssText = 'position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:3;display:none;align-items:center;gap:10px;max-width:calc(100% - 24px);padding:6px 8px 6px 14px;border-radius:8px;background:rgba(20,23,28,.9);border:1px solid #3a4350;color:#e6e8eb;font:13px/1.4 "Segoe UI","Malgun Gothic",sans-serif;pointer-events:none';
+        bar.style.cssText = 'position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:3;display:none;align-items:center;gap:10px;max-width:calc(100% - 24px);padding:6px 8px 6px 14px;border-radius:8px;background:rgba(20,23,28,.9);border:1px solid #3a4350;color:#e6e8eb;font:13px/1.4 var(--mr-font);pointer-events:none';
         const label = d.createElement('span'), sas = d.createElement('button');
         sas.textContent = 'Ctrl+Alt+Del';
-        sas.title = '호스트의 잠금 화면에 Ctrl+Alt+Del을 보냅니다 (이 키는 이 PC가 먼저 가져가서 직접 누를 수 없습니다)';
+        sas.title = tr('호스트의 잠금 화면에 Ctrl+Alt+Del을 보냅니다 (이 키는 이 PC가 먼저 가져가서 직접 누를 수 없습니다)');
         sas.style.cssText = 'pointer-events:auto;font:inherit;background:#343c48;color:#fff;border:0;border-radius:6px;padding:4px 10px;cursor:pointer';
-        sas.onclick = (e) => { e.stopPropagation(); send({ t: 'sas' }); toast(view, 'Ctrl+Alt+Del을 보냈습니다', 1500); };
+        sas.onclick = (e) => { e.stopPropagation(); send({ t: 'sas' }); toast(view, tr('Ctrl+Alt+Del을 보냈습니다'), 1500); };
         bar.append(label, sas);
         view.root.insertBefore(bar, view.toastEl);
       }
       bar.style.display = onLive ? 'flex' : 'none';
       if (onLive) {
-        bar.firstChild.textContent = live.input ? '🔒 호스트 잠금 화면 — 비밀번호를 입력해 풀 수 있습니다' : '🛡 권한 확인 창(UAC) — 원격에서는 보기만 됩니다';
+        bar.firstChild.textContent = live.input ? '🔒 ' + tr('호스트 잠금 화면 — 비밀번호를 입력해 풀 수 있습니다') : '🛡 ' + tr('권한 확인 창(UAC) — 원격에서는 보기만 됩니다');
         bar.lastChild.style.display = live.input ? '' : 'none';
       }
     }
@@ -2349,7 +2389,7 @@ function gotDevice(m) {
   const dev = { id: m.id, secret: m.secret };
   Promise.resolve(shell.devicePaired(dev)).then((ok) => {
     if (!ok) return;
-    toast(mainView, '이 PC를 호스트에 기기로 등록했습니다. 다음부터는 키 없이 접속합니다', 5000);
+    toast(mainView, tr('이 PC를 호스트에 기기로 등록했습니다. 다음부터는 키 없이 접속합니다'), 5000);
     window.__rd.paired = 'stored';
     verifyDevice(dev).then(async (works) => {
       window.__rd.paired = works ? 'verified' : 'unverified';
@@ -2446,10 +2486,10 @@ function showAsk(m) {
   clearTimeout(helloTimer);
   if (asking) clearTimeout(asking.timer);
   const mySid = sid;
-  asking = { sid: mySid, timer: setTimeout(() => { if (asking && asking.sid === mySid) { hideAsk(); lost('호스트에서 허용하지 않았습니다.'); } }, (Number(m.wait) || 120000) + 15000) };
+  asking = { sid: mySid, timer: setTimeout(() => { if (asking && asking.sid === mySid) { hideAsk(); lost(tr('호스트에서 허용하지 않았습니다.')); } }, (Number(m.wait) || 120000) + 15000) };
   $('askCode').textContent = String(m.code || '').replace(/[^0-9]/g, '').slice(0, 8);
   $('askOtp').style.display = m.otp ? '' : 'none';
-  $('askMsg').textContent = m.locked ? '휴대폰 인증 앱 코드를 여러 번 틀려 코드 확인이 잠시 막혀 있습니다. 호스트에서 허용을 누르세요.' : '';
+  $('askMsg').textContent = m.locked ? tr('휴대폰 인증 앱 코드를 여러 번 틀려 코드 확인이 잠시 막혀 있습니다. 호스트에서 허용을 누르세요.') : '';
   $('askIn').value = '';
   $('ask').style.display = 'flex';
   window.__rd.asked = { code: $('askCode').textContent, otp: !!m.otp };
@@ -2463,9 +2503,9 @@ function hideAsk() {
 async function sendCode() {
   const code = $('askIn').value.trim();
   if (!asking || !chan || !code) return;
-  $('askMsg').textContent = '확인하는 중…';
+  $('askMsg').textContent = tr('확인하는 중…');
   try { await chan.send({ t: 'otp', sid: asking.sid, ts: Date.now(), code, sig: await signed('otp\n' + asking.sid + '\n' + code) }); }
-  catch (e) { $('askMsg').textContent = '보내지 못했습니다: ' + e.message; }
+  catch (e) { $('askMsg').textContent = tr('보내지 못했습니다: {0}', e.message); }
 }
 $('askGo').onclick = sendCode;
 $('askIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendCode(); });
@@ -2474,12 +2514,12 @@ $('askCancel').onclick = async () => {
   const a = asking, c = chan;
   hideAsk();
   if (a && c) { try { await c.send({ t: 'cancel', sid: a.sid, ts: Date.now(), sig: await signed('cancel\n' + a.sid) }); } catch {} }
-  disconnect('접속을 취소했습니다.');
+  disconnect(tr('접속을 취소했습니다.'));
 };
 // The host's answer to a code: wrong (with how many tries are left), or the check locked for a while.
 function codeAnswer(m) {
-  if (m.why === 'locked') { $('askOtp').style.display = 'none'; $('askMsg').textContent = '코드를 여러 번 틀려 코드 확인이 잠시 막혔습니다. 호스트에서 허용을 누르세요.'; return; }
-  $('askMsg').textContent = m.why === 'code' ? `코드가 맞지 않습니다${Number(m.left) > 0 ? ` (남은 시도 ${Number(m.left)}번)` : ''}` : '확인하지 못했습니다';
+  if (m.why === 'locked') { $('askOtp').style.display = 'none'; $('askMsg').textContent = tr('코드를 여러 번 틀려 코드 확인이 잠시 막혔습니다. 호스트에서 허용을 누르세요.'); return; }
+  $('askMsg').textContent = m.why === 'code' ? (Number(m.left) > 0 ? tr('코드가 맞지 않습니다 (남은 시도 {0}번)', Number(m.left)) : tr('코드가 맞지 않습니다')) : tr('확인하지 못했습니다');
 }
 
 // The client app's list of PCs (window.mrShell.hostInfo, there only in a window opened from that list)
@@ -2503,7 +2543,7 @@ function forgetSession() {
   applyCursor();
   const r = receiving;
   if (r) r.abort(); // its files will not all arrive
-  if (drop && (!r || drop !== r.d)) dropFailed(drop, '연결이 끊겨 가져오지 못했습니다');
+  if (drop && (!r || drop !== r.d)) dropFailed(drop, tr('연결이 끊겨 가져오지 못했습니다'));
   drop = null;
   putting = null; // an upload under way finds its channel closed and stops by itself
 }
@@ -2539,7 +2579,7 @@ function lost(text) {
   if (ever && retry < MAX_RETRY) {
     retry++;
     resends = 0; // each reconnect may try once more itself (see tryAgain)
-    overlay(`연결이 끊겼습니다. 다시 연결하는 중… (${retry}/${MAX_RETRY})`);
+    overlay(tr('연결이 끊겼습니다. 다시 연결하는 중… ({0}/{1})', retry, MAX_RETRY));
     window.__rd.state = 'reconnecting';
     retryTimer = setTimeout(begin, Math.min(15000, 1500 * retry));
   } else {
@@ -2574,13 +2614,13 @@ function onHostMessage(data) {
     window.__rd.lock = hostLock;
     window.__rd.lockLive = hostLockLive;
     showLock();
-    if (was && !hostLock) toast(mainView, '호스트 화면이 다시 보입니다', 2500);
+    if (was && !hostLock) toast(mainView, tr('호스트 화면이 다시 보입니다'), 2500);
   }
   else if (m.t === 'others') {
     const was = window.__rd.others || {};
     window.__rd.others = { crd: !!m.crd, outline: !!m.outline };
-    const say = m.crd && !was.crd ? 'Chrome 원격 데스크톱도 이 호스트에 연결되어 있습니다 · 클릭과 창 끌기가 끊길 수 있으니 하나만 연결해 쓰세요'
-      : m.outline && !was.outline ? '호스트의 "창을 끄는 동안 내용 표시"가 꺼져 있어, 창을 끄는 동안에는 테두리만 움직입니다' : '';
+    const say = m.crd && !was.crd ? tr('Chrome 원격 데스크톱도 이 호스트에 연결되어 있습니다 · 클릭과 창 끌기가 끊길 수 있으니 하나만 연결해 쓰세요')
+      : m.outline && !was.outline ? tr('호스트의 "창을 끄는 동안 내용 표시"가 꺼져 있어, 창을 끄는 동안에는 테두리만 움직입니다') : '';
     if (say) for (const v of liveViews()) toast(v, say, 10000);
   }
   else if (m.t === 'storm') {
@@ -2588,17 +2628,18 @@ function onHostMessage(data) {
     // person (host/input.js). Usually a connection that comes back on itself, which a browser cannot be told of.
     const sec = Math.max(1, Math.round((Number(m.ms) || 5000) / 1000));
     window.__rd.storms = (window.__rd.storms || 0) + 1;
-    for (const v of liveViews()) toast(v, `같은 키나 클릭이 사람보다 빠르게 계속 들어가 호스트가 입력을 ${sec}초 멈췄습니다 · 이 PC를 이 PC에서 보거나 두 PC가 서로를 조종하고 있지 않은지 확인하세요`, 10000);
+    for (const v of liveViews()) toast(v, tr('같은 키나 클릭이 사람보다 빠르게 계속 들어가 호스트가 입력을 {0}초 멈췄습니다 · 이 PC를 이 PC에서 보거나 두 PC가 서로를 조종하고 있지 않은지 확인하세요', sec), 10000);
   }
   else if (m.t === 'device') gotDevice(m);
   else if (m.t === 'dragdata') gotDragData(m);
   else if (m.t === 'put') gotPut(m);
   else if (m.t === 'clipfiles') gotClipFiles(m);
   else if (m.t === 'clip' && typeof m.s === 'string' && m.s.length <= CLIP_MAX) gotClip(m.s);
-  else if (m.t === 'bye') disconnect('호스트에서 연결을 종료했습니다.');
+  else if (m.t === 'strings') gotStrings(m);
+  else if (m.t === 'bye') disconnect(tr('호스트에서 연결을 종료했습니다.'));
   else if (m.t === 'renew') {
     // The host's monitors changed (plugged, unplugged, resolution): renegotiate, keep the windows.
-    overlay('호스트의 모니터 구성이 바뀌어 다시 연결합니다…');
+    overlay(tr('호스트의 모니터 구성이 바뀌어 다시 연결합니다…'));
     window.__rd.state = 'reconnecting';
     cleanupPc();
     retryTimer = setTimeout(begin, 1200);
@@ -2613,8 +2654,8 @@ function restoreLayout() {
   const r = respread;
   respread = null;
   if (!r) return;
-  if (r.spread) { if (shell) spread().catch(() => {}); else toast(mainView, '호스트가 업데이트되어 창이 하나로 줄었습니다. 다시 펼치려면 "모니터에 펼치기"를 누르세요', 8000); }
-  else if (r.fs) { if (shell) shell.fullscreenAll().catch(() => {}); else toast(mainView, '호스트가 업데이트되었습니다. 전체화면으로 돌아가려면 "전체화면"을 누르세요', 6000); }
+  if (r.spread) { if (shell) spread().catch(() => {}); else toast(mainView, tr('호스트가 업데이트되어 창이 하나로 줄었습니다. 다시 펼치려면 "모니터에 펼치기"를 누르세요'), 8000); }
+  else if (r.fs) { if (shell) shell.fullscreenAll().catch(() => {}); else toast(mainView, tr('호스트가 업데이트되었습니다. 전체화면으로 돌아가려면 "전체화면"을 누르세요'), 6000); }
 }
 async function onOffer(m) {
   // The host now serves a different client page than the one running here (it was updated):
@@ -2624,7 +2665,7 @@ async function onOffer(m) {
   try { tried = sessionStorage.getItem('mr_reloaded_for'); } catch {}
   if (boot && m.app && mine && m.app !== mine && tried !== m.app) {
     try { sessionStorage.setItem('mr_reloaded_for', m.app); } catch {}
-    overlay('호스트가 업데이트되어 새 클라이언트 화면을 받아옵니다…');
+    overlay(tr('호스트가 업데이트되어 새 클라이언트 화면을 받아옵니다…'));
     want = false;
     // The windows and fullscreen do not survive the reload; the new page puts them back (restoreLayout).
     try { sessionStorage.setItem('mr_respread', JSON.stringify({ spread: mainView.layoutSig != null && liveViews().some((v) => !v.isMain), fs: !!document.fullscreenElement })); } catch {}
@@ -2667,7 +2708,7 @@ async function onOffer(m) {
   }
   renderBar();
   if (arr.open) { arr.A = currentAssign(arr.cs); arr.prev = arr.A.slice(); arrBuild(); arrPaint(arr.A); }
-  for (const mon of monitors) if (mon.hdr && !hdrTold.has(mon.idx)) { hdrTold.add(mon.idx); toast(mainView, `호스트의 모니터 ${mon.idx + 1}은 HDR이 켜져 있어 색이 실제보다 밝게 보입니다 (호스트 PC의 디스플레이 설정에서 끄면 해결)`, 9000); }
+  for (const mon of monitors) if (mon.hdr && !hdrTold.has(mon.idx)) { hdrTold.add(mon.idx); toast(mainView, tr('호스트의 모니터 {0}은 HDR이 켜져 있어 색이 실제보다 밝게 보입니다 (호스트 PC의 디스플레이 설정에서 끄면 해결)', mon.idx + 1), 9000); }
   $('snd').style.display = m.audio ? '' : 'none';
   offerInfo = { codec: m.codec, cursorHidden: !!m.cursorHidden, os: m.os && typeof m.os === 'object' ? { os: String(m.os.os || ''), name: String(m.os.name || '').slice(0, 60), pc: String(m.os.pc || '').slice(0, 60) } : null,
     instance: typeof m.instance === 'string' ? m.instance.slice(0, 64) : '' };
@@ -2688,13 +2729,14 @@ async function onOffer(m) {
     const ready = () => {
       if (pc !== my) return;
       sendView(true);
+      askStrings(); // this page's texts in this PC's language, from the host itself (see useLang)
       // Asked for a token in the hello: the app's own name goes now, over this connection (see pairAsk).
       if (pairAsk && typeof pairAsk.install === 'string') { try { dc.send(JSON.stringify({ t: 'pair', install: pairAsk.install })); } catch {} }
     };
     dc.onopen = ready;
     if (dc.readyState === 'open') ready();
     dc.onmessage = (ev) => { if (pc === my) onHostMessage(ev.data); };
-    dc.onclose = () => { if (pc === my) lost('연결이 끊어졌습니다.'); };
+    dc.onclose = () => { if (pc === my) lost(tr('연결이 끊어졌습니다.')); };
   };
   my.onconnectionstatechange = () => {
     if (pc !== my) return;
@@ -2717,9 +2759,9 @@ async function onOffer(m) {
       if (mainView.panes[0]) mainView.panes[0].video.focus();
       if (first) restoreLayout();
     } else if (st === 'failed') {
-      lost('연결 실패 — 양쪽 네트워크가 직접 연결(P2P)을 막고 있을 수 있습니다. 호스트 설정에 TURN 서버를 추가해야 합니다.');
+      lost(tr('연결 실패 — 양쪽 네트워크가 직접 연결(P2P)을 막고 있을 수 있습니다. 호스트 설정에 TURN 서버를 추가해야 합니다.'));
     } else if (st === 'disconnected') {
-      setTimeout(() => { if (pc === my && my.connectionState !== 'connected') lost('연결이 끊어졌습니다.'); }, 4000);
+      setTimeout(() => { if (pc === my && my.connectionState !== 'connected') lost(tr('연결이 끊어졌습니다.')); }, 4000);
     }
   };
   await my.setRemoteDescription({ type: 'offer', sdp: m.sdp });
@@ -2729,7 +2771,7 @@ async function onOffer(m) {
   const sdp = my.localDescription.sdp;
   await chan.send({ t: 'answer', sid, ts: Date.now(), sdp, sig: await signed('answer\n' + sid + '\n' + sdp) });
   connNote('answer', sinceHello());
-  if (!ever) msg('연결 수립 중…');
+  if (!ever) msg(tr('연결 수립 중…'));
   // The answer may be lost on the way (see tryAgain): then the host never connects.
   const answered = sid;
   clearTimeout(resendTimer);
@@ -2741,18 +2783,18 @@ async function begin() {
   const mySid = (sid = RD.rand(16));
   lastView = '';
   try {
-    if (!ever) msg('시그널링 서버 연결 중…');
+    if (!ever) msg(tr('시그널링 서버 연결 중…'));
     const c = (chan = RD.channel({
       server: DEVICE && DEVICE.server ? DEVICE.server : SERVER, subTopic: keys.topicClient, pubTopic: keys.topicHost, rxKey: keys.h2c, txKey: keys.c2h,
       onMessage: (m) => {
         if (!m || m.sid !== sid) return;
-        if (m.t === 'offer' && !pc) { hideAsk(); connNote('offer', sinceHello()); onOffer(m).catch((e) => lost('오류: ' + e.message)); }
+        if (m.t === 'offer' && !pc) { hideAsk(); connNote('offer', sinceHello()); onOffer(m).catch((e) => lost(tr('오류: {0}', e.message))); }
         else if (m.t === 'confirm' && !pc) { if (!asking) connNote('asked at the host', sinceHello()); showAsk(m); }
         else if (m.t === 'otp' && asking) codeAnswer(m);
-        else if (m.t === 'denied') { hideAsk(); connNote('refused', String(m.why || '')); window.__rd.denied = String(m.why || ''); disconnect(DENIED[m.why] || '호스트가 접속을 거부했습니다.'); }
+        else if (m.t === 'denied') { hideAsk(); connNote('refused', String(m.why || '')); window.__rd.denied = String(m.why || ''); disconnect(tr(DENIED[m.why] || '호스트가 접속을 거부했습니다.')); }
       },
     }));
-    await Promise.race([c.ready, sleep(10000).then(() => { throw new Error('시그널링 서버에 연결할 수 없습니다'); })]);
+    await Promise.race([c.ready, sleep(10000).then(() => { throw new Error(tr('시그널링 서버에 연결할 수 없습니다')); })]);
     if (sid !== mySid || chan !== c) return;
     const hello = { t: 'hello', sid, ts: Date.now(), mode, codec: codec || (await mobileCodec()), pk: (await myKey()).pub };
     // Signed with the page's own key: no one else can send a hello in its name (see host.js helloText).
@@ -2772,14 +2814,14 @@ async function begin() {
     await c.send(hello);
     helloAt = performance.now();
     connNote('request', `${DEVICE ? 'token' : ONE_TIME ? 'one-time code' : 'key'}${resends ? ', again' : ''}${ever ? ', reconnecting' : ''}`);
-    if (!ever) msg('호스트 응답 대기 중…');
+    if (!ever) msg(tr('호스트 응답 대기 중…'));
     // Nothing from the host at all: the hello or the host's answer may be lost on the way (see tryAgain).
     resendTimer = setTimeout(() => { if (sid === mySid && !pc && !asking) tryAgain('no answer to the request'); }, RESEND_MS);
     helloTimer = setTimeout(() => {
-      if (sid === mySid && (!pc || pc.connectionState !== 'connected')) lost(ONE_TIME ? '호스트가 응답하지 않습니다. 1회용 코드가 만료되었거나 호스트에서 끝냈을 수 있습니다.' : '호스트가 응답하지 않습니다. 호스트 프로그램 실행 여부와 키를 확인하세요.');
+      if (sid === mySid && (!pc || pc.connectionState !== 'connected')) lost(ONE_TIME ? tr('호스트가 응답하지 않습니다. 1회용 코드가 만료되었거나 호스트에서 끝냈을 수 있습니다.') : tr('호스트가 응답하지 않습니다. 호스트 프로그램 실행 여부와 키를 확인하세요.'));
     }, 20000);
   } catch (e) {
-    if (sid === mySid) lost('오류: ' + e.message);
+    if (sid === mySid) lost(tr('오류: {0}', e.message));
   }
 }
 
@@ -2791,7 +2833,7 @@ async function connect() {
   ONE_TIME = !DEVICE && !!RD.codeOf(typed);
   resends = 0;
   try { keys = DEVICE ? await RD.derive(DEVICE.secret, RD.DEVICE) : ONE_TIME ? await RD.deriveCode(RD.codeOf(typed)) : await RD.derive(typed); }
-  catch (e) { msg(/형식/.test(e.message) ? '접속 키나 1회용 코드의 형식이 올바르지 않습니다' : '오류: ' + e.message); return; }
+  catch (e) { msg(/형식/.test(e.message) ? tr('접속 키나 1회용 코드의 형식이 올바르지 않습니다') : tr('오류: {0}', e.message)); return; }
   want = true; ever = false; retry = 0;
   $('audio').play().catch(() => {}); // unlock audio playback while we have a user gesture
   begin();
@@ -2801,7 +2843,7 @@ async function connect() {
 mainView = makeView(window, $('stage'), true);
 $('go').onclick = connect;
 $('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
-$('bye').onclick = () => disconnect('연결을 끊었습니다.');
+$('bye').onclick = () => disconnect(tr('연결을 끊었습니다.'));
 // In a window opened from the client app's list of PCs: back to that list (other PCs can be opened next to this one).
 if (shell && shell.home) { $('homeBtn').style.display = ''; $('homeBtn').onclick = () => { Promise.resolve(shell.home()).catch(() => {}); }; }
 // In fullscreen (the bar brought back at the top of the screen, attachPeek; a phone's bar stays) the same button ends it.
@@ -2810,7 +2852,7 @@ $('fs').onclick = () => {
   else goFullscreen(window);
   if (mainView.panes[0]) mainView.panes[0].video.focus();
 };
-document.addEventListener('fullscreenchange', () => { $('fs').textContent = document.fullscreenElement ? '전체화면 끝내기' : '전체화면'; });
+document.addEventListener('fullscreenchange', () => { $('fs').textContent = document.fullscreenElement ? tr('전체화면 끝내기') : tr('전체화면'); });
 $('spread').onclick = spread;
 $('fit').onchange = () => { setFit(mainView, $('fit').value); if (mainView.panes[0]) mainView.panes[0].video.focus(); };
 $('mode').onchange = () => {
@@ -2819,22 +2861,73 @@ $('mode').onchange = () => {
   send({ t: 'mode', m: mode });
   if (mainView.panes[0]) mainView.panes[0].video.focus();
 };
-$('snd').onclick = () => { const a = $('audio'); a.muted = !a.muted; $('snd').textContent = a.muted ? '소리 꺼짐' : '소리 켜짐'; if (!a.muted) a.play().catch(() => {}); };
+$('snd').onclick = () => { const a = $('audio'); a.muted = !a.muted; $('snd').textContent = a.muted ? tr('소리 꺼짐') : tr('소리 켜짐'); if (!a.muted) a.play().catch(() => {}); };
+// ---- the language, chosen here (🌐), or elsewhere on this PC -------------------------------------------------
+// What the page draws itself again in another language (the rest carries data-i18n: I18N.apply).
+function relabel() {
+  I18N.apply(document, tr);
+  I18N.fillSelect($('lang'), LANG);
+  for (const v of liveViews()) if (!v.isMain) { try { v.win.document.documentElement.lang = LANG; } catch {} }
+  renderBar();
+  showLock();
+  $('fs').textContent = document.fullscreenElement || $('bar').classList.contains('peek') ? tr('전체화면 끝내기') : tr('전체화면');
+  $('snd').textContent = $('audio').muted ? tr('소리 꺼짐') : tr('소리 켜짐');
+  if (DEVICE) { $('keyHint').textContent = tr('이 PC는 호스트에 기기로 등록되어 있어 키 없이 접속합니다.'); $('go').textContent = tr('다시 연결'); }
+  if (arr.open) { arrBuild(); arrPaint(arr.A); }
+  for (const v of liveViews()) if (v.peek && v.peek.shown && v.peek.el) fillPeek(v, v.peek.el);
+  if ($('diag').style.display === 'flex') $('diagText').value = buildReport();
+}
+function langChanged(l) {
+  useLang(l);
+  relabel();
+  askStrings();
+}
+// The host's texts for this page in this language, once per page and language (kept, see useLang).
+function askStrings() { if (!hostStrings && LANG !== 'ko' && dc && dc.readyState === 'open') send({ t: 'lang', l: LANG }); }
+function gotStrings(m) {
+  const l = I18N.normalize(m.l);
+  if (!l || l === 'ko' || !m.s || typeof m.s !== 'object' || Array.isArray(m.s)) return;
+  try {
+    // Only this page's: a host updated since sent another page, whose texts these are not.
+    for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && k.startsWith('mr_i18n:') && !k.startsWith(`mr_i18n:${PAGE_ID}:`)) localStorage.removeItem(k); }
+  } catch {}
+  hostTables[l] = m.s;
+  if (PAGE_ID) store.set(`mr_i18n:${PAGE_ID}:${l}`, JSON.stringify(m.s));
+  if (l === LANG) { useLang(l, m.s); relabel(); }
+}
+I18N.fillSelect($('lang'), LANG);
+$('lang').onchange = () => {
+  const n = I18N.normalize($('lang').value);
+  if (n && n !== LANG) {
+    store.set('mr_lang', n); // a browser keeps it here (the client app keeps it for the whole app: setLang)
+    if (shell && typeof shell.setLang === 'function') Promise.resolve(shell.setLang(n)).catch(() => {});
+    langChanged(n);
+  }
+  if (mainView && mainView.panes[0]) mainView.panes[0].video.focus();
+};
+if (shell && typeof shell.onLang === 'function') shell.onLang((l) => { const n = I18N.normalize(l); if (n && n !== LANG) langChanged(n); });
+// The wheel scrolls the bar sideways when it does not fit (a long language, a narrow window: see #bar).
+$('bar').addEventListener('wheel', (e) => {
+  const b = $('bar');
+  if (b.scrollWidth <= b.clientWidth + 1 || Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.target.closest('select')) return;
+  b.scrollLeft += e.deltaY;
+  e.preventDefault();
+}, { passive: false });
 $('keys').onclick = () => { $('help').style.display = 'flex'; };
 $('helpClose').onclick = () => { $('help').style.display = 'none'; if (mainView.panes[0]) mainView.panes[0].video.focus(); };
 $('codec').value = codec;
 $('codec').onchange = () => {
   codec = $('codec').value;
   store.set('mr_codec', codec || null);
-  if (want && ever) { $('diag').style.display = 'none'; overlay('코덱을 바꿔 다시 연결합니다…'); samples.length = 0; begin(); }
+  if (want && ever) { $('diag').style.display = 'none'; overlay(tr('코덱을 바꿔 다시 연결합니다…')); samples.length = 0; begin(); }
 };
 $('diagBtn').onclick = () => { $('diagText').value = buildReport(); $('diag').style.display = 'flex'; };
 $('diagRefresh').onclick = () => { $('diagText').value = buildReport(); };
 $('diagClose').onclick = () => { $('diag').style.display = 'none'; if (mainView.panes[0]) mainView.panes[0].video.focus(); };
 $('diagCopy').onclick = async () => {
-  try { await navigator.clipboard.writeText($('diagText').value); $('diagCopy').textContent = '복사됨'; }
-  catch { $('diagText').select(); document.execCommand('copy'); $('diagCopy').textContent = '복사됨'; }
-  setTimeout(() => { $('diagCopy').textContent = '복사'; }, 1500);
+  try { await navigator.clipboard.writeText($('diagText').value); $('diagCopy').textContent = tr('복사됨'); }
+  catch { $('diagText').select(); document.execCommand('copy'); $('diagCopy').textContent = tr('복사됨'); }
+  setTimeout(() => { $('diagCopy').textContent = tr('복사'); }, 1500);
 };
 $('hk').onchange = () => { hotkeysOn = $('hk').checked; store.set('mr_hotkeys', hotkeysOn ? 'on' : 'off'); };
 
@@ -2909,7 +3002,7 @@ setInterval(async () => {
     const buf = jbn > last.jbn ? ((jb - last.jb) / (jbn - last.jbn)) * 1000 : 0;
     let viewed = [];
     try { viewed = JSON.parse(lastView || '[]').map((e) => e.i); } catch {}
-    $('stats').textContent = `${viewed.map((i) => `${i + 1}:${fps[i]}`).join(' ')} fps · ${mbps.toFixed(1)} Mbps · 왕복 ${rtt != null ? Math.round(rtt * 1000) : '?'} ms · 버퍼 ${Math.round(buf)} ms · ${relay ? 'TURN 중계' : 'P2P 직접'}`;
+    $('stats').textContent = `${viewed.map((i) => `${i + 1}:${fps[i]}`).join(' ')} fps · ${mbps.toFixed(1)} Mbps · ${tr('왕복 {0} ms', rtt != null ? Math.round(rtt * 1000) : '?')} · ${tr('버퍼 {0} ms', Math.round(buf))} · ${relay ? tr('TURN 중계') : tr('P2P 직접')}`;
     const late = hitch.conn === conn ? { f: hitch.frames, n: hitch.n, ms: Math.round(hitch.ms), worst: Math.round(hitch.worst), rn: hitch.rn, rms: Math.round(hitch.rms) } : { f: 0, n: 0, ms: 0, worst: 0, rn: 0, rms: 0 };
     samples.push({ t: Date.now(), conn, viewed, fps, res, mbps, rtt: rtt != null ? rtt * 1000 : null, buf, relay, lost, recv, freezes, freezeDur, dropped, nack, pli, late, decoder, host: hostStat });
     if (samples.length > 45) samples.shift(); // about 90 seconds
@@ -2926,10 +3019,11 @@ setInterval(async () => {
   last = { pc: my, bytes, t: now, jb, jbn };
 }, 2000);
 
-// Plain-text summary of the last ~90 seconds, for finding out why it feels slow.
+// Plain-text summary of the last ~90 seconds, for finding out why it feels slow. Written to be sent to whoever helps:
+// in Korean, else in English (its texts are in host/i18n/page-report.json, which has English only).
 function buildReport() {
   const n = samples.length;
-  if (n < 3) return '아직 측정값이 부족합니다. 접속하고 10초쯤 사용한 뒤 "새로 고침"을 눌러 주세요.';
+  if (n < 3) return tr('아직 측정값이 부족합니다. 접속하고 10초쯤 사용한 뒤 "새로 고침"을 눌러 주세요.');
   const a = samples[0], b = samples[n - 1];
   const num = (list) => list.filter((x) => typeof x === 'number' && isFinite(x));
   const avg = (list) => { const v = num(list); return v.length ? v.reduce((x, y) => x + y, 0) / v.length : 0; };
@@ -2938,28 +3032,28 @@ function buildReport() {
   const c = samples.find((x) => x.conn === b.conn);
   const pk = (b.lost - c.lost) + (b.recv - c.recv);
   const L = [];
-  L.push(`My Remote 진단 — ${new Date().toLocaleString()}`);
-  L.push(`구간: 최근 ${Math.round((b.t - a.t) / 1000)}초`);
-  L.push(`브라우저: ${(navigator.userAgent.match(/(Edg|Chrome)\/[\d.]+/g) || ['?']).pop()} · 이 화면 ${screen.width}x${screen.height} 배율 ${window.devicePixelRatio}`);
-  L.push('창: ' + liveViews().map((v) => `[${label(v.sel)} ${v.fit} ${v.root.clientWidth}x${v.root.clientHeight}${v.win.document.fullscreenElement ? ' 전체화면' : ''}]`).join(' '));
-  L.push('호스트 모니터: ' + monitors.map((m) => `${m.width}x${m.height}${m.hdr ? ' (HDR 켜짐)' : ''}`).join(', '));
-  L.push(`연결: ${b.relay ? 'TURN 중계' : 'P2P 직접'} · 왕복 지연 평균 ${Math.round(avg(samples.map((x) => x.rtt)))} ms, 최대 ${Math.round(Math.max(0, ...num(samples.map((x) => x.rtt))))} ms`);
+  L.push(tr('My Remote 진단 — {0}', new Date().toLocaleString(LANG)));
+  L.push(tr('구간: 최근 {0}초', Math.round((b.t - a.t) / 1000)));
+  L.push(tr('브라우저: {0} · 이 화면 {1}x{2} 배율 {3}', (navigator.userAgent.match(/(Edg|Chrome)\/[\d.]+/g) || ['?']).pop(), screen.width, screen.height, window.devicePixelRatio));
+  L.push(tr('창: {0}', liveViews().map((v) => `[${label(v.sel)} ${v.fit} ${v.root.clientWidth}x${v.root.clientHeight}${v.win.document.fullscreenElement ? ' ' + tr('전체화면') : ''}]`).join(' ')));
+  L.push(tr('호스트 모니터: {0}', monitors.map((m) => `${m.width}x${m.height}${m.hdr ? ' ' + tr('(HDR 켜짐)') : ''}`).join(', ')));
+  L.push(tr('연결: {0} · 왕복 지연 평균 {1} ms, 최대 {2} ms', b.relay ? tr('TURN 중계') : tr('P2P 직접'), Math.round(avg(samples.map((x) => x.rtt))), Math.round(Math.max(0, ...num(samples.map((x) => x.rtt))))));
   const h = b.host;
   const from = { client: '이 클라이언트에서 고름', config: '호스트 설정', auto: '자동' }[h && h.from];
-  L.push(`코덱: ${h ? h.codec : offerInfo.codec || '?'}${from ? ` (${from})` : ''} · 인코더 ${h ? h.enc : '?'} · 디코더 ${b.decoder || '?'}`);
-  L.push(`대역폭: 수신 평균 ${avg(samples.map((x) => x.mbps)).toFixed(1)} Mbps (최대 ${Math.max(...num(samples.map((x) => x.mbps))).toFixed(1)})${h ? ` · 호스트 목표 ${h.targetMbps} / 가용 ${h.availMbps} Mbps` : ''}`);
+  L.push(tr('코덱: {0} · 인코더 {1} · 디코더 {2}', (h ? h.codec : offerInfo.codec || '?') + (from ? ` (${tr(from)})` : ''), h ? h.enc : '?', b.decoder || '?'));
+  L.push(tr('대역폭: 수신 평균 {0} Mbps (최대 {1})', avg(samples.map((x) => x.mbps)).toFixed(1), Math.max(...num(samples.map((x) => x.mbps))).toFixed(1)) + (h ? ' · ' + tr('호스트 목표 {0} / 가용 {1} Mbps', h.targetMbps, h.availMbps) : ''));
   for (const i of b.viewed) {
     const hm = samples.map((x) => x.host && x.host.mons && x.host.mons[i]).filter(Boolean);
     const limits = [...new Set(hm.map((x) => x.limit))].join(',') || '?';
-    L.push(`모니터 ${i + 1}: 수신 fps 최소/평균/최대 ${mmm(samples.map((x) => x.fps[i]))} · 수신 해상도 ${b.res[i]} · 호스트 캡처 fps ${mmm(hm.map((x) => x.cap))} → 인코딩 fps ${mmm(hm.map((x) => x.enc))} · 제한 요인 ${limits}`);
+    L.push(tr('모니터 {0}: 수신 fps 최소/평균/최대 {1} · 수신 해상도 {2} · 호스트 캡처 fps {3} → 인코딩 fps {4} · 제한 요인 {5}', i + 1, mmm(samples.map((x) => x.fps[i])), b.res[i], mmm(hm.map((x) => x.cap)), mmm(hm.map((x) => x.enc)), limits));
   }
-  L.push(`끊김: 늦게 표시된 프레임 ${b.late.n - c.late.n}회 (캡처 간격보다 ${HITCH_MS} ms 넘게 늦음, 합계 ${b.late.ms - c.late.ms} ms, 가장 늦은 것 ${b.late.worst} ms, 표시된 프레임 ${b.late.f - c.late.f})`
-    + ` · 그중 늦게 도착 ${b.late.rn - c.late.rn}회 (합계 ${b.late.rms - c.late.rms} ms; 나머지는 이 PC에서 늦게 그려진 것)`
-    + ` · 버린 프레임 ${b.dropped - c.dropped} · 패킷 손실 ${pk > 0 ? (((b.lost - c.lost) / pk) * 100).toFixed(2) : '0'}% · 재전송 요청 ${b.nack - c.nack} · 키프레임 요청 ${b.pli - c.pli}`
-    + (c !== a ? ` (다시 연결된 뒤 ${Math.round((b.t - c.t) / 1000)}초 동안)` : ''));
-  L.push(`엔진의 화면 멈춤 집계: ${b.freezes - c.freezes}회 (${(b.freezeDur - c.freezeDur).toFixed(1)}초; 호스트 화면이 그대로라 프레임이 없던 시간도 셉니다)`);
-  L.push(`수신 버퍼 지연: 평균 ${Math.round(avg(samples.map((x) => x.buf)))} ms, 최대 ${Math.round(Math.max(0, ...num(samples.map((x) => x.buf))))} ms`);
-  L.push(`화질 모드: ${mode} · 호스트 커서 숨김: ${offerInfo.cursorHidden ? '예' : '아니오'}`);
+  L.push(tr('끊김: 늦게 표시된 프레임 {0}회 (캡처 간격보다 {1} ms 넘게 늦음, 합계 {2} ms, 가장 늦은 것 {3} ms, 표시된 프레임 {4})', b.late.n - c.late.n, HITCH_MS, b.late.ms - c.late.ms, b.late.worst, b.late.f - c.late.f)
+    + ' · ' + tr('그중 늦게 도착 {0}회 (합계 {1} ms; 나머지는 이 PC에서 늦게 그려진 것)', b.late.rn - c.late.rn, b.late.rms - c.late.rms)
+    + ' · ' + tr('버린 프레임 {0} · 패킷 손실 {1}% · 재전송 요청 {2} · 키프레임 요청 {3}', b.dropped - c.dropped, pk > 0 ? (((b.lost - c.lost) / pk) * 100).toFixed(2) : '0', b.nack - c.nack, b.pli - c.pli)
+    + (c !== a ? ' ' + tr('(다시 연결된 뒤 {0}초 동안)', Math.round((b.t - c.t) / 1000)) : ''));
+  L.push(tr('엔진의 화면 멈춤 집계: {0}회 ({1}초; 호스트 화면이 그대로라 프레임이 없던 시간도 셉니다)', b.freezes - c.freezes, (b.freezeDur - c.freezeDur).toFixed(1)));
+  L.push(tr('수신 버퍼 지연: 평균 {0} ms, 최대 {1} ms', Math.round(avg(samples.map((x) => x.buf))), Math.round(Math.max(0, ...num(samples.map((x) => x.buf))))));
+  L.push(tr('화질 모드: {0} · 호스트 커서 숨김: {1}', mode, offerInfo.cursorHidden ? tr('예') : tr('아니오')));
   return L.join('\n');
 }
 
@@ -2972,9 +3066,9 @@ store.set('mr_forget_key', null);
 try { sessionStorage.removeItem('mr_forget_key'); } catch {}
 if (DEVICE) {
   // This PC connects with its own token: there is no key to give, only to connect again.
-  $('keyHint').textContent = '이 PC는 호스트에 기기로 등록되어 있어 키 없이 접속합니다.';
+  $('keyHint').textContent = tr('이 PC는 호스트에 기기로 등록되어 있어 키 없이 접속합니다.');
   $('key').style.display = 'none';
-  $('go').textContent = '다시 연결';
+  $('go').textContent = tr('다시 연결');
 }
 if (boot) {
   try { respread = JSON.parse(sessionStorage.getItem('mr_respread') || 'null'); sessionStorage.removeItem('mr_respread'); } catch {}

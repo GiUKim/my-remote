@@ -58,6 +58,50 @@ const LOADER = alt || homeAlt ? path.resolve(alt || homeAlt) : path.join(__dirna
 // asked about an ordinary one; a required one is installed without asking and only the restart is
 // announced. Run from a source folder there is no shell.
 const APP = global.__mrApp || null;
+
+// ---- the language of the user interface (host/i18n.js, 2026-11-20) ---------------------------------------------
+// This PC's choice, kept with the host's in host/settings.js (either face changes it, both follow), else the
+// system's. The start screen and the list read and set it (i18n:*), a PC's window through mrShell (lang, setLang,
+// onLang: the page that host sent has its texts from the loader and that host); every window hears of a change at
+// once. The test runs show Korean, which their checks read, unless MY_REMOTE_LANG names another.
+const I18N = require('../host/i18n');
+const settings = require('../host/settings');
+const CLIENT_STRINGS = (() => { try { return require('../host/i18n/client.json'); } catch { return {}; } })();
+let langStore = null, LANG = 'ko', t = I18N.translator('ko'), langReady = false;
+const langFile = () => langStore || (langStore = settings.create(settings.fileFor(app, testDir ? app.getPath('userData') : '')));
+function systemLang() {
+  if (process.env.MY_REMOTE_LANG) return I18N.normalize(process.env.MY_REMOTE_LANG) || 'en';
+  if (testDir) return 'ko';
+  let prefs = [];
+  try { prefs = app.getPreferredSystemLanguages(); } catch {}
+  return I18N.pick([...prefs, app.getLocale()]);
+}
+function useLang(l) { LANG = l; t = I18N.translator(l, I18N.table(CLIENT_STRINGS, l)); shell.useT(t); }
+function langChanged(l) {
+  useLang(l);
+  for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('i18n:changed', l);
+}
+function initLang() {
+  if (langReady) return;
+  langReady = true;
+  useLang(I18N.normalize(langFile().get().lang) || systemLang());
+  langFile().watch((now) => { const l = I18N.normalize(now.lang); if (l && l !== LANG) langChanged(l); });
+}
+function setLang(l) {
+  initLang();
+  const n = I18N.normalize(l);
+  if (!n) return LANG;
+  if (I18N.normalize(langFile().get().lang) !== n) { try { langFile().set({ lang: n }); } catch (e) { console.error('[client] saving the language:', e.message); } }
+  if (n !== LANG) langChanged(n);
+  return LANG;
+}
+ipcMain.on('i18n:sync', (e) => { initLang(); e.returnValue = { lang: LANG, strings: I18N.table(CLIENT_STRINGS, LANG) }; });
+ipcMain.on('i18n:lang', (e) => { initLang(); e.returnValue = LANG; });
+ipcMain.handle('i18n:set', (_e, l) => setLang(String(l || '')));
+ipcMain.handle('i18n:strings', (_e, l) => I18N.table(CLIENT_STRINGS, I18N.normalize(l) || 'ko'));
+// Release notes in this language, else English, else Korean (release/notes/<version>.json has ko and en).
+const notesIn = (notes) => (notes && (notes[LANG] || notes.en || notes.ko)) || [];
+
 // The one entry's id, which the host takes too (appsync.APP_ID): the shell gives this face the same one.
 if (APP && process.platform === 'win32') app.setAppUserModelId(appsync.APP_ID);
 // Asks about an update on offer (set by watchUpdates); `again`: the person pressed "업데이트 확인", so one
@@ -67,7 +111,7 @@ let offerUpdate = null;
 function watchUpdates(win) {
   const u = APP.update;
   let asked = '', showing = ''; // showing: a question about that version is open (a check that finds it asks at once, see onChange)
-  const notes = (a) => ((a.notes && a.notes.ko) || []).map((s) => '· ' + s).join('\n');
+  const notes = (a) => notesIn(a.notes).map((s) => '· ' + s).join('\n');
   const parentOf = () => { const w = typeof win === 'function' ? win() : win; return w && !w.isDestroyed() ? w : null; };
   offerUpdate = async (a, again) => {
     const parent = parentOf();
@@ -77,21 +121,21 @@ function watchUpdates(win) {
   };
   const ask = async (parent, a) => {
     if (a.kind === 'package') {
-      const r = await dialog.showMessageBox(parent, { type: 'info', noLink: true, buttons: ['내려받기 페이지 열기', '나중에'], defaultId: 0, cancelId: 1,
-        message: `새 버전 ${a.version}이 있습니다`, detail: '이 버전은 새 설치 파일이 필요합니다. 내려받아 다시 설치해 주세요.\n\n' + notes(a) });
+      const r = await dialog.showMessageBox(parent, { type: 'info', noLink: true, buttons: [t('내려받기 페이지 열기'), t('나중에')], defaultId: 0, cancelId: 1,
+        message: t('새 버전 {0}이 있습니다', a.version), detail: t('이 버전은 새 설치 파일이 필요합니다. 내려받아 다시 설치해 주세요.') + '\n\n' + notes(a) });
       if (r.response === 0 && APP.downloads) openWith.openExternal(APP.downloads).catch(() => {});
       return;
     }
-    const r = await dialog.showMessageBox(parent, { type: 'question', noLink: true, buttons: ['지금 업데이트', '나중에'], defaultId: 0, cancelId: 1,
-      message: `새 버전 ${a.version}이 있습니다. 지금 업데이트할까요?`, detail: `${notes(a)}\n\n업데이트하면 앱이 다시 시작됩니다. 원격 접속 중이면 다시 연결해야 합니다. 이 PC의 호스트도 같은 버전이 됩니다(켜져 있으면 원격 접속이 없을 때 다시 시작합니다). (현재 v${APP.version})`.trim() });
-    if (r.response === 0) u.install().catch((e) => dialog.showErrorBox('My Remote', '업데이트하지 못했습니다: ' + e.message));
+    const r = await dialog.showMessageBox(parent, { type: 'question', noLink: true, buttons: [t('지금 업데이트'), t('나중에')], defaultId: 0, cancelId: 1,
+      message: t('새 버전 {0}이 있습니다. 지금 업데이트할까요?', a.version), detail: `${notes(a)}\n\n${t('업데이트하면 앱이 다시 시작됩니다. 원격 접속 중이면 다시 연결해야 합니다. 이 PC의 호스트도 같은 버전이 됩니다(켜져 있으면 원격 접속이 없을 때 다시 시작합니다). (현재 v{0})', APP.version)}`.trim() });
+    if (r.response === 0) u.install().catch((e) => dialog.showErrorBox('My Remote', t('업데이트하지 못했습니다: {0}', e.message)));
   };
   u.onChange((s) => { if (s.state === 'available') offerUpdate(s.available, false); });
   u.setCanRestart(async (s) => {
     const parent = parentOf();
     if (!parent) return true;
-    const told = dialog.showMessageBox(parent, { type: 'warning', noLink: true, buttons: ['다시 시작'],
-      message: `중요 업데이트 ${s.available ? s.available.version : ''}을 설치했습니다`, detail: '이 버전의 심각한 문제를 고친 업데이트입니다. 확인을 누르면 앱이 다시 시작됩니다(10분 뒤에는 자동으로 다시 시작합니다).' });
+    const told = dialog.showMessageBox(parent, { type: 'warning', noLink: true, buttons: [t('다시 시작')],
+      message: t('중요 업데이트 {0}을 설치했습니다', s.available ? s.available.version : ''), detail: t('이 버전의 심각한 문제를 고친 업데이트입니다. 확인을 누르면 앱이 다시 시작됩니다(10분 뒤에는 자동으로 다시 시작합니다).') });
     await Promise.race([told, new Promise((r) => setTimeout(r, 10 * 60e3))]);
     return true;
   });
@@ -107,6 +151,7 @@ function appUp(win, parent) {
 // ---- one window on one loader (--loader=) ------------------------------------------------
 function single() {
   app.whenReady().then(() => {
+    initLang();
     const win = new BrowserWindow({
       width: 1280, height: 800, title: 'My Remote' + (APP ? ` ${APP.version}` : ''), autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
       webPreferences: { preload: shell.PRELOAD, backgroundThrottling: false },
@@ -146,7 +191,7 @@ function listMode() {
   let home = null;
 
   const changed = () => { if (home && !home.isDestroyed()) home.webContents.send('home:changed'); };
-  const titleOf = (h) => `${h.name || h.pc || '이름 없는 PC'} · My Remote`;
+  const titleOf = (h) => `${h.name || h.pc || t('이름 없는 PC')} · My Remote`;
   const retitle = (id) => { const w = open.get(id), h = hosts.get(id); if (w && !w.isDestroyed() && h) w.setTitle(titleOf(h)); };
 
   function showHome() {
@@ -221,7 +266,7 @@ function listMode() {
     // The entry for this app in the Start menu (the app menu on Linux): offered where there is none yet.
     // Never in a test (--loader): the Start menu is the person's (a harness that pressed a button with the
     // box ticked once replaced this PC's real shortcuts with one to the development folder; put back).
-    shortcut: { can: !!APP && !testDir && (process.platform === 'win32' || process.platform === 'linux'), has: appsync.hasEntry(entryOpts()), where: process.platform === 'linux' ? '앱 메뉴' : '시작 메뉴' },
+    shortcut: { can: !!APP && !testDir && (process.platform === 'win32' || process.platform === 'linux'), has: appsync.hasEntry(entryOpts()), where: process.platform === 'linux' ? 'menu' : 'start' },
   }));
   ipcMain.handle('start:choose', (e, what, o) => {
     if (!fromLauncher(e) || (what !== 'host' && what !== 'client')) return false;
@@ -357,7 +402,7 @@ function listMode() {
     const width = Math.min(1280, area.width), height = Math.min(800, area.height);
     const win = new BrowserWindow({
       width, height, x: area.x + Math.max(0, Math.round((area.width - width) / 2)), y: area.y + Math.max(0, Math.round((area.height - height) / 2)),
-      title: '1회용 접속 · My Remote', autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
+      title: t('1회용 접속') + ' · My Remote', autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
       webPreferences: { preload: shell.PRELOAD, backgroundThrottling: false, partition: 'onetime-' + (++codeWins) },
     });
     win.on('page-title-updated', (e) => e.preventDefault());
@@ -396,8 +441,8 @@ function listMode() {
     console.log(`[client] version ${v} was installed by the host: restarting into it${open.size ? ' when the person says so' : ''}`);
     if (!open.size) return again();
     const parent = (home && !home.isDestroyed() && home) || [...open.values()].find((w) => !w.isDestroyed());
-    dialog.showMessageBox(parent, { type: 'question', noLink: true, buttons: ['다시 시작', '나중에'], defaultId: 0, cancelId: 1,
-      message: `새 버전 ${v}이 설치되었습니다. 지금 다시 시작할까요?`, detail: '호스트에서 업데이트했습니다. 다시 시작하면 클라이언트 앱도 새 버전이 됩니다. 열려 있는 원격 창은 다시 연결해야 합니다.' })
+    dialog.showMessageBox(parent, { type: 'question', noLink: true, buttons: [t('다시 시작'), t('나중에')], defaultId: 0, cancelId: 1,
+      message: t('새 버전 {0}이 설치되었습니다. 지금 다시 시작할까요?', v), detail: t('호스트에서 업데이트했습니다. 다시 시작하면 클라이언트 앱도 새 버전이 됩니다. 열려 있는 원격 창은 다시 연결해야 합니다.') })
       .then((r) => { if (r.response === 0) again(); }, () => {});
   }
 
@@ -449,6 +494,7 @@ function listMode() {
   });
 
   app.whenReady().then(async () => {
+    initLang();
     const win = LAUNCHER ? showLauncher() : showHome();
     appUp(win, () => home || launcher); // questions about updates go to whichever list window is open (it can be closed and opened again)
     if (APP && !testDir) {

@@ -11,6 +11,14 @@ const Devices = require('./devices'); // client apps with a token of their own i
 const AccessLog = require('./accesslog'); // what came to this host, kept on this PC (see accesslog.js)
 const totp = require('./totp'); // an authenticator app's codes, for those who turn them on (see totp.js)
 const cycle = require('./cycle'); // connections that come back on themselves (see cycle.js)
+// The language of the user interface (host/i18n.js, 2026-11-20): this PC's choice, kept with the client app's in
+// host/settings.js, else the system's. The page reads it (lang-sync), sets it (lang-set) and hears of a change
+// the client app made (lang-changed). The automated runs show Korean, which their checks read, unless
+// MY_REMOTE_LANG names another.
+const I18N = require('./i18n');
+const settings = require('./settings');
+const HOST_STRINGS = (() => { try { return require('./i18n/host.json'); } catch { return {}; } })();
+let langStore = null, LANG = 'ko', t = I18N.translator('ko'), trayLive = false;
 // This start of the host, for cycle.js: in running.json (a client app on this PC names it in its hello) and in
 // every offer (a client app keeps it in its live.json while it controls this PC). Random, so it says nothing.
 const INSTANCE = crypto.randomBytes(12).toString('base64url');
@@ -519,6 +527,33 @@ if (ISOLATED) {
   if (benchCfg) for (const [k, v] of Object.entries(benchCfg.switches || {})) app.commandLine.appendSwitch(k, String(v));
 }
 const cfgPath = () => path.join(app.getPath('userData'), 'config.json');
+const langFile = () => langStore || (langStore = settings.create(settings.fileFor(app, ISOLATED ? app.getPath('userData') : '')));
+function systemLang() {
+  if (process.env.MY_REMOTE_LANG) return I18N.normalize(process.env.MY_REMOTE_LANG) || 'en';
+  if (ISOLATED) return 'ko';
+  let prefs = [];
+  try { prefs = app.getPreferredSystemLanguages(); } catch {}
+  return I18N.pick([...prefs, app.getLocale()]);
+}
+function useLang(l) { LANG = l; t = I18N.translator(l, I18N.table(HOST_STRINGS, l)); }
+function langChanged(l) {
+  useLang(l);
+  if (tray) { tray.setContextMenu(trayMenu()); setTray(trayLive); }
+  if (win && !win.isDestroyed()) win.webContents.send('lang-changed', l);
+}
+function initLang() {
+  useLang(I18N.normalize(langFile().get().lang) || systemLang());
+  langFile().watch((now) => { const l = I18N.normalize(now.lang); if (l && l !== LANG) langChanged(l); });
+}
+function setLang(l) {
+  const n = I18N.normalize(l);
+  if (!n) return LANG;
+  try { langFile().set({ lang: n }); } catch (e) { console.error('[host] saving the language:', e.message); }
+  if (n !== LANG) langChanged(n);
+  return LANG;
+}
+// Release notes in this language, else English, else Korean (release/notes/<version>.json has ko and en).
+const notesIn = (notes) => (notes && (notes[LANG] || notes.en || notes.ko)) || [];
 
 // What this host says (its own lines and its page's, `[host] ...`) also goes into host.log in its profile,
 // one file of up to a megabyte and the one before it (host.old.log): an installed host prints to nowhere,
@@ -595,19 +630,19 @@ async function loadConfig() {
   cfgBackup = '';
   const problem = (ko, en) => { cfgIssue = cfgIssue || ko; console.warn(`[host] WARNING: ${cfgPath()} ${en}`); };
   let text = null, saved = {}, keyEnc = '';
-  try { text = fs.readFileSync(cfgPath(), 'utf8'); } catch (e) { if (e.code !== 'ENOENT') problem(`설정 파일을 읽을 수 없습니다 (${e.code || e.message}).`, `cannot be read (${e.code || e.message})`); }
+  try { text = fs.readFileSync(cfgPath(), 'utf8'); } catch (e) { if (e.code !== 'ENOENT') problem(t('설정 파일을 읽을 수 없습니다 ({0}).', e.code || e.message), `cannot be read (${e.code || e.message})`); }
   if (text !== null) {
     const body = stripBom(text);
     try {
       saved = JSON.parse(body);
       if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('not an object');
       keyEnc = typeof saved.keyEnc === 'string' ? saved.keyEnc : '';
-      if (!keyEnc) problem('설정 파일에 접속 키가 없습니다.', 'has no access key');
+      if (!keyEnc) problem(t('설정 파일에 접속 키가 없습니다.'), 'has no access key');
     } catch (e) {
       saved = {};
       // Only where the mistake is: the parser's message can quote the file, and the file holds the key.
       const at = /position (\d+)/.exec(e.message), line = at ? body.slice(0, Number(at[1])).split('\n').length : 0;
-      problem(`설정 파일이 올바른 JSON 형식이 아닙니다${line ? ` (${line}번째 줄 근처)` : ''}.`, `is not valid JSON${line ? ` (near line ${line})` : ''}`);
+      problem(line ? t('설정 파일이 올바른 JSON 형식이 아닙니다 ({0}번째 줄 근처).', line) : t('설정 파일이 올바른 JSON 형식이 아닙니다.'), `is not valid JSON${line ? ` (near line ${line})` : ''}`);
       // The key alone can usually still be found, and remote access then goes on as before. So is what keeps
       // new devices out: a file broken by accident (or on purpose, from a session) must not turn that off.
       keyEnc = keyEncIn(body);
@@ -631,8 +666,8 @@ async function loadConfig() {
     if (!validKey(key)) {
       key = null;
       problem(process.platform === 'win32'
-        ? '설정 파일의 접속 키를 이 Windows 계정으로 풀 수 없습니다 (다른 PC에서 옮겨 온 프로필이거나, 관리자가 계정 암호를 초기화한 경우 등).'
-        : '설정 파일의 접속 키를 풀 수 없습니다 (키링이 잠겨 있으면 잠금을 푼 뒤 호스트를 다시 시작하세요).', 'holds an access key that cannot be decrypted');
+        ? t('설정 파일의 접속 키를 이 Windows 계정으로 풀 수 없습니다 (다른 PC에서 옮겨 온 프로필이거나, 관리자가 계정 암호를 초기화한 경우 등).')
+        : t('설정 파일의 접속 키를 풀 수 없습니다 (키링이 잠겨 있으면 잠금을 푼 뒤 호스트를 다시 시작하세요).'), 'holds an access key that cannot be decrypted');
     }
   }
   if (!key && text === null && !cfgIssue) { // the first start: no file yet
@@ -641,7 +676,7 @@ async function loadConfig() {
     // did until the person turns it on: an update must never lock anybody out of a PC they reach remotely.
     // (The free pass lasts a day: an install that is only ever reached from a browser must not keep it.)
     if (!ISOLATED) { Object.assign(savedCfg, { confirmNew: true, firstFree: Date.now() + 24 * 3600e3 }); cfg.confirmNew = true; }
-    try { const k = newKey(); await saveConfig(k); key = k; } catch (e) { problem(`새 접속 키를 저장하지 못했습니다 (${e.code || e.message}).`, `could not be written (${e.code || e.message})`); }
+    try { const k = newKey(); await saveConfig(k); key = k; } catch (e) { problem(t('새 접속 키를 저장하지 못했습니다 ({0}).', e.code || e.message), `could not be written (${e.code || e.message})`); }
   }
   // Only a file that is fine otherwise is rewritten for that; the key stays the same.
   if (key && again && !cfgIssue) { try { await saveConfig(key); } catch (e) { console.error('[host] encrypting the key anew failed:', e.code || e.message); } }
@@ -682,9 +717,9 @@ function writeConfigFile(text) {
 // The encrypted key is decrypted again before it is written: a file whose key cannot be read back would
 // cost every client its access.
 async function saveConfig(key) {
-  if (!(await encryptionReady())) throw new Error('OS 암호화 저장소(DPAPI)를 사용할 수 없습니다');
+  if (!(await encryptionReady())) throw new Error(t('OS 암호화 저장소(DPAPI)를 사용할 수 없습니다'));
   const enc = await encryptKey(key); // Windows: DPAPI, only this Windows user can decrypt
-  if ((await decryptKey(enc.toString('base64'))).text !== key) throw new Error('암호화한 키를 다시 풀 수 없습니다');
+  if ((await decryptKey(enc.toString('base64'))).text !== key) throw new Error(t('암호화한 키를 다시 풀 수 없습니다'));
   if (cfgIssue) cfgBackup = backupConfig(); // the file as it was, before it is replaced
   writeConfigFile(JSON.stringify({ ...savedCfg, keyEnc: enc.toString('base64') }, null, 2));
   cfgIssue = '';
@@ -694,10 +729,10 @@ async function saveConfig(key) {
 async function askForKey() {
   for (;;) {
     const { response } = await dialog.showMessageBox({
-      type: 'error', title: 'My Remote Host', noLink: true, buttons: ['다시 시도', '새 키 발급', '종료'], defaultId: 0, cancelId: 2,
-      message: '접속 키를 불러오지 못했습니다',
-      detail: `${cfgIssue}\n\n${cfgPath()}${cfgBackup ? `\n원래 파일의 사본: ${path.basename(cfgBackup)}` : ''}\n\n` +
-        "원인을 고쳤으면 '다시 시도'를 누르세요. '새 키 발급'은 새 접속 키를 만들어 저장합니다. 기존 키로는 더 이상 접속할 수 없으므로 새 키를 클라이언트에 다시 알려 주어야 합니다.",
+      type: 'error', title: 'My Remote Host', noLink: true, buttons: [t('다시 시도'), t('새 키 발급'), t('종료')], defaultId: 0, cancelId: 2,
+      message: t('접속 키를 불러오지 못했습니다'),
+      detail: `${cfgIssue}\n\n${cfgPath()}${cfgBackup ? '\n' + t('원래 파일의 사본: {0}', path.basename(cfgBackup)) : ''}\n\n` +
+        t("원인을 고쳤으면 '다시 시도'를 누르세요. '새 키 발급'은 새 접속 키를 만들어 저장합니다. 기존 키로는 더 이상 접속할 수 없으므로 새 키를 클라이언트에 다시 알려 주어야 합니다."),
     });
     if (response === 0) { await loadConfig(); if (cfg.key) return true; continue; }
     if (response !== 1) return false;
@@ -707,7 +742,7 @@ async function askForKey() {
       cfg.key = key;
       return true;
     } catch (e) {
-      cfgIssue = `새 키를 저장하지 못했습니다 (${e.code || e.message}).`;
+      cfgIssue = t('새 키를 저장하지 못했습니다 ({0}).', e.code || e.message);
       console.error('[host] saving a new key failed:', e.code || e.message);
     }
   }
@@ -827,7 +862,8 @@ function icon(live) {
   return nativeImage.createFromBitmap(buf, { width: n, height: n });
 }
 function setTray(live) {
-  if (tray) { tray.setImage(icon(live)); tray.setToolTip('My Remote Host — ' + (live ? '원격 접속 중' : '대기 중')); }
+  trayLive = live;
+  if (tray) { tray.setImage(icon(live)); tray.setToolTip('My Remote Host — ' + (live ? t('원격 접속 중') : t('대기 중'))); }
 }
 function showWindow() { if (win) { win.show(); win.focus(); } }
 // 키 복사 puts the key on the clipboard. A minute later it is taken off again if it is still there, so
@@ -1046,13 +1082,14 @@ async function askUpdate() {
   if (askingUpdate || !a || s.state !== 'available' || a.required || !win || win.isDestroyed()) return;
   askingUpdate = true;
   try {
-    const pack = a.kind === 'package', notes = ((a.notes && a.notes.ko) || []).map((x) => '· ' + x).join('\n');
+    const pack = a.kind === 'package', notes = notesIn(a.notes).map((x) => '· ' + x).join('\n');
     const r = await dialog.showMessageBox(win, {
       type: 'question', title: 'My Remote Host', noLink: true, defaultId: 0, cancelId: 1,
-      buttons: [pack ? '내려받기 페이지 열기' : '지금 업데이트', '나중에'],
-      message: pack ? `새 버전 ${a.version}이 있습니다` : `새 버전 ${a.version}이 있습니다. 지금 업데이트할까요?`,
-      detail: [pack ? '이 버전은 새 설치 파일이 필요합니다. 내려받아 다시 설치해 주세요(접속 키와 설정은 그대로 남습니다).' : '', notes,
-        pack ? '' : `업데이트하면 호스트가 다시 시작됩니다${sessionLive ? '. 접속 중인 클라이언트는 잠시 뒤 다시 연결됩니다' : ''}. (현재 v${APP.version})`].filter(Boolean).join('\n\n'),
+      buttons: [pack ? t('내려받기 페이지 열기') : t('지금 업데이트'), t('나중에')],
+      message: pack ? t('새 버전 {0}이 있습니다', a.version) : t('새 버전 {0}이 있습니다. 지금 업데이트할까요?', a.version),
+      detail: [pack ? t('이 버전은 새 설치 파일이 필요합니다. 내려받아 다시 설치해 주세요(접속 키와 설정은 그대로 남습니다).') : '', notes,
+        pack ? '' : sessionLive ? t('업데이트하면 호스트가 다시 시작됩니다. 접속 중인 클라이언트는 잠시 뒤 다시 연결됩니다. (현재 v{0})', APP.version)
+          : t('업데이트하면 호스트가 다시 시작됩니다. (현재 v{0})', APP.version)].filter(Boolean).join('\n\n'),
     });
     if (r.response === 0) await (pack ? downloadsPage() : installUpdate());
   } finally { askingUpdate = false; }
@@ -1068,10 +1105,10 @@ function offerAssist() {
     notify: send,
     ask: async () => (await dialog.showMessageBox(win, {
       type: 'question', title: 'My Remote Host', noLink: true, defaultId: 0, cancelId: 1,
-      message: '잠금 화면에서도 원격 조종을 켤까요? (권장)',
-      detail: '켜 두면 이 PC가 잠겨 있을 때도 다른 PC에서 잠금 화면을 보고 비밀번호를 입력해 잠금을 풀 수 있습니다. Chrome 원격 데스크톱과 같은 방식이고, 비밀번호는 그대로 필요합니다.\n\n' +
-        '"켜기"를 누르면 Windows가 관리자 승인(UAC)을 한 번 묻습니다. 나중에 이 창의 "잠금 화면에서도 원격 조종"에서 켜거나 끌 수 있습니다.',
-      buttons: ['켜기 (권장)', '나중에'],
+      message: t('잠금 화면에서도 원격 조종을 켤까요? (권장)'),
+      detail: t('켜 두면 이 PC가 잠겨 있을 때도 다른 PC에서 잠금 화면을 보고 비밀번호를 입력해 잠금을 풀 수 있습니다. Chrome 원격 데스크톱과 같은 방식이고, 비밀번호는 그대로 필요합니다.') + '\n\n' +
+        t('"켜기"를 누르면 Windows가 관리자 승인(UAC)을 한 번 묻습니다. 나중에 이 창의 "잠금 화면에서도 원격 조종"에서 켜거나 끌 수 있습니다.'),
+      buttons: [t('켜기 (권장)'), t('나중에')],
     })).response === 0,
   }).then((r) => console.log('[assist] offered at the first start: ' + r), (e) => console.error('[assist] offer', e));
 }
@@ -1080,17 +1117,21 @@ function reloadCrashedPage() {
   clearTimeout(reloadTimer);
   if (win && !win.isDestroyed() && win.webContents.isCrashed()) win.loadFile(path.join(__dirname, 'host.html'));
 }
+// Made again when the language changes (langChanged).
+function trayMenu() {
+  return Menu.buildFromTemplate([
+    { label: t('열기'), click: showWindow },
+    { label: t('원격 연결 끊기'), click: () => win && win.webContents.send('kick') },
+    // From a source folder: the code on disk (git pull). The installed app: a look at the update feed.
+    APP && APP.update ? { label: t('업데이트 확인'), click: () => { showWindow(); APP.update.check().then(askUpdate); } } : { label: t('다시 시작 (업데이트 적용)'), click: () => restart('the tray (a source folder)') },
+    { type: 'separator' },
+    { label: t('종료'), click: () => { quitAs('quit', 'the tray'); quitting = true; app.quit(); } },
+  ]);
+}
 function createTray() {
   tray = new Tray(icon(false));
-  tray.setToolTip('My Remote Host — 대기 중');
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '열기', click: showWindow },
-    { label: '원격 연결 끊기', click: () => win && win.webContents.send('kick') },
-    // From a source folder: the code on disk (git pull). The installed app: a look at the update feed.
-    APP && APP.update ? { label: '업데이트 확인', click: () => { showWindow(); APP.update.check().then(askUpdate); } } : { label: '다시 시작 (업데이트 적용)', click: () => restart('the tray (a source folder)') },
-    { type: 'separator' },
-    { label: '종료', click: () => { quitAs('quit', 'the tray'); quitting = true; app.quit(); } },
-  ]));
+  tray.setToolTip('My Remote Host — ' + t('대기 중'));
+  tray.setContextMenu(trayMenu());
   tray.on('click', showWindow);
 }
 
@@ -1122,6 +1163,7 @@ else {
     // (Not in the installed app: there a version only runs on a shell it was made for.)
     const oldElectron = !APP && wanted && Number(process.versions.electron.split('.')[0]) < wanted ? process.versions.electron : '';
     if (oldElectron) console.warn(`[host] WARNING: this code expects Electron ${wanted}, but runs on ${oldElectron}: run setup.ps1 (Linux: ./setup.sh) to finish the update`);
+    initLang(); // before the config: what is wrong with it is said in this language
     await loadConfig();
     // Waiting for the person's answer about a key that cannot be read is this PC's trouble, not this
     // version's: the installed app's shell must not take the wait for a version that does not come up.
@@ -1129,7 +1171,7 @@ else {
     if (!cfg.key && !(await askForKey())) { quitAs('quit', 'no key: the person chose to quit'); quitting = true; app.quit(); return; }
     cfg.hostOs = hostOs();
     cfg.instance = INSTANCE;
-    cfg.updateNote =oldElectron ? `업데이트가 덜 끝났습니다: 코드는 Electron ${wanted}용인데 ${oldElectron}에서 돌고 있습니다. 호스트를 끄고 ${process.platform === 'win32' ? 'setup.ps1' : './setup.sh'}을 실행한 뒤 다시 시작하세요.` : '';
+    cfg.updateNote = oldElectron ? t('업데이트가 덜 끝났습니다: 코드는 Electron {0}용인데 {1}에서 돌고 있습니다. 호스트를 끄고 {2}을 실행한 뒤 다시 시작하세요.', wanted, oldElectron, process.platform === 'win32' ? 'setup.ps1' : './setup.sh') : '';
     cfg.viewOnly = input.viewOnlyReason(); // '' = input from the client is injected here
     if (cfg.viewOnly) console.warn(`[host] WARNING: the host is view-only, input from the client is not injected: ${cfg.viewOnly}`);
     if (BENCH) Object.assign(cfg, benchCfg.cfg || {});
@@ -1264,7 +1306,7 @@ else {
       if (!live) setTimeout(followNewer, 3000); // a version the client app installed meanwhile: now (the client may reconnect first)
       if (live && shellLook) shellLook.abort(); // a new shell is fetched another time, not over the session's bandwidth
       if (!live) setTimeout(shellSwapIfFits, 60e3); // a new shell staged: swapped once the client has not reconnected for a minute
-      if (live && !SELFTEST && !BENCH && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: '원격 접속이 시작되었습니다.' }).show();
+      if (live && !SELFTEST && !BENCH && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: t('원격 접속이 시작되었습니다.') }).show();
       // The assist service, when installed: the lock screen for the session's client. Not in the
       // automated runs (the self-test and the bench must not depend on what this PC has installed).
       if (assist.supported && !SELFTEST && !BENCH) {
@@ -1280,6 +1322,8 @@ else {
     // Updates of the installed app (see updateInfo above). A required update restarts the host by
     // itself: not in the middle of a remote session (the shell waits for it to end, half an hour at most).
     ipcMain.handle('update-status', updateInfo);
+    ipcMain.on('lang-sync', (e) => { e.returnValue = LANG; });
+    ipcMain.handle('lang-set', (_e, l) => setLang(l));
     ipcMain.handle('start-screen', () => openStartScreen());
     // ask: the person pressed "업데이트 확인", so an update found is asked about at once (askUpdate), as
     // the client app does; not waited for, so that the window can say what the check found meanwhile.
@@ -1341,9 +1385,9 @@ else {
       if (!d) return false;
       if (!SELFTEST) {
         const r = await dialog.showMessageBox(win, {
-          type: 'warning', buttons: ['취소', '삭제'], defaultId: 0, cancelId: 0, noLink: true,
-          message: `"${d.name || '이름 없는 기기'}"를 삭제할까요?`,
-          detail: '이 기기는 더 이상 키 없이 접속할 수 없습니다. 다시 쓰려면 그 기기의 앱에서 접속 키를 다시 입력해야 합니다.\n\n잃어버린 기기라면 삭제나 차단을 하세요. 차단은 목록에 남아 접속 시도가 기록되고, 나중에 풀 수 있습니다.',
+          type: 'warning', buttons: [t('취소'), t('삭제')], defaultId: 0, cancelId: 0, noLink: true,
+          message: t('"{0}"를 삭제할까요?', d.name || t('이름 없는 기기')),
+          detail: t('이 기기는 더 이상 키 없이 접속할 수 없습니다. 다시 쓰려면 그 기기의 앱에서 접속 키를 다시 입력해야 합니다.') + '\n\n' + t('잃어버린 기기라면 삭제나 차단을 하세요. 차단은 목록에 남아 접속 시도가 기록되고, 나중에 풀 수 있습니다.'),
         });
         if (r.response !== 1) return false;
       }
@@ -1380,7 +1424,7 @@ else {
     }
     const askHere = async (message, detail, yes) => {
       if (SELFTEST) return true; // the self-test has no one to answer: it checks the rest
-      const r = await dialog.showMessageBox(win, { type: 'warning', buttons: ['취소', yes], defaultId: 0, cancelId: 0, noLink: true, message, detail });
+      const r = await dialog.showMessageBox(win, { type: 'warning', buttons: [t('취소'), yes], defaultId: 0, cancelId: 0, noLink: true, message, detail });
       return r.response === 1 && !remoteNow();
     };
     ipcMain.handle('gate-info', gateInfo);
@@ -1396,11 +1440,11 @@ else {
       if (!win || win.isDestroyed()) return;
       showWindow();
       win.flashFrame(true);
-      if (!ISOLATED && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: `새 기기가 접속을 요청했습니다: ${String(name || '').slice(0, 60)}. 호스트 창에서 허용하거나 거부하세요.` }).show();
+      if (!ISOLATED && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: t('새 기기가 접속을 요청했습니다: {0}. 호스트 창에서 허용하거나 거부하세요.', String(name || '').slice(0, 60)) }).show();
     });
     ipcMain.handle('gate-set', async (_e, on) => {
       if (!on && remoteNow()) return { ok: false, why: 'remote', ...gateInfo() };
-      if (!on && !(await askHere('새 기기 확인을 끌까요?', '끄면 접속 키만 있으면 어느 기기든 묻지 않고 접속합니다.', '끄기'))) return { ok: false, why: 'cancel', ...gateInfo() };
+      if (!on && !(await askHere(t('새 기기 확인을 끌까요?'), t('끄면 접속 키만 있으면 어느 기기든 묻지 않고 접속합니다.'), t('끄기')))) return { ok: false, why: 'cancel', ...gateInfo() };
       // Set by the person here: the first device is theirs to allow too.
       return changeSettings(() => { cfg.confirmNew = savedCfg.confirmNew = !!on; delete savedCfg.firstFree; });
     });
@@ -1424,7 +1468,7 @@ else {
     });
     ipcMain.handle('otp-off', async () => {
       if (remoteNow()) return { ok: false, why: 'remote' };
-      if (!(await askHere('휴대폰 인증 앱을 끌까요?', '끄면 새 기기는 이 PC의 호스트 창에서만 허용할 수 있습니다.', '끄기'))) return { ok: false, why: 'cancel' };
+      if (!(await askHere(t('휴대폰 인증 앱을 끌까요?'), t('끄면 새 기기는 이 PC의 호스트 창에서만 허용할 수 있습니다.'), t('끄기')))) return { ok: false, why: 'cancel' };
       otpPending = null;
       return changeSettings(() => { delete savedCfg.otpEnc; delete savedCfg.otpRecovery; delete savedCfg.otpLast; });
     });
@@ -1454,17 +1498,17 @@ else {
     ipcMain.handle('regen-key', async () => {
       const paired = devices.list().length;
       const r = await dialog.showMessageBox(win, {
-        type: 'warning', buttons: ['취소', '새 키 발급'], defaultId: 0, cancelId: 0,
-        message: '접속 키를 새로 발급할까요?',
-        detail: '기존 키로는 더 이상 접속할 수 없게 됩니다.' + (paired ? ' 등록된 기기(키 없이 접속하는 클라이언트 앱)는 그대로 접속합니다.\n\n키가 샌 것 같으면 아래를 체크하고, 각 클라이언트 앱의 PC 목록에서 "키 바꾸기"로 새 키를 넣어 다시 등록하세요.' : '') + (cfgIssue ? '\n\n설정 파일을 읽지 못한 상태라 새 파일에는 접속 키만 저장됩니다. 원래 파일은 사본으로 남겨 둡니다.' : ''),
+        type: 'warning', buttons: [t('취소'), t('새 키 발급')], defaultId: 0, cancelId: 0,
+        message: t('접속 키를 새로 발급할까요?'),
+        detail: t('기존 키로는 더 이상 접속할 수 없게 됩니다.') + (paired ? ' ' + t('등록된 기기(키 없이 접속하는 클라이언트 앱)는 그대로 접속합니다.') + '\n\n' + t('키가 샌 것 같으면 아래를 체크하고, 각 클라이언트 앱의 PC 목록에서 "키 바꾸기"로 새 키를 넣어 다시 등록하세요.') : '') + (cfgIssue ? '\n\n' + t('설정 파일을 읽지 못한 상태라 새 파일에는 접속 키만 저장됩니다. 원래 파일은 사본으로 남겨 둡니다.') : ''),
         // A key that leaked may have registered a device of someone else's with it.
-        ...(paired ? { checkboxLabel: `등록된 기기 ${paired}대도 모두 삭제 (키가 샌 것 같을 때)`, checkboxChecked: false } : {}),
+        ...(paired ? { checkboxLabel: t('등록된 기기 {0}대도 모두 삭제 (키가 샌 것 같을 때)', paired), checkboxChecked: false } : {}),
       });
       if (r.response !== 1) return false;
       const key = newKey();
       try { await saveConfig(key); } catch (e) {
         console.error('[host] saving a new key failed:', e.code || e.message);
-        dialog.showMessageBox(win, { type: 'error', message: '새 키를 저장하지 못했습니다', detail: `${e.code || e.message}\n\n기존 키를 그대로 씁니다.` }).catch(() => {});
+        dialog.showMessageBox(win, { type: 'error', message: t('새 키를 저장하지 못했습니다'), detail: `${e.code || e.message}\n\n${t('기존 키를 그대로 씁니다.')}` }).catch(() => {});
         return false;
       }
       if (r.checkboxChecked) { const n = devices.clear(); console.log(`[host] a new access key; ${n} device token(s) removed with it`); }
@@ -1489,8 +1533,8 @@ else {
     // settings until it is fixed, and says so. (Without a usable key it asked before starting.)
     if (cfgIssue) {
       dialog.showMessageBox({
-        type: 'warning', title: 'My Remote Host', noLink: true, message: '설정 파일을 읽지 못해 기본 설정으로 실행합니다',
-        detail: `${cfgIssue}\n\n접속 키는 파일에서 찾아 그대로 쓰므로 원격 접속은 계속 됩니다. 파일은 바꾸지 않았습니다. 고친 뒤 트레이 메뉴의 '다시 시작'을 누르면 설정이 적용됩니다.\n\n${cfgPath()}`,
+        type: 'warning', title: 'My Remote Host', noLink: true, message: t('설정 파일을 읽지 못해 기본 설정으로 실행합니다'),
+        detail: `${cfgIssue}\n\n${t("접속 키는 파일에서 찾아 그대로 쓰므로 원격 접속은 계속 됩니다. 파일은 바꾸지 않았습니다. 고친 뒤 트레이 메뉴의 '다시 시작'을 누르면 설정이 적용됩니다.")}\n\n${cfgPath()}`,
       }).catch(() => {});
     }
     // Monitor plugged/unplugged or resolution changed: the renderer renegotiates the session.

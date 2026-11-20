@@ -1411,6 +1411,89 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       s = await state();
     }
 
+    // The languages (2026-11-20). The page here has no loader, so its texts in another language come from the host
+    // ('lang' -> 'strings'), as for a page whose loader is older than the languages. Every language: the toolbar and
+    // the host window relabelled, and nothing in them that does not fit (a page that scrolls sideways, a box that
+    // cuts its text, a button whose label takes two lines). --dump-lang=<folder>: pictures of both in every language.
+    {
+      const dumpLang = (process.argv.find((a) => a.startsWith('--dump-lang=')) || '').slice('--dump-lang='.length);
+      if (dumpLang) fs.mkdirSync(dumpLang, { recursive: true });
+      const I = require('./i18n');
+      const PAGE_CAT = { ...require('./i18n/page.json') }, HOST_CAT = require('./i18n/host.json');
+      const want = (cat, src, l) => (l === 'ko' ? src : typeof cat[src][l] === 'string' ? cat[src][l] : cat[src].en);
+      const hjs = (code) => hostWin.webContents.executeJavaScript(code);
+      const pageLang = (l) => js(`(() => { const s = document.getElementById('lang'); s.value = '${l}'; s.dispatchEvent(new Event('change')); return 1; })()`);
+      const waitFor = async (get, value, secs) => { for (let i = 0; i < secs * 10; i++) { if ((await get()) === value) return true; await sleep(100); } return false; };
+      const problems = [], infos = [];
+      // The page's own controls keep their keys: the language list opened, ArrowDown and Enter choose English and
+      // nothing goes to the host.
+      const keysStay = await js(`(async () => {
+        const sent = []; const orig = send; send = (o) => { sent.push(o); return orig(o); };
+        try {
+          const btn = document.querySelector('#bar .mrLangBtn');
+          btn.click();
+          const list = document.querySelector('.mrLangList'), n = list ? list.querySelectorAll('[role=option]').length : 0;
+          const press = (k) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: k, code: k, bubbles: true, cancelable: true }));
+          press('ArrowDown'); press('Enter');
+          await new Promise((r) => setTimeout(r, 50));
+          return { n, flags: list ? list.querySelectorAll('svg.mrFlag').length : 0, lang: document.getElementById('lang').value, open: !!document.querySelector('.mrLangList'),
+            keys: sent.filter((o) => o.t === 'kd' || o.t === 'ku').length, asked: sent.filter((o) => o.t === 'lang').map((o) => o.l).join() };
+        } finally { send = orig; }
+      })()`);
+      const bye = () => js(`document.getElementById('bye').textContent`);
+      const toEn = await waitFor(bye, want(PAGE_CAT, '연결 끊기', 'en'), 8);
+      check('language: the toolbar\'s list (flags, every language) is chosen from by keyboard, its keys stay here, and the page relabels from the host\'s texts',
+        keysStay.n === I.CODES.length && keysStay.flags === I.CODES.length && keysStay.lang === 'en' && !keysStay.open && keysStay.keys === 0 && keysStay.asked === 'en' && toEn,
+        JSON.stringify({ ...keysStay, relabelled: toEn, bye: await bye() }));
+      const SCAN = `(() => {
+        const out = [];
+        const vis = (el) => { const s = getComputedStyle(el); if (s.display === 'none' || s.visibility === 'hidden') return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+        const where = (el) => { const p = []; for (let e = el; e && e !== document.body && p.length < 3; e = e.parentElement) p.unshift(e.id ? '#' + e.id : e.tagName.toLowerCase()); return p.join('>'); };
+        if (document.documentElement.scrollWidth > innerWidth + 1) out.push('page scrolls sideways by ' + (document.documentElement.scrollWidth - innerWidth));
+        for (const el of document.querySelectorAll('body *')) {
+          if (['SCRIPT', 'STYLE', 'OPTION', 'BR', 'INPUT', 'TEXTAREA', 'VIDEO', 'CANVAS'].includes(el.tagName) || el.closest('svg') || !vis(el)) continue;
+          const s = getComputedStyle(el), own = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+          if (!own && !['BUTTON', 'SELECT'].includes(el.tagName)) continue;
+          const text = (el.innerText || '').trim().slice(0, 40);
+          if (el.id !== 'bar' && /hidden|clip/.test(s.overflowX) && s.textOverflow !== 'ellipsis' && el.scrollWidth > el.clientWidth + 1) out.push('cut: ' + where(el) + ' "' + text + '"');
+          if (el.tagName === 'BUTTON' && !el.querySelector('div,p,b,small,img,svg')) {
+            const lh = parseFloat(s.lineHeight) || parseFloat(s.fontSize) * 1.3, pad = parseFloat(s.paddingTop) + parseFloat(s.paddingBottom);
+            if (el.getBoundingClientRect().height - pad > lh * 1.7) out.push('two lines: ' + where(el) + ' "' + text + '"');
+          }
+        }
+        // The toolbar's controls (not the statistics at its end, which grow with the monitors): how much wider than it.
+        const bar = document.getElementById('bar'), kids = bar ? [...bar.children].filter((e) => e.id !== 'stats' && vis(e)) : [];
+        const need = kids.length ? kids[kids.length - 1].getBoundingClientRect().right - kids[0].getBoundingClientRect().left + 16 : 0;
+        return { out, bar: bar ? Math.round(need - bar.clientWidth) : 0 };
+      })()`;
+      for (const l of I.CODES) {
+        await pageLang(l);
+        const pageOk = await waitFor(bye, want(PAGE_CAT, '연결 끊기', l), 8);
+        await hjs(`hostApi.setLang('${l}')`);
+        const hostOk = await waitFor(() => hjs(`document.getElementById('copy').textContent`), want(HOST_CAT, '키 복사', l), 5);
+        if (!pageOk || !hostOk) problems.push(`${l}: relabelled page ${pageOk} host ${hostOk}`);
+        const shots = [['bar', ''], ['help', `document.getElementById('keys').click()`], ['diag', `document.getElementById('helpClose').click(); document.getElementById('diagBtn').click()`]];
+        for (const [name, code] of shots) {
+          if (code) await js(code + '; 1');
+          await sleep(150);
+          const r = await js(SCAN);
+          for (const p of r.out) problems.push(`${l} page ${name}: ${p}`);
+          if (name === 'bar' && r.bar > 0) infos.push(`${l} ${r.bar}`);
+          if (dumpLang) fs.writeFileSync(path.join(dumpLang, `page-${name}-${l}.png`), (await w.webContents.capturePage()).toPNG());
+        }
+        await js(`document.getElementById('diagClose').click(); 1`);
+        const hr = await hjs(SCAN);
+        for (const p of hr.out) problems.push(`${l} host: ${p}`);
+        if (dumpLang) fs.writeFileSync(path.join(dumpLang, `host-${l}.png`), (await hostWin.webContents.capturePage()).toPNG());
+      }
+      await pageLang('ko');
+      await hjs(`hostApi.setLang('ko')`);
+      const back = (await waitFor(bye, '연결 끊기', 5)) && (await waitFor(() => hjs(`document.getElementById('copy').textContent`), '키 복사', 5));
+      check(`language: in all ${I.CODES.length} languages the toolbar, its dialogs and the host window are relabelled and nothing in them is cut or wraps`, !problems.length && back,
+        problems.slice(0, 12).join(' | ') + (problems.length > 12 ? ` ... ${problems.length - 12} more` : '') + (back ? '' : ' | not back to Korean'));
+      info(`language: the toolbar scrolls sideways at ${await js('innerWidth')} px wide in: ${infos.join(', ') || 'none'}` + (dumpLang ? ` (pictures in ${dumpLang})` : ''));
+    }
+
     // Host program restarted: same.
     before = s.connects;
     hostWin.reload();

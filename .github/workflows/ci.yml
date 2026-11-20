@@ -52,6 +52,8 @@ jobs:
         run: node release/ci-run.js node release/test-cycle.js
       - name: Keyboard Lock without stuck modifier keys (the wrapper, the page's copy, no bare lock)
         run: node release/ci-run.js node release/test-keylock.js
+      - name: The languages (every text translated, holes, tags, plurals, quoted names; the translator; the setting)
+        run: node release/ci-run.js node release/test-i18n.js
 
   native:
     name: native binaries rebuilt byte for byte
