@@ -1,0 +1,18 @@
+{
+  "ko": [
+    "언어를 고를 수 있습니다: 한국어, English, 日本語, 简体中文, 繁體中文, Español, Français, Deutsch, Português (Brasil), Русский, Tiếng Việt, Bahasa Indonesia",
+    "처음 화면·호스트 창·PC 목록·원격 화면 툴바의 🌐 칸 어디에서 바꿔도 이 PC의 앱 전체에 바로 적용됩니다. 처음에는 PC의 언어를 따릅니다",
+    "1회용 코드로 도움 받기에 '자동 허용' 스위치가 생겼습니다. 켜 두면 코드를 넣은 사람이 허용 카드 없이 바로 접속합니다(코드마다 꺼진 채로 시작)",
+    "일본어·중국어 글자가 한국어 글꼴 모양으로 보이지 않도록 언어마다 맞는 글꼴을 씁니다. 한국어는 단어 중간에서 줄이 바뀌지 않습니다",
+    "원격 화면 툴바가 창보다 길면 옆으로 스크롤됩니다(마우스 휠로도). 좁은 창에서 처음 화면과 PC 목록의 글자가 잘리던 곳을 고쳤습니다",
+    "원격 화면의 문구는 호스트가 이 버전이면 예전 my-remote-client.html로 접속해도 고른 언어로 나옵니다"
+  ],
+  "en": [
+    "Choose the app's language: 한국어, English, 日本語, 简体中文, 繁體中文, Español, Français, Deutsch, Português (Brasil), Русский, Tiếng Việt, Bahasa Indonesia",
+    "Change it with 🌐 on the start screen, the host window, the PC list or a remote session's toolbar: it applies to the whole app on this PC at once. The first start follows the PC's language",
+    "Get help with a one-time code: a new Auto-allow switch lets whoever enters the code in without the Allow prompt (off for every new code)",
+    "Japanese and Chinese text get fonts of their own instead of the Korean font's shapes; Korean lines no longer break inside a word",
+    "The remote session's toolbar scrolls sideways when it is wider than the window (the mouse wheel too); texts cut in narrow start screen and PC list windows fixed",
+    "With the host on this version, the remote session speaks the chosen language even through an older my-remote-client.html"
+  ]
+}
