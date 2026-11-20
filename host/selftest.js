@@ -1030,6 +1030,11 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     if (await hostWin.webContents.executeJavaScript('!!(session && session.native && session.native[0] && session.videoSenders && session.videoSenders[0])')) {
       const framesNow = () => js(`(async () => { let n = 0; if (pc) (await pc.getStats()).forEach((r) => { if (r.type === 'inbound-rtp' && r.kind === 'video') n += r.framesDecoded || 0; }); return n; })()`);
       const before2 = s.connects, r0 = await hostWin.webContents.executeJavaScript('stallRenews');
+      // A real stall earlier in this run (GitHub's Linux runners: OpenH264 dropping every frame for a while) was renewed
+      // already, and the host renews at most once a minute: that one would keep this one from being renewed (CI,
+      // 2026-11-20, b5d9f79: "stall renews 1 -> 1"). Said, and the minute let go of for this check.
+      if (r0 > 0) info(`encoder stall: ${r0} real one(s) earlier in this run, renewed by the host`);
+      await hostWin.webContents.executeJavaScript('stallRenewAt = -1e9; 1');
       await hostWin.webContents.executeJavaScript(`session.videoSenders[0].replaceTrack(new MediaStreamTrackGenerator({ kind: 'video' })).then(() => 1)`);
       let back2 = false, f0 = -1, f1 = -1;
       for (let i = 0; i < 25 && !back2; i++) {
