@@ -24,7 +24,8 @@ const tags = (s) => (String(s).match(/<[^>]*>/g) || []).map((t) => t.toLowerCase
 const holes = (s) => [...new Set(String(s).match(/\{\d+\}/g) || [])].sort().join(' ');
 const forms = (v) => (v && typeof v === 'object' ? Object.entries(v) : [['', v]]);
 const read = (name) => JSON.parse(fs.readFileSync(path.join(ROOT, 'host', 'i18n', name + '.json'), 'utf8'));
-const CATALOGS = { host: read('host'), page: read('page'), 'page-report': read('page-report'), client: read('client'), loader: read('loader') };
+const site = (() => { try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'docs', 'site.json'), 'utf8')); } catch { return {}; } })();
+const CATALOGS = { host: read('host'), page: read('page'), 'page-report': read('page-report'), client: read('client'), loader: read('loader'), site };
 
 // ---- every text in the code has its entry, and nothing else is there ----------------------------------------------
 for (const name of Object.keys(S.SURFACES)) {

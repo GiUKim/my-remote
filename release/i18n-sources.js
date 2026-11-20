@@ -17,6 +17,8 @@ const SURFACES = {
   page: { catalogs: ['page', 'page-report'], files: ['host/client.template.html'] },
   client: { catalogs: ['client'], files: ['client/launcher.html', 'client/home.html', 'client/main.js', 'client/shell.js'] },
   loader: { catalogs: ['loader'], files: ['host/loader.template.html'] },
+  // The web page on GitHub Pages: its catalog lives next to it (docs/site.json), not in the app.
+  site: { catalogs: ['site'], dir: 'docs', files: ['docs/index.html'] },
 };
 // Keys used without being literals in the code (host.js whoText takes them out of a stored name), and literals that
 // are only pieces of such a name.
@@ -150,7 +152,7 @@ function readSurface(name) {
 function catalog(name) {
   const out = {};
   for (const c of SURFACES[name].catalogs) {
-    const file = path.join(ROOT, 'host', 'i18n', c + '.json');
+    const file = SURFACES[name].dir ? path.join(ROOT, SURFACES[name].dir, c + '.json') : path.join(ROOT, 'host', 'i18n', c + '.json');
     if (fs.existsSync(file)) Object.assign(out, JSON.parse(fs.readFileSync(file, 'utf8')));
   }
   return out;

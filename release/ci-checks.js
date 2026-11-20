@@ -65,6 +65,10 @@ const pass = (what) => console.log(`PASS  ${what}`);
   const have = fs.readFileSync(path.join(ROOT, 'my-remote-client.html'), 'utf8').replace(/\r\n/g, '\n');
   if (want !== have) fail('my-remote-client.html is the loader built from the sources', 'run: cd host && npm run build-client (and give users the new file: see CLAUDE.md)');
   else pass('my-remote-client.html is the loader built from the sources');
+  // The web page (docs/index.html on GitHub Pages) uses a copy of the app's translator and flag picker.
+  const norm = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8').replace(/\r\n/g, '\n');
+  if (!fs.existsSync(path.join(ROOT, 'docs', 'i18n.js')) || norm('docs/i18n.js') !== norm('host/i18n.js')) fail('docs/i18n.js is host/i18n.js', 'run: cd host && npm run build-client');
+  else pass('docs/i18n.js is host/i18n.js (the web page\'s translator)');
 }
 
 // ---- names --------------------------------------------------------------------------------------

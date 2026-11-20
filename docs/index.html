@@ -1,0 +1,172 @@
+<!doctype html>
+<!-- The web page of My Remote on GitHub Pages (this repository's docs/ folder): what it is, the download for this
+     computer's system, how to start, support and business use. Its texts are in site.json (every language the app
+     offers, the Korean here is the source, checked by release/test-i18n.js); i18n.js is host/i18n.js, copied by
+     `npm run build-client` (release/ci-checks.js keeps the two equal). -->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://api.github.com">
+<title>My Remote</title>
+<meta name="description" content="Free remote desktop: your own PC elsewhere, as if you sat at it. Peer-to-peer, end-to-end encrypted, every monitor.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%232b6cff'/%3E%3Crect x='5' y='6' width='14' height='9' rx='1.5' fill='%23fff'/%3E%3Cpath d='M9.5 19h5M12 15v4' stroke='%23fff' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E">
+<script src="i18n.js"></script>
+<style>
+  :root { --bg: #111418; --panel: #1b2027; --panel2: #222932; --line: #2c333d; --text: #e6e9ee; --muted: #9aa3af; --blue: #2b6cff; --blue2: #4a8dff; --green: #3ddc84; --amber: #f0b43c; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 16px/1.6 var(--mr-font, system-ui, sans-serif); overflow-wrap: anywhere; }
+  a { color: var(--blue2); }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+  header { display: flex; align-items: center; gap: 12px; padding: 18px 0; }
+  .logo { width: 36px; height: 36px; flex: none; border-radius: 9px; background: var(--blue); display: grid; place-items: center; }
+  .logo svg { width: 22px; height: 22px; }
+  header b { font-size: 19px; }
+  header .lang { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+  .hero { padding: 48px 0 40px; text-align: center; }
+  .hero h1 { margin: 0 0 12px; font-size: clamp(28px, 5vw, 46px); line-height: 1.25; letter-spacing: -.01em; }
+  .hero p.sub { margin: 0 auto 30px; max-width: 680px; color: var(--muted); font-size: 17px; }
+  .dl { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; }
+  .btn { display: inline-flex; align-items: center; gap: 12px; padding: 14px 22px; border-radius: 12px; background: var(--panel2); border: 1px solid var(--line); color: var(--text); text-decoration: none; font-weight: 600; min-width: 250px; justify-content: center; }
+  .btn:hover { border-color: var(--blue2); }
+  .btn.main { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .btn.main:hover { background: #3d7bff; }
+  .btn small { display: block; font-weight: 400; font-size: 12.5px; opacity: .8; }
+  .btn svg { width: 26px; height: 26px; flex: none; }
+  .btn .emoji { font-size: 24px; line-height: 1; flex: none; }
+  .meta { margin-top: 14px; color: var(--muted); font-size: 13.5px; }
+  .meta .sep { margin: 0 8px; opacity: .5; }
+  .notice { margin: 16px auto 0; max-width: 640px; color: var(--amber); font-size: 14px; }
+  section { padding: 36px 0; border-top: 1px solid var(--line); }
+  h2 { margin: 0 0 20px; font-size: 24px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
+  .card h3 { margin: 0 0 6px; font-size: 17px; display: flex; gap: 10px; align-items: baseline; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .num { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--blue); color: #fff; display: inline-grid; place-items: center; font-size: 14px; }
+  .icon { font-size: 20px; }
+  .two { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .two .card { display: flex; flex-direction: column; gap: 12px; }
+  .two .card .btn { min-width: 0; align-self: flex-start; padding: 10px 18px; }
+  .warn { background: rgba(240, 180, 60, .08); border-color: rgba(240, 180, 60, .35); }
+  .warn p { color: var(--text); }
+  footer { padding: 28px 0 44px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 8px 20px; }
+  footer a { color: var(--muted); }
+  @media (max-width: 560px) { .btn { min-width: 0; width: 100%; } .hero { padding-top: 28px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="12" rx="2" fill="#fff"/><path d="M8.5 20h7M12 16.5V20" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></div>
+    <b>My Remote</b>
+    <label class="lang" title="Language"><span aria-hidden="true">🌐</span><select id="lang" aria-label="Language"></select></label>
+  </header>
+
+  <div class="hero">
+    <h1 data-i18n>다른 곳에 있는 내 PC를, 그 앞에 앉은 것처럼</h1>
+    <p class="sub" data-i18n>무료 원격 데스크톱. 계정 없이, 화면은 두 PC 사이에서 직접 암호화되어 오갑니다.</p>
+    <div class="dl" id="dl">
+      <a class="btn" id="win" href="https://github.com/GiUKim/my-remote/releases/latest/download/MyRemote-Windows-x64.zip">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 5.3 10.4 4.3v7.1H3zM11.4 4.2 21 3v8.4h-9.6zM3 12.5h7.4v7.2L3 18.7zM11.4 12.5H21V21l-9.6-1.3z"/></svg>
+        <span><span data-i18n>Windows용 내려받기</span><small data-i18n>Windows 10 · 11 (64비트)</small></span>
+      </a>
+      <a class="btn" id="linux" href="https://github.com/GiUKim/my-remote/releases/latest/download/MyRemote-Linux-x64.tar.gz">
+        <span class="emoji" aria-hidden="true">🐧</span>
+        <span><span data-i18n>Linux용 내려받기</span><small data-i18n>Linux X11 세션 (Ubuntu 22.04 · 24.04)</small></span>
+      </a>
+    </div>
+    <div class="meta"><span id="ver"></span><span class="sep" id="verSep" hidden>·</span><a href="https://github.com/GiUKim/my-remote/releases" data-i18n>모든 버전과 바뀐 점</a></div>
+    <p class="notice" id="macNote" hidden data-i18n>macOS용은 아직 없습니다. Windows나 Linux PC에서 쓸 수 있습니다.</p>
+  </div>
+
+  <section>
+    <h2 data-i18n>3단계로 시작</h2>
+    <div class="grid">
+      <div class="card"><h3><span class="num">1</span><span data-i18n>두 PC에 설치</span></h3><p data-i18n-html>받은 파일을 풀고 <b>MyRemote</b>를 실행합니다. 처음 실행할 때 Windows가 경고하면 <b>추가 정보</b>를 누른 뒤 <b>실행</b>을 누르세요(아직 코드 서명 인증서가 없어서 뜨는 경고입니다).</p></div>
+      <div class="card"><h3><span class="num">2</span><span data-i18n>조종당할 PC에서</span></h3><p data-i18n-html><b>이 PC 공유</b>를 고르고, 호스트 창의 <b>키 복사</b>로 접속 키를 복사해 비밀번호 관리자에 보관합니다.</p></div>
+      <div class="card"><h3><span class="num">3</span><span data-i18n>조종하는 PC에서</span></h3><p data-i18n-html><b>다른 PC에 접속</b>을 고르고, 그 키로 PC를 추가해 접속합니다. 다음부터는 키 없이 바로 접속합니다.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2 data-i18n>할 수 있는 것</h2>
+    <div class="grid">
+      <div class="card"><h3><span class="icon" aria-hidden="true">🖥️</span><span data-i18n>모니터마다 한 화면</span></h3><p data-i18n>호스트의 모니터를 내 모니터에 하나씩, 실제 배치대로 펼칩니다.</p></div>
+      <div class="card"><h3><span class="icon" aria-hidden="true">📂</span><span data-i18n>파일 끌어다 놓기</span></h3><p data-i18n>원격 화면과 내 PC 사이로 파일과 폴더를 끌어다 놓아 옮깁니다.</p></div>
+      <div class="card"><h3><span class="icon" aria-hidden="true">📋</span><span data-i18n>하나의 클립보드</span></h3><p data-i18n>한쪽에서 복사하고 다른 쪽에서 붙여 넣습니다. 글자도 파일도 됩니다.</p></div>
+      <div class="card"><h3><span class="icon" aria-hidden="true">🔒</span><span data-i18n>잠긴 PC도 원격으로</span></h3><p data-i18n>Windows 잠금 화면이 그대로 보이고, 비밀번호를 쳐서 풀 수 있습니다.</p></div>
+      <div class="card"><h3><span class="icon" aria-hidden="true">🤝</span><span data-i18n>1회용 코드로 도움 받기</span></h3><p data-i18n>접속 키를 주지 않고, 10분 동안 한 번 쓰는 코드로 잠깐 맡깁니다.</p></div>
+      <div class="card"><h3><span class="icon" aria-hidden="true">🛡️</span><span data-i18n>내 기기만 들어오게</span></h3><p data-i18n>화면은 서버를 거치지 않고 두 PC 사이에서 암호화됩니다. 처음 보는 기기는 한 번 확인을 거쳐야 들어옵니다.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="two">
+      <div class="card warn"><h3><span class="icon" aria-hidden="true">⚠️</span><span data-i18n>사기에 주의하세요</span></h3><p data-i18n>접속 키와 1회용 코드는 PC를 통째로 넘기는 열쇠입니다. 전화나 메시지로 설치를 시키거나 코드를 알려 달라는 사람에게는 절대 알려 주지 마세요. 은행·기관·회사는 이런 요청을 하지 않습니다.</p></div>
+      <div class="card"><h3><span class="icon" aria-hidden="true">💙</span><span data-i18n>후원</span></h3><p data-i18n>My Remote는 무료입니다. 쓸모가 있었다면 개발을 후원해 주세요.</p><a class="btn" href="https://github.com/sponsors/GiUKim" data-i18n>GitHub Sponsors로 후원</a></div>
+      <div class="card"><h3><span class="icon" aria-hidden="true">🏢</span><span data-i18n>회사에서 쓰시나요?</span></h3><p data-i18n>규모와 필요한 기능(회사망에서의 연결, 기기 일괄 관리 등)을 알려 주시면 업무용 기능을 준비하는 데 반영합니다.</p><a class="btn" href="https://github.com/GiUKim/my-remote/issues/new?template=business.yml" data-i18n>업무용 사용 문의</a></div>
+    </div>
+  </section>
+
+  <footer>
+    <a href="https://github.com/GiUKim/my-remote" data-i18n>소스 코드</a>
+    <a href="https://github.com/GiUKim/my-remote/releases" data-i18n>업데이트 내역</a>
+    <a href="https://github.com/GiUKim/my-remote/issues/new?template=bug_report.yml" data-i18n>문제 신고</a>
+    <a href="https://github.com/GiUKim/my-remote/security/policy" data-i18n>보안 문제 알리기</a>
+    <a href="https://github.com/GiUKim/my-remote/blob/main/docs/i18n.md" data-i18n>번역에 대해</a>
+  </footer>
+</div>
+<script>
+'use strict';
+const I = window.MRI18N;
+let CAT = null, LANG = 'ko', T = I.translator('ko');
+const $ = (id) => document.getElementById(id);
+let release = null;
+
+// The language: ?lang= in the address (a shared link), what this browser chose here before, else the browser's.
+function firstLang() {
+  const q = I.normalize(new URLSearchParams(location.search).get('lang'));
+  let kept = '';
+  try { kept = I.normalize(localStorage.getItem('mr_site_lang')); } catch {}
+  return q || kept || I.pick(navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language]);
+}
+function useLang(l) {
+  LANG = l;
+  T = I.translator(l, CAT ? I.table(CAT, l) : null);
+  I.apply(document, T);
+  I.fillSelect($('lang'), l);
+  showRelease();
+}
+// The download for this computer first; a phone or a Mac is told where the app runs.
+function arrange() {
+  const ua = navigator.userAgent, mobile = /Android|iPhone|iPad|iPod/.test(ua);
+  const os = mobile ? 'mobile' : /Windows/.test(ua) ? 'win' : /Mac/.test(ua) ? 'mac' : /Linux|X11|CrOS/.test(ua) ? 'linux' : 'other';
+  const first = os === 'linux' ? $('linux') : $('win');
+  first.classList.add('main');
+  $('dl').prepend(first);
+  if (os === 'mac' || os === 'mobile') $('macNote').hidden = false;
+}
+function showRelease() {
+  if (!release) return;
+  const d = new Date(release.published_at);
+  const date = isNaN(d) ? '' : new Intl.DateTimeFormat(LANG, { year: 'numeric', month: 'long', day: 'numeric' }).format(d);
+  $('ver').textContent = T('최신 버전 {0} · {1}', release.tag_name, date);
+  $('verSep').hidden = false;
+}
+arrange();
+I.fonts(document);
+useLang(firstLang());
+$('lang').onchange = () => {
+  const l = I.normalize($('lang').value);
+  if (!l) return;
+  try { localStorage.setItem('mr_site_lang', l); } catch {}
+  useLang(l);
+};
+fetch('site.json').then((r) => (r.ok ? r.json() : null)).then((c) => { if (c) { CAT = c; useLang(LANG); } }).catch(() => {});
+fetch('https://api.github.com/repos/GiUKim/my-remote/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
+  .then((r) => (r.ok ? r.json() : null)).then((r) => { if (r && r.tag_name) { release = r; showRelease(); } }).catch(() => {});
+</script>
+</body>
+</html>

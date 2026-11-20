@@ -17,6 +17,10 @@
   <sub>⊞ Windows 10 · 11 (64비트) &nbsp;|&nbsp; 🐧 Linux X11 세션 (Ubuntu 22.04 · 24.04) &nbsp;|&nbsp; 🍎 macOS용은 아직 없습니다 &nbsp;|&nbsp; <a href="https://github.com/GiUKim/my-remote/releases">모든 버전</a></sub>
 </p>
 
+<p align="center">
+  <sub>🌐 <a href="https://giukim.github.io/my-remote/">소개 페이지 (12개 언어)</a> &nbsp;·&nbsp; 💙 <a href="https://github.com/sponsors/GiUKim">후원</a> &nbsp;·&nbsp; 🏢 <a href="https://github.com/GiUKim/my-remote/issues/new?template=business.yml">업무용 사용 문의</a></sub>
+</p>
+
 ### 🐧 Ubuntu는 터미널로도 설치할 수 있습니다
 
 위 **Linux용 내려받기**와 같은 파일(데스크톱 앱)을 받아 `~/MyRemote`에 풉니다. 블록 오른쪽 위의 복사 단추로 복사해 터미널에 붙여 넣으세요.
@@ -179,8 +183,14 @@ sudo chown root:root ~/MyRemote/chrome-sandbox && sudo chmod 4755 ~/MyRemote/chr
 - 🔒 **Windows 호스트를 잠긴 채로 쓰려면 "잠금 화면에서도 원격 조종"을 켜 두세요.** 호스트를 처음 시작할 때 묻습니다(관리자 승인 한 번). 켜지 않으면 잠금 화면과 권한 확인(UAC) 창은 보이지도 조작되지도 않습니다. 켜도 UAC 창은 보기만 되고, 재부팅 직후의 로그인 화면은 안 됩니다. 원격 접속 중에는 켜거나 끌 수 없습니다(Windows의 승인 창은 그 PC 앞에서만 누를 수 있습니다). 절전 모드는 꺼 두세요(절전에 들어가면 연결이 끊깁니다). Linux(X11, GNOME) 호스트는 설치할 것 없이 잠금 화면에 비밀번호를 입력해 풀 수 있습니다.
 - 🏢 **PC의 화면과 입력을 통째로 넘기는 도구입니다.** 회사 PC라면 보안 정책에서 허용되는지 먼저 확인하세요.
 - 🔑 **접속 키를 가진 사람은 이 PC를 조작할 수 있습니다.** 비밀번호 관리자에 보관하고, 노출이 의심되면 호스트 창의 `새 키 발급`을 누르세요. 클라이언트 앱은 첫 접속 뒤 키 대신 기기별 토큰으로 접속하므로, 잃어버린 PC는 호스트 창의 "접속한 기기"에서 그 기기만 차단하면 됩니다.
+- 🚫 **사기에 주의하세요.** 전화나 메시지로 이 프로그램을 설치하게 하거나 접속 키·1회용 코드를 불러 달라는 사람에게는 절대 알려 주지 마세요. 은행·기관·회사는 그런 요청을 하지 않습니다.
 - 🐧 **Linux는 X11 세션에서만 됩니다**(Wayland 미지원). macOS용은 아직 없습니다.
 - 🧪 개인이 만든 프로그램이며 **보안 감사를 받지 않았습니다.**
+
+## 💙 후원 · 업무용 사용
+
+- **My Remote는 무료입니다.** 쓸모가 있었다면 [GitHub Sponsors](https://github.com/sponsors/GiUKim)로 후원해 주세요.
+- **회사에서 쓰시나요?** [업무용 사용 문의](https://github.com/GiUKim/my-remote/issues/new?template=business.yml)로 규모와 필요한 기능을 알려 주세요. 회사망 안에서의 연결(중계 서버), 여러 PC의 기기 일괄 관리 같은 업무용 기능을 준비하는 데 반영합니다.
 
 ## 📚 자세히
 

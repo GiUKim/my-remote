@@ -46,4 +46,9 @@ if (require.main === module) {
   const out = path.join(__dirname, '..', 'my-remote-client.html');
   fs.writeFileSync(out, buildLoader(process.argv[2] || 'https://ntfy.sh'));
   console.log('wrote', out);
+  // The web page on GitHub Pages (docs/index.html) uses the app's own translator and flag picker: a copy, which
+  // release/ci-checks.js keeps equal to this one.
+  const site = path.join(__dirname, '..', 'docs', 'i18n.js');
+  fs.writeFileSync(site, read('i18n.js'));
+  console.log('wrote', site);
 }
