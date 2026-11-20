@@ -1055,7 +1055,7 @@ async function subscribe() {
 // request waits at a time (the same page asking again replaces its own), at most 6 in 10 minutes, each for 2
 // minutes. A page allowed once may come again for 12 hours without asking (a reconnect).
 const GATE_WAIT = 120e3, ASK_LIMIT = 6, ASK_WINDOW = 600e3, ALLOWED_FOR = 12 * 3600e3;
-const GATE_HOW = { host: '이 PC에서 허용', otp: '인증 앱 코드', first: '첫 기기', again: '방금 허용한 기기', off: '' };
+const GATE_HOW = { host: '이 PC에서 허용', otp: '인증 앱 코드', first: '첫 기기', again: '방금 허용한 기기', auto: '자동 허용', off: '' };
 let pending = null;
 const askTimes = [];
 const allowedPks = new Map(); // a client page's pk -> until when it may come again without asking
@@ -1173,12 +1173,16 @@ function hideAsk() { clearInterval(askTick); $('ask').style.display = 'none'; }
 // is let in, and its session gets no device token (pairDevice takes key routes only). The helper's page may come
 // back while the session lasts (a renew, a short loss of the network: its own key, `pk`, as with the gate);
 // ONE_TIME_GRACE_MS after the session ended the code ends too. 끝내기 ends code and session at once.
+// 자동 허용 (the user's wish, 2026-11-20): a switch on the card, off for every new code. Turned on, the first page
+// that signs its hello on the code comes in without the card, as if 허용 had been pressed; everything else stays
+// (one page, no device token, the same ending). It adds nothing a person connected to this window could not do
+// already (make a code and press 허용), so it is not refused during a remote session as the gate's settings are.
 const ONE_TIME_MS = 10 * 60e3, ONE_TIME_GRACE_MS = 2 * 60e3;
-let oneTime = null; // { code, keys, until, timer, pk: '' once a request was allowed }
+let oneTime = null; // { code, keys, until, timer, pk: '' once a request was allowed, auto: 자동 허용 }
 async function makeOneTimeCode() {
   endOneTime('replaced');
   const code = RD.newCode(), k = await RD.deriveCode(code);
-  const o = (oneTime = { code, keys: k, until: Date.now() + ONE_TIME_MS, pk: '' });
+  const o = (oneTime = { code, keys: k, until: Date.now() + ONE_TIME_MS, pk: '', auto: false });
   o.timer = setTimeout(() => { if (oneTime === o && !o.pk) endOneTime('expired'); }, ONE_TIME_MS);
   await subscribe();
   showOneTime();
@@ -1206,6 +1210,8 @@ function showOneTime() {
   $('otBtn').style.display = o && o.pk ? 'none' : ''; // a new code would end the session the person allowed
   if (!o) { $('otState').textContent = ''; return; }
   $('otCode').textContent = RD.showCode(o.code);
+  $('otAuto').setAttribute('aria-checked', String(!!o.auto));
+  $('otAutoRow').style.display = o.pk ? 'none' : ''; // used: nobody else comes in on it either way
   const tick = () => {
     if (oneTime !== o) return;
     const live = session && session.route.kind === 'code';
@@ -1216,7 +1222,8 @@ function showOneTime() {
     } else {
       const s = Math.max(0, Math.round((o.until - Date.now()) / 1000));
       $('otState').textContent = `— ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} 남음`;
-      $('otText').textContent = '이 코드를 도와줄 사람에게 알려 주세요. 그 사람이 My Remote 클라이언트(앱 또는 my-remote-client.html)의 접속 키 칸에 이 코드를 넣으면 이 창에 허용 카드가 뜹니다.';
+      $('otText').textContent = '이 코드를 도와줄 사람에게 알려 주세요. 그 사람이 My Remote 클라이언트의 접속 키 칸에 이 코드를 넣으면 '
+        + (o.auto ? '허용 카드 없이 바로 연결됩니다.' : '이 창에 허용 카드가 뜹니다.');
     }
   };
   tick();
@@ -1290,11 +1297,26 @@ async function onMessage(m, route) {
       return;
     }
     if (route.kind === 'code') {
-      // A one-time code: the page allowed on it may come back while it lasts; anything else waits for 허용 here.
+      // A one-time code: the page allowed on it may come back while it lasts; anything else waits for 허용 here,
+      // or with 자동 허용 on comes in at once if it signed its hello (a page without its own key goes to ask(),
+      // which tells an old page to reload and refuses a bad signature).
       if (!oneTime) return;
       if (m.bind && oneTime.pk && m.pk === oneTime.pk) m.allowed = 'again';
       else if (oneTime.pk) { route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: 'used' }).catch(() => {}); return; }
-      else { ask(m, route, { otp: false, locked: false }); return; }
+      else if (oneTime.auto && m.bind && route.keys === oneTime.keys) {
+        // A card shown for this code before the switch was turned on: the same page asking again comes in instead
+        // of it; another page is told the code is used now.
+        if (pending && pending.route.kind === 'code') {
+          const p = endAsk();
+          if (p.m.pk !== m.pk) p.route.send({ t: 'denied', sid: p.m.sid, ts: Date.now(), why: 'used' }).catch(() => {});
+        }
+        oneTime.pk = m.pk;
+        clearTimeout(oneTime.timer);
+        showOneTime();
+        m.allowed = 'auto';
+        api.access({ ev: 'approved', via: 'code', name: '1회용 코드로 접속', how: 'auto' });
+        log('1회용 코드로 접속: 자동 허용이 켜져 있어 바로 연결합니다');
+      } else { ask(m, route, { otp: false, locked: false }); return; }
     } else if (route.kind === 'key') {
       // New devices confirmed here (see ask): a page allowed a moment ago may come again without asking.
       if (m.bind && (allowedPks.get(m.pk) || 0) > performance.now()) m.allowed = 'again';
@@ -1637,6 +1659,13 @@ $('otpCancel').onclick = () => otpForm(false);
   api.onKick(() => teardown('사용자가 끊음'));
   $('otBtn').onclick = () => { makeOneTimeCode().catch((e) => log('1회용 코드를 만들지 못했습니다: ' + e.message)); };
   $('otEnd').onclick = () => endOneTime('ended');
+  $('otAuto').onclick = () => {
+    const o = oneTime;
+    if (!o || o.pk) return;
+    o.auto = !o.auto;
+    log(o.auto ? '1회용 코드: 자동 허용을 켰습니다 — 코드를 넣은 사람은 허용 없이 바로 접속합니다' : '1회용 코드: 자동 허용을 껐습니다 — 들어오기 전에 이 창에서 허용해야 합니다');
+    showOneTime();
+  };
   showOneTime();
   // The same key or click again and again, faster than a person (input.js): input stopped for a while. The
   // client is told why its keys and clicks do nothing meanwhile.

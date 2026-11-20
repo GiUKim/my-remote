@@ -1551,6 +1551,33 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
           /approved/.test(viaCode) && outQ && !s3.asked && s3.state !== 'connected' && devicesAfter === devicesBefore,
           `shown ${otShown}; asked ${askedQ} (card ${JSON.stringify(cq)}, title "${titleQ}"); in ${inQ}; second page: ${uq && uq.denied}; access log (code): ${viaCode}; ended: ${outQ} (${oq && oq.state}); ` +
           `after: ${JSON.stringify(s3)}; devices ${devicesBefore} -> ${devicesAfter}`);
+
+        // 자동 허용 on the card (the user's wish, 2026-11-20): off for a new code, and the card's text says that the
+        // host window will ask (no longer naming my-remote-client.html); turned on, the text says it connects at once,
+        // the first page with the code comes in without being asked (no card here, no question there), a second is
+        // turned away as before, the access log has it as approved 'auto', and the switch is gone once it is used.
+        await idle();
+        await hjs('makeOneTimeCode()');
+        const codeA = await hjs('oneTime ? oneTime.code : ""');
+        const otState = () => hjs(`({ auto: !!(oneTime && oneTime.auto), checked: document.getElementById('otAuto').getAttribute('aria-checked'), text: document.getElementById('otText').textContent, shown: getComputedStyle(document.getElementById('otAutoRow')).display !== 'none' })`);
+        const offFirst = await otState();
+        await hjs(`document.getElementById('otAuto').click()`);
+        const onNow = await otState();
+        const qa = await page(codeA);
+        let [inA] = await qa.guntil((x) => x.state === 'connected' && x.frames > 10, 30);
+        const askedA = await qa.g('!!window.__rd.asked'), cardA = await card();
+        const qb = await page(codeA);
+        let [usedA, ub] = await qb.guntil((x) => x.denied === 'used', 25);
+        await qb.close();
+        const autoLog = await hjs('hostApi.accessLog().then((l) => (Array.isArray(l) ? l : []).some((e) => e.via === "code" && e.ev === "approved" && e.how === "auto"))');
+        const afterUse = await otState();
+        await hjs('endOneTime("ended")');
+        await qa.guntil((x) => x.state !== 'connected', 15);
+        await qa.close();
+        check('one-time code with 자동 허용: off for a new code, turned on the first page comes in without being asked, a second is turned away, the card says which way it is',
+          !offFirst.auto && offFirst.checked === 'false' && offFirst.shown && /이 창에 허용 카드가 뜹니다/.test(offFirst.text) && !/my-remote-client/.test(offFirst.text) &&
+          onNow.auto && onNow.checked === 'true' && /바로 연결됩니다/.test(onNow.text) && inA && !askedA && !cardA.shown && usedA && autoLog && !afterUse.shown,
+          JSON.stringify({ offFirst, onNow, inA, askedA, card: cardA.shown, second: ub && ub.denied, autoLog, afterUse: afterUse.shown }));
       }
 
       if (SHELL_CHECK) {

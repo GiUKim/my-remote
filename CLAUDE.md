@@ -607,6 +607,15 @@ the client app instead).
     `code` entries; 끝내기 ends the session; the code no good after; no device made) and its
     `--client-app-check` (the app's "1회용 코드로 접속" through `--home-js`: asked, let in, the picture shown,
     no device). Not tried: a real second PC over the internet, a phone.
+    **자동 허용** (the user's wish, 2026-11-20): a switch on the card (`otAuto`), off for every new code and
+    hidden once the code is used. On, the first page that signs its hello on the code comes in without the card
+    (`allowed: 'auto'`, `approved` with `how: 'auto'` in the access log); a page without its own key still
+    goes to `ask` (an old page is told to reload); a card shown before the switch was turned on is ended (the
+    same page comes in instead, another one is told `used`). The rest stays: one page, no device token, the
+    same ending. Not refused during a remote session, unlike the gate's settings: a person connected to the
+    window can already make a code and press 허용. The card's text says which way it is (and no longer names
+    `my-remote-client.html`). The self-test: off for a new code with the card's text, turned on the first page in
+    without being asked, a second turned away `used`, `auto` in the access log, the switch hidden after.
   - **Connections that come back on themselves** (0.9.0; the user's go-ahead 2026-11-17, after a comparison
     with other remote programs: TeamViewer and AnyDesk refuse an ID of their own PC, Chrome Remote Desktop does
     not list it, none of them blocks two PCs controlling each other, which only feeds input back). Two cases,

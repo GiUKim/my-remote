@@ -6,7 +6,7 @@
 //
 // Entry: { t (ms), ev: 'connect' | 'end' | 'denied' | 'paired' | 'asked' | 'approved', via: 'key' | 'device' | 'code' (a one-time code),
 // dev?, name?, app?, ip?, kind? (the address's ICE candidate type), dur? (s), in?, out? (files), why?, how?
-// (how a new device was allowed: 'host', 'otp', 'recovery', 'first', 'again') }
+// (how a new device was allowed: 'host', 'otp', 'recovery', 'first', 'again'; a one-time code with 자동 허용 on: 'auto') }
 //
 // Electron-free (release/test-devices.js runs it under plain Node).
 'use strict';
