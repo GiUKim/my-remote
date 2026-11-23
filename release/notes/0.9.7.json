@@ -1,0 +1,12 @@
+{
+  "ko": [
+    "모니터가 여러 대일 때 전체화면 해제(툴바 버튼, Ctrl+Alt+Enter, 다른 창의 작은 메뉴)가 한 화면만이 아니라 모든 화면에서 함께 풀립니다",
+    "클라이언트 앱에서 다른 모니터의 창은 전체화면이 풀리면 그 모니터에서 최대화된 보통 창이 됩니다(옮기거나 크기를 바꿀 수 있습니다). 전체화면 버튼 한 번이면 모든 창이 다시 전체화면이 됩니다",
+    "원격 화면 쪽은 호스트가, 다른 모니터의 창은 클라이언트 앱이 이 버전이어야 바뀝니다"
+  ],
+  "en": [
+    "With several monitors, leaving fullscreen (the toolbar's button, Ctrl+Alt+Enter, another window's small menu) now leaves it on every screen, not just one",
+    "In the client app, the windows on the other monitors become ordinary windows maximized on their monitor once fullscreen ends (move or resize them as you like); one press of the fullscreen button takes every window back to fullscreen",
+    "The remote session's side changes once the host runs this version, the other monitors' windows once the client app does"
+  ]
+}
