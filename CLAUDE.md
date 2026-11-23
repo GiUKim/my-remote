@@ -1008,8 +1008,13 @@ the client app instead).
   `#bar` (`:fullscreen #bar.peek`, fixed and centred, `#stats` hidden so its width does not change under the
   pointer; the `전체화면` button reads `전체화면 끝내기` in fullscreen, on a phone too, and ends it), a window of a
   monitor of its own a small one (`peekMenu`/`fillPeek`: its monitors, the overview, fullscreen on or off, closing
-  that window, disconnect). In the client app such a window is frameless and the size of its screen: out of
-  fullscreen it counts as covering, so the menu comes there too and brings fullscreen back. It goes `PEEK_LEAVE`
+  that window, disconnect). **Fullscreen is the session's** (the user's report, 2026-11-23: with two monitors,
+  `전체화면 끝내기` left the other monitor's window fullscreen): the toolbar's button, the small menu and Ctrl+Alt+Enter
+  all go through `setFullscreen`, which leaves fullscreen in every window and, in the client app, takes every window
+  into it (`shell.fullscreenAll`; a browser allows one window per click). In the client app such a window opens with
+  its frame, maximized on its screen (until then borderless and the screen's size, so that out of fullscreen it still
+  covered the screen, taskbar included); out of fullscreen it shows a `전체화면` button in its corner. A screen-sized
+  window (an app from before) still counts as covering, so the menu comes there and brings fullscreen back. It goes `PEEK_LEAVE`
   (700 ms) after the pointer left it (24 px around it count as on it) or the window (`mouseout` to nowhere), at a
   press elsewhere, on blur and with fullscreen; the focus left in it (a select) goes back to the picture. Not while
   a 1:1 picture can still pan up (pushing against the top edge pans it), not while the window shows the lock

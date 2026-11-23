@@ -1363,6 +1363,35 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         pk.held === 0 && pk.finger === 0 && pk.lockBar === 0 && pk.panning === 0 && pk.window === 0 && JSON.stringify(pk.child) === JSON.stringify(wantChild), JSON.stringify(pk));
       check('a key whose press went to the host has its release sent, also when the focus moved to a field of the page meanwhile (and keys typed into the field stay here)',
         JSON.stringify(pk.release) === JSON.stringify(['kd:KeyA', 'ku:KeyA']), JSON.stringify(pk.release));
+      // Fullscreen is the session's (the user's report, 2026-11-23: with two monitors, 전체화면 끝내기 left the other
+      // window fullscreen): leaving it, by the toolbar's button, a window's small menu or Ctrl+Alt+Enter, leaves it in
+      // every window. Stand-ins: a window of its own that says it is fullscreen (no other window is opened here), and
+      // forceFull for this hidden one. Going into it in the client app asks for every window (shell.fullscreenAll).
+      const fa = await js(`(async () => {
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const out = {};
+        const fakeWin = (name) => { const doc = { fullscreenElement: {}, body: {}, exited: 0 }; doc.exitFullscreen = () => { doc.exited++; doc.fullscreenElement = null; return Promise.resolve(); }; return { closed: false, document: doc, name }; };
+        const add = () => { const v = { win: fakeWin('other'), isMain: false, sel: 0, panes: [], peek: { hide() {} } }; views.push(v); return v; };
+        const drop = (v) => { const i = views.indexOf(v); if (i >= 0) views.splice(i, 1); };
+        let v = add();
+        window.__rd.forceFull = true;
+        document.getElementById('fs').click(); await wait(50);
+        out.button = v.win.document.exited; drop(v);
+        v = add();
+        window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Enter', key: 'Enter', ctrlKey: true, altKey: true, bubbles: true, cancelable: true }));
+        window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Enter', key: 'Enter', ctrlKey: true, altKey: true, bubbles: true, cancelable: true }));
+        await wait(50);
+        out.shortcut = v.win.document.exited;
+        // From the other window (its small menu acts on its own view): this one's, forced, and the other's both go.
+        v.win.document.fullscreenElement = {}; v.win.document.exited = 0;
+        await toggleFullscreen(v); await wait(50);
+        out.fromOther = v.win.document.exited; drop(v);
+        window.__rd.forceFull = false;
+        return out;
+      })()`);
+      // (Going into it takes every window of the client app: --shell-check, on the real screens.)
+      check('leaving fullscreen leaves it in every window (the toolbar\'s button, Ctrl+Alt+Enter, another window\'s small menu)',
+        fa.button === 1 && fa.shortcut === 1 && fa.fromOther === 1, JSON.stringify(fa));
       check('a phone: tap, long press, hold and drag, swipe, pinch; its keyboard (Hangul, Backspace, key-row Ctrl); the host types the characters', ok,
         `tap ${t.tap} | long ${t.long} | drag ${t.drag} | swipe ${t.swipe} | pinch ${t.pinch.join(',') || 'nothing sent'}, zoom ${t.zoom} | kbd ${t.kbd} kept ${t.kept} | ctrl ${t.ctrl} | host typed ${typed ? 'yes' : 'no'}`);
     }
@@ -1691,6 +1720,24 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         check('client app: one click puts a fullscreen window on every screen, left to right',
           okc && wins.length === want && new Set(placed.map((x) => x.display)).size === want && placed.every((x) => x.fullscreen) && views.every((v) => v.fs) && sels.every((s, i) => i === 0 || s === sels[i - 1] + 1),
           `${wins.length} window(s) on displays ${JSON.stringify(placed.map((x) => x.display))}, fullscreen ${JSON.stringify(placed.map((x) => x.fullscreen))}, host monitors left to right ${JSON.stringify(sels)}`);
+        // 전체화면 끝내기 on the toolbar leaves fullscreen in every window (the user's report, 2026-11-23: the other
+        // monitor's stayed); the other windows are then ordinary ones, maximized on their screen, not the screen's
+        // size (until then borderless and as large as the screen: they still looked fullscreen). 전체화면 again: all.
+        if (wins.length > 1) {
+          await sjs(`document.getElementById('fs').click(); 1`, true);
+          await sleep(2500);
+          const state = () => wins.filter((x) => !x.isDestroyed()).map((x) => {
+            const d = screen.getDisplayMatching(x.getBounds()), b = x.getBounds();
+            return { fs: x.isFullScreen(), max: x.isMaximized(), covers: b.x <= d.bounds.x && b.y <= d.bounds.y && b.width >= d.bounds.width && b.height >= d.bounds.height };
+          });
+          const out = state(), outViews = await sjs(`liveViews().map((v) => !!v.win.document.fullscreenElement)`);
+          await sjs(`document.getElementById('fs').click(); 1`, true);
+          await sleep(2500);
+          const back = state(), backViews = await sjs(`liveViews().map((v) => !!v.win.document.fullscreenElement)`);
+          check('client app: 전체화면 끝내기 leaves fullscreen in every window (the others maximized ordinary windows), and 전체화면 takes them all again',
+            out.every((x) => !x.fs) && outViews.every((x) => !x) && out.slice(1).every((x) => x.max && !x.covers) && back.every((x) => x.fs) && backViews.every(Boolean),
+            `after leaving ${JSON.stringify(out)} pages ${JSON.stringify(outViews)}; after going in ${JSON.stringify(back.map((x) => x.fs))} pages ${JSON.stringify(backViews)}`);
+        }
         for (const x of wins) if (!x.isDestroyed()) x.destroy();
       }
     }

@@ -721,10 +721,19 @@ async function goFullscreen(win) {
     return true;
   } catch (e) { return false; }
 }
-function toggleFullscreen(view) {
-  const d = view.win.document;
-  if (d.fullscreenElement) d.exitFullscreen().catch(() => {}); else goFullscreen(view.win);
+// Fullscreen is the session's, not one window's (the user's report, 2026-11-23: with two monitors, 전체화면 끝내기
+// left the other monitor's window fullscreen). Leaving it leaves it in every window of this page; going into it,
+// the client app takes every window (shell.fullscreenAll), a browser only `from` (it allows one per click; the
+// others show their own button). The toolbar's button, a window's small menu and Ctrl+Alt+Enter all come here.
+function setFullscreen(on, from) {
+  if (!on) {
+    for (const v of liveViews()) { try { const d = v.win.document; if (d.fullscreenElement) d.exitFullscreen().catch(() => {}); } catch {} }
+    return Promise.resolve(true);
+  }
+  if (shell && typeof shell.fullscreenAll === 'function') return Promise.resolve(shell.fullscreenAll()).catch(() => false);
+  return goFullscreen((from || mainView).win);
 }
+function toggleFullscreen(view) { return setFullscreen(!fullscreenNow(view.win.document), view); }
 
 // ---- clipboard (text, both directions) -----------------------------------------
 async function flushClip(win) {
@@ -1798,9 +1807,13 @@ function openView(sel, scr, screenIdx) {
     if (e.target === small) corner.style.display = ''; else goFullscreen(w);
     if (view.panes[0]) view.panes[0].video.focus();
   };
-  corner.onclick = () => { goFullscreen(w); if (view.panes[0]) view.panes[0].video.focus(); };
+  // In the app the button brings back every window's fullscreen (setFullscreen), in a browser this one's.
+  corner.onclick = () => { if (shell) setFullscreen(true, view); else goFullscreen(w); if (view.panes[0]) view.panes[0].video.focus(); };
   d.addEventListener('fullscreenchange', () => { if (!cover.isConnected) corner.style.display = d.fullscreenElement ? 'none' : ''; });
-  if (!shell) root.append(cover, corner); // the app places the window and makes it fullscreen itself
+  // The app places the window (maximized, with its frame) and makes it fullscreen itself: no click asked for, and
+  // the button only while it is out of fullscreen (after 전체화면 끝내기).
+  if (!shell) root.append(cover, corner);
+  else { corner.style.display = d.fullscreenElement ? 'none' : ''; root.append(corner); }
 
   w.addEventListener('pagehide', () => setTimeout(() => { liveViews(); scheduleView(); arrSync(); }, 100));
   render(view);
@@ -2848,8 +2861,8 @@ $('bye').onclick = () => disconnect(tr('연결을 끊었습니다.'));
 if (shell && shell.home) { $('homeBtn').style.display = ''; $('homeBtn').onclick = () => { Promise.resolve(shell.home()).catch(() => {}); }; }
 // In fullscreen (the bar brought back at the top of the screen, attachPeek; a phone's bar stays) the same button ends it.
 $('fs').onclick = () => {
-  if (document.fullscreenElement) { mainView.peek && mainView.peek.hide && mainView.peek.hide(); document.exitFullscreen().catch(() => {}); }
-  else goFullscreen(window);
+  if (fullscreenNow(document)) { mainView.peek && mainView.peek.hide && mainView.peek.hide(); setFullscreen(false); }
+  else setFullscreen(true, mainView);
   if (mainView.panes[0]) mainView.panes[0].video.focus();
 };
 document.addEventListener('fullscreenchange', () => { $('fs').textContent = document.fullscreenElement ? tr('전체화면 끝내기') : tr('전체화면'); });

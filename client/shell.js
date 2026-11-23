@@ -320,6 +320,11 @@ let ipcReady = false;
 function setupIpc() {
   if (ipcReady) return;
   ipcReady = true;
+  // The page asks for this PC's language with a synchronous message (preload.js mrShell.lang), which client/main.js
+  // answers. Where it does not run (the self-test's windows in the host's process), the page would wait for an
+  // answer for ever (Electron leaves a sendSync nobody listens to unanswered: the shell check hung on it, 2026-11-23):
+  // the language main told the shell (useT), else '' (the page then takes the browser's).
+  if (!ipcMain.listenerCount('i18n:lang')) ipcMain.on('i18n:lang', (e) => { e.returnValue = (T && T.lang) || ''; });
   // What is being carried out of the remote picture, shown at the pointer (see above). `o.on` false ends it.
   // A window opened for a PC of the app's list. Its loader is given that PC's key (preload.js puts it into
   // the loader's own field and presses its button), so the person is not asked and the key is never in
@@ -599,22 +604,27 @@ function attach(win, { host = null, trust = false, code = '' } = {}) {
   wc.session.setPermissionRequestHandler((_wc, permission, cb) => cb(ALLOWED.has(permission)));
   wc.session.setPermissionCheckHandler((_wc, permission) => ALLOWED.has(permission));
 
-  // A window the page opens with a position goes, borderless, onto the screen at that position. The
-  // page opens empty windows and fills them itself; nothing else is opened, since it would get mrShell.
+  // A window the page opens with a position goes onto the screen at that position, maximized, with its frame:
+  // fullscreen (shell:fullscreenAll) covers the screen, and out of fullscreen it is an ordinary window there. (Until
+  // 2026-11-23 it was borderless and the screen's size: out of fullscreen it still covered the screen, taskbar
+  // included, and looked as if 전체화면 끝내기 had left it alone.) Its size when restored: most of that screen.
+  // The page opens empty windows and fills them itself; nothing else is opened, since it would get mrShell.
   wc.setWindowOpenHandler(({ url, features }) => {
     if (!blank(url)) return { action: 'deny' };
     const num = (k) => { const r = new RegExp('(?:^|,)\\s*' + k + '=(-?\\d+)').exec(features || ''); return r ? Number(r[1]) : null; };
     const left = num('left'), top = num('top');
     const opts = { autoHideMenuBar: true, backgroundColor: '#000000', icon: ICON, webPreferences: { preload: PRELOAD, backgroundThrottling: false } };
     if (left != null && top != null) {
-      const d = screen.getDisplayNearestPoint({ x: left + 20, y: top + 20 });
-      Object.assign(opts, { x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height, frame: false });
+      const a = screen.getDisplayNearestPoint({ x: left + 20, y: top + 20 }).workArea;
+      const w = Math.round(a.width * 0.8), h = Math.round(a.height * 0.8);
+      Object.assign(opts, { x: a.x + Math.round((a.width - w) / 2), y: a.y + Math.round((a.height - h) / 2), width: w, height: h });
     }
     return { action: 'allow', overrideBrowserWindowOptions: opts };
   });
   stayOnPage(wc);
-  wc.on('did-create-window', (child) => {
+  wc.on('did-create-window', (child, details) => {
     state.children.add(child);
+    if (details && details.options && details.options.x != null) child.maximize(); // placed on a screen (above)
     child.setMenuBarVisibility(false);
     child.webContents.setWindowOpenHandler(() => ({ action: 'deny' })); // the page opens its windows from the main one
     stayOnPage(child.webContents);
