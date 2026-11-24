@@ -1558,9 +1558,12 @@ that name is made again under the account; GitHub Pages is not forwarded: the we
   `%ProgramFiles%\Pangmote`); through it the real lock screen was seen, clicked and unlocked with the typed
   password (`run-lock-test.ps1`, protocol 1 on the kept pipes); with both names installed, `uninstall` removed
   both; the new `host/assist.js` said "running, not current" for the old service (the card's "업데이트 필요")
-  and "current" after the install. Not tried: the forwarding of GitHub's old address for the real feed (checked
-  once the repository is renamed), shortcuts in a real Start menu, desktop and taskbar (retarget ran on stand-ins
-  only), the firewall's prompt for the new program on a real host.
+  and "current" after the install. Published as 0.10.0 the same day (Windows package self-test 74 PASS, Linux 60):
+  the feed's seven files byte for byte as uploaded, packages.json format 2, and the repository's old address
+  (`GiUKim/my-remote/releases/latest/download/`, through GitHub's forwarding) gives the same latest.json and
+  packages.json (Electron's `net.fetch` too: 301 -> 200). Not tried: a real installed app taking 0.10.0 and its
+  swap through the real feed, shortcuts in a real Start menu, desktop and taskbar (retarget ran on stand-ins only),
+  the firewall's prompt for the new program on a real host.
 
 ## CI, gates and checks (what a change must pass)
 

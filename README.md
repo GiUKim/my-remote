@@ -8,9 +8,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/GiUKim/pangmote/releases/latest/download/MyRemote-Windows-x64.zip"><img src="docs/img/download-windows.svg" alt="Windows용 내려받기" width="280"></a>
+  <a href="https://github.com/GiUKim/pangmote/releases/latest/download/Pangmote-Windows-x64.zip"><img src="docs/img/download-windows.svg" alt="Windows용 내려받기" width="280"></a>
   &nbsp;&nbsp;
-  <a href="https://github.com/GiUKim/pangmote/releases/latest/download/MyRemote-Linux-x64.tar.gz"><img src="docs/img/download-linux.svg" alt="Linux용 내려받기" width="280"></a>
+  <a href="https://github.com/GiUKim/pangmote/releases/latest/download/Pangmote-Linux-x64.tar.gz"><img src="docs/img/download-linux.svg" alt="Linux용 내려받기" width="280"></a>
 </p>
 
 <p align="center">
@@ -23,26 +23,26 @@
 
 ### 🐧 Ubuntu는 터미널로도 설치할 수 있습니다
 
-위 **Linux용 내려받기**와 같은 파일(데스크톱 앱)을 받아 `~/MyRemote`에 풉니다. 블록 오른쪽 위의 복사 단추로 복사해 터미널에 붙여 넣으세요.
+위 **Linux용 내려받기**와 같은 파일(데스크톱 앱)을 받아 `~/Pangmote`에 풉니다. 블록 오른쪽 위의 복사 단추로 복사해 터미널에 붙여 넣으세요.
 
 ```bash
-cd ~ && wget -qO- https://github.com/GiUKim/pangmote/releases/latest/download/MyRemote-Linux-x64.tar.gz | tar -xz
+cd ~ && wget -qO- https://github.com/GiUKim/pangmote/releases/latest/download/Pangmote-Linux-x64.tar.gz | tar -xz
 ```
 
 Ubuntu 24.04(23.10 이후)만, 한 번: 브라우저 엔진의 샌드박스 도우미를 켭니다(관리자 비밀번호를 묻습니다).
 
 ```bash
-sudo chown root:root ~/MyRemote/chrome-sandbox && sudo chmod 4755 ~/MyRemote/chrome-sandbox
+sudo chown root:root ~/Pangmote/chrome-sandbox && sudo chmod 4755 ~/Pangmote/chrome-sandbox
 ```
 
-앱 메뉴에 `My Remote`를 만들고 시작합니다.
+앱 메뉴에 `Pangmote`를 만들고 시작합니다.
 
 ```bash
-~/MyRemote/my-remote.sh --shortcuts
-~/MyRemote/my-remote.sh             # 시작 화면 (호스트로 바로 시작하려면 --host, 클라이언트는 --client)
+~/Pangmote/pangmote.sh --shortcuts
+~/Pangmote/pangmote.sh              # 시작 화면 (호스트로 바로 시작하려면 --host, 클라이언트는 --client)
 ```
 
-<sub>X11 데스크톱 세션이 필요합니다(Wayland면 로그인 화면 오른쪽 아래 톱니바퀴에서 "Ubuntu on Xorg"). SSH 터미널에서 실행하면 그 PC에 로그인되어 있는 데스크톱에 뜨고, 접속 키는 `~/MyRemote/my-remote.sh --show-key`로 터미널에서 봅니다. 화면 앞에 없는 PC(SSH로만 관리하는 PC)는 [Linux](#linux)를 보세요.</sub>
+<sub>X11 데스크톱 세션이 필요합니다(Wayland면 로그인 화면 오른쪽 아래 톱니바퀴에서 "Ubuntu on Xorg"). SSH 터미널에서 실행하면 그 PC에 로그인되어 있는 데스크톱에 뜨고, 접속 키는 `~/Pangmote/pangmote.sh --show-key`로 터미널에서 봅니다. 화면 앞에 없는 PC(SSH로만 관리하는 PC)는 [Linux](#linux)를 보세요.</sub>
 
 ## 🚀 3단계로 시작
 
@@ -52,7 +52,7 @@ sudo chown root:root ~/MyRemote/chrome-sandbox && sudo chmod 4755 ~/MyRemote/chr
 
 | | 할 일 | 방법 |
 |:-:|---|---|
-| 1️⃣ | **두 PC에 설치** | 내려받아 압축을 풀고 실행합니다. Windows `MyRemote.exe` · Linux `./my-remote.sh` |
+| 1️⃣ | **두 PC에 설치** | 내려받아 압축을 풀고 실행합니다. Windows `Pangmote.exe` · Linux `./pangmote.sh` |
 | 2️⃣ | **호스트에서 키 복사** | 조종받을 PC에서 시작 화면의 `이 PC 공유` → 창의 `키 복사` → 비밀번호 관리자에 보관 |
 | 3️⃣ | **클라이언트에서 접속** | 내가 앉은 PC에서 시작 화면의 `다른 PC에 접속` → `＋ PC 추가`에 키 붙여넣기 → `추가하고 접속` |
 
@@ -240,12 +240,12 @@ Chrome 원격 데스크톱과 같은 기술(WebRTC)을 쓰되, **멀티 모니�
 
 | 운영체제 | 받는 파일 | 실행 |
 |---|---|---|
-| Windows 10/11 (64비트) | `MyRemote-Windows-x64.zip` | 원하는 곳에 풀고 `MyRemote.exe` 실행 |
-| Linux (X11 세션, Ubuntu 22.04·24.04에서 시험) | `MyRemote-Linux-x64.tar.gz` | 원하는 곳에 풀고 `./my-remote.sh` 실행 |
+| Windows 10/11 (64비트) | `Pangmote-Windows-x64.zip` | 원하는 곳에 풀고 `Pangmote.exe` 실행 |
+| Linux (X11 세션, Ubuntu 22.04·24.04에서 시험) | `Pangmote-Linux-x64.tar.gz` | 원하는 곳에 풀고 `./pangmote.sh` 실행 |
 | macOS | 아직 없습니다 | Apple 개발자 서명이 있어야 실행할 수 있어 만들지 못했습니다 |
 
-1. 실행하면 시작 화면의 큰 버튼 두 개 중 **이 PC 공유**(호스트: 이 PC를 원격으로 조종받기)나 **다른 PC에 접속**(클라이언트)을 고릅니다. "바로가기 만들기"를 켜 두면 시작 메뉴의 `MyRemote` 폴더에 `MyRemote` 바로가기(Linux는 앱 메뉴에 `My Remote`)가 생기고, 다음부터는 그것을 누르면 시작 화면이 뜹니다. 둘 다 쓰려면 한 번 더 실행해 다른 쪽을 고르면 됩니다. 0.5.x 이하로 설치한 앱의 바로가기 두 개(호스트, 클라이언트)는 0.6.0으로 업데이트되면 `MyRemote` 하나로 바뀝니다. 다만 `MyRemote.exe`를 직접 실행했을 때 뜨는 첫 창은 설치 묶음(앱 바탕)에 들어 있어 업데이트로 바뀌지 않으므로, 그런 앱에서는 예전 선택 창("호스트 시작 / 클라이언트 시작")이 뜹니다. 시작 메뉴의 `MyRemote`를 쓰거나, 앱을 모두 끈 뒤(트레이 → 종료) 새 묶음을 같은 폴더에 덮어 풀면 시작 화면이 뜹니다.
-2. **한글이나 띄어쓰기가 없는 경로에 풀기를 권합니다**(예: `C:\MyRemote`, `~/MyRemote`). 묶음 안의 파일과 앱이 만드는 폴더·바로가기 이름은 모두 띄어쓰기 없는 영문이므로, 푸는 위치만 그렇게 고르면 경로 전체에 한글과 띄어쓰기가 없습니다(Windows 계정 이름이 한글이면 설정 폴더 경로에는 그 이름이 들어갑니다).
+1. 실행하면 시작 화면의 큰 버튼 두 개 중 **이 PC 공유**(호스트: 이 PC를 원격으로 조종받기)나 **다른 PC에 접속**(클라이언트)을 고릅니다. "바로가기 만들기"를 켜 두면 시작 메뉴의 `Pangmote` 폴더에 `Pangmote` 바로가기(Linux는 앱 메뉴에 `Pangmote`)가 생기고, 다음부터는 그것을 누르면 시작 화면이 뜹니다. 둘 다 쓰려면 한 번 더 실행해 다른 쪽을 고르면 됩니다. 0.5.x 이하로 설치한 앱의 바로가기 두 개(호스트, 클라이언트)는 업데이트되면 `Pangmote` 하나로 바뀝니다(0.9.x까지의 `MyRemote` 바로가기도). 다만 `MyRemote.exe`를 직접 실행했을 때 뜨는 첫 창은 설치 묶음(앱 바탕)에 들어 있어 업데이트로 바뀌지 않으므로, 그런 앱에서는 예전 선택 창("호스트 시작 / 클라이언트 시작")이 뜹니다. 시작 메뉴의 `Pangmote`를 쓰거나, 앱을 모두 끈 뒤(트레이 → 종료) 새 묶음을 같은 폴더에 덮어 풀면 시작 화면이 뜹니다.
+2. **한글이나 띄어쓰기가 없는 경로에 풀기를 권합니다**(예: `C:\Pangmote`, `~/Pangmote`). 묶음 안의 파일과 앱이 만드는 폴더·바로가기 이름은 모두 띄어쓰기 없는 영문이므로, 푸는 위치만 그렇게 고르면 경로 전체에 한글과 띄어쓰기가 없습니다(Windows 계정 이름이 한글이면 설정 폴더 경로에는 그 이름이 들어갑니다).
 3. 푼 폴더는 옮기지 말고 그대로 두세요(바로가기가 그 위치를 가리킵니다). 지우려면 그 폴더와 바로가기를 지우면 됩니다. 접속 키와 설정은 사용자 폴더에 따로 있어 남습니다.
 4. Windows에서 처음 실행할 때 "Windows의 PC 보호" 창이 뜨면 "추가 정보 → 실행"을 누릅니다. 아직 코드 서명 인증서가 없어서 나오는 경고입니다.
 5. 사용법은 아래 [사용 방법](#사용-방법)과 같습니다. 소스 폴더로 쓰던 PC에 앱을 설치해도 접속 키는 그대로 이어집니다(같은 설정 폴더를 씁니다).
