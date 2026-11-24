@@ -1,4 +1,4 @@
-// My Remote's Windows "assist" service: lets the authorized remote person see and use the HOST's
+// Pangmote's Windows "assist" service: lets the authorized remote person see and use the HOST's
 // secure desktop - above all the lock screen - which a normal-user process cannot touch.
 //
 // WHAT THIS IS, AND IS NOT. The lock screen, the logon screen and User Account Control prompts are
@@ -20,8 +20,9 @@
 // for it.
 //
 // Shape:
-//   winassist.exe install | uninstall          copy to %ProgramFiles%\MyRemote and register / stop,
-//                                               unregister and delete it  (must run elevated)
+//   winassist.exe install | uninstall          copy to %ProgramFiles%\Pangmote and register / stop,
+//                                               unregister and delete it  (must run elevated); both also
+//                                               remove the service of the program's old name (below)
 //   winassist.exe status                        is it installed and running
 //   winassist.exe grab <file.bmp>               DEBUG: capture the current input desktop to a BMP
 //                                               (run elevated to catch a secure desktop); no service
@@ -30,7 +31,7 @@
 //   winassist.exe                               service entry point (started by the Service Manager)
 //   winassist.exe helper <sessionId>            the in-session worker the service spawns as SYSTEM
 //
-// The service runs from %ProgramFiles%\MyRemote (only administrators can write there): a LocalSystem
+// The service runs from %ProgramFiles%\Pangmote (only administrators can write there): a LocalSystem
 // service whose program lies in a folder the user can write to would let any program of the user replace
 // it and run as SYSTEM. Its log is kept next to it for the same reason (not in ProgramData, where a user
 // can plant a link where SYSTEM then writes).
@@ -59,8 +60,15 @@
 #include <stdio.h>
 #include <stdint.h>
 
-#define SVC_NAME L"MyRemoteAssist"
-#define SVC_DISPLAY L"My Remote Assist"
+#define SVC_NAME L"PangmoteAssist"
+#define SVC_DISPLAY L"Pangmote Assist"
+#define SVC_FOLDER L"Pangmote"
+// Up to 0.9.x the program was called My Remote, and so were this service and its folder. Installing this one
+// removes that one (they would both want the pipes below), and uninstalling removes either.
+#define OLD_SVC_NAME L"MyRemoteAssist"
+#define OLD_SVC_FOLDER L"MyRemote"
+// The pipes keep the old name: hosts and services of either name talk to each other (a host updated by the
+// app keeps using a service installed before, until the person updates it from the host window).
 #define CONTROL_PIPE L"\\\\.\\pipe\\my-remote-assist"
 #define DATA_PIPE L"\\\\.\\pipe\\my-remote-assist-data"
 // The control pipe only asks for a helper, which is harmless: the interactive user, administrators,
@@ -232,8 +240,8 @@ static void dpiAware() {
 //     'M' mouse: u32 flags, i32 x, i32 y, i32 data   (SendInput MOUSEINPUT; x,y are 0..65535 absolute)
 //     'K' key:   u16 vk, u16 scan, u32 flags          (SendInput KEYBDINPUT)
 //     'A' secure attention sequence (Ctrl+Alt+Del)    (no body)
-// Before the host sends anything typed, it checks that the pipe's server process
-// (GetNamedPipeServerProcessId) is %ProgramFiles%\MyRemote\winassist.exe: a pipe of the same name made by
+// Before the host sends anything typed, it checks the pipe's server session (GetNamedPipeServerSessionId:
+// the helper runs in the person's session, the service in session 0): a pipe of the same name made by
 // someone else first would otherwise receive the password typed into the lock screen (this helper then
 // fails to start, thanks to FILE_FLAG_FIRST_PIPE_INSTANCE, and logs why).
 #pragma pack(push, 1)
@@ -575,13 +583,36 @@ static VOID WINAPI serviceMain(DWORD, LPWSTR*) {
 }
 
 // ---- install / uninstall / status -------------------------------------------------------
-// %ProgramFiles%\MyRemote and the program's path in it.
-static bool installPaths(wchar_t* dir, wchar_t* exe) {
+// %ProgramFiles%\<folder> and the program's path in it.
+static bool installPaths(wchar_t* dir, wchar_t* exe, const wchar_t* folder = SVC_FOLDER) {
   wchar_t pf[MAX_PATH];
   DWORD n = GetEnvironmentVariableW(L"ProgramFiles", pf, MAX_PATH);
   if (!n || n >= MAX_PATH) return false;
-  _snwprintf_s(dir, MAX_PATH, _TRUNCATE, L"%ls\\MyRemote", pf);
+  _snwprintf_s(dir, MAX_PATH, _TRUNCATE, L"%ls\\%ls", pf, folder);
   _snwprintf_s(exe, MAX_PATH, _TRUNCATE, L"%ls\\winassist.exe", dir);
+  return true;
+}
+// Stops and deletes the service 'name' (when there is one) and its program, log and folder (a file still in use
+// goes at the next restart). -> whether there was one
+static bool removeService(SC_HANDLE scm, const wchar_t* name, const wchar_t* folder) {
+  SC_HANDLE svc = OpenServiceW(scm, name, SERVICE_ALL_ACCESS);
+  if (!svc) return false;
+  SERVICE_STATUS st; ControlService(svc, SERVICE_CONTROL_STOP, &st);
+  for (int i = 0; i < 50 && QueryServiceStatus(svc, &st) && st.dwCurrentState != SERVICE_STOPPED; i++) Sleep(100);
+  if (!DeleteService(svc)) printf("%ls: delete failed (%lu)\n", name, GetLastError()); else printf("%ls: removed\n", name);
+  CloseServiceHandle(svc);
+  wchar_t dir[MAX_PATH], exe[MAX_PATH], log[MAX_PATH];
+  if (installPaths(dir, exe, folder)) {
+    _snwprintf_s(log, MAX_PATH, _TRUNCATE, L"%ls\\assist.log", dir);
+    DeleteFileW(log);
+    bool gone = false;
+    for (int i = 0; i < 30 && !gone; i++) { // its helper may take a moment to end
+      gone = DeleteFileW(exe) != 0 || GetLastError() == ERROR_FILE_NOT_FOUND;
+      if (!gone) Sleep(100);
+    }
+    if (!gone) MoveFileExW(exe, nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
+    RemoveDirectoryW(dir);
+  }
   return true;
 }
 static int installService() {
@@ -607,45 +638,44 @@ static int installService() {
     svc = CreateServiceW(scm, SVC_NAME, SVC_DISPLAY, SERVICE_ALL_ACCESS, SERVICE_WIN32_OWN_PROCESS,
                          SERVICE_AUTO_START, SERVICE_ERROR_NORMAL, bin, nullptr, nullptr, nullptr, nullptr, nullptr);
     if (!svc) { printf("create service failed (%lu)\n", GetLastError()); CloseServiceHandle(scm); return 1; }
-    SERVICE_DESCRIPTIONW d; d.lpDescription = (LPWSTR)L"Lets My Remote show and use this PC's lock screen for the authorized remote user. Idle until a session asks for it.";
+    SERVICE_DESCRIPTIONW d; d.lpDescription = (LPWSTR)L"Lets Pangmote show and use this PC's lock screen for the authorized remote user. Idle until a session asks for it.";
     ChangeServiceConfig2W(svc, SERVICE_CONFIG_DESCRIPTION, &d);
   }
+  // The service of the program's old name goes once this one is in place (a failure above leaves the PC with
+  // that one) and before this one starts: it holds the pipes this one makes.
+  bool wasOld = removeService(scm, OLD_SVC_NAME, OLD_SVC_FOLDER);
   if (!StartServiceW(svc, 0, nullptr) && GetLastError() != ERROR_SERVICE_ALREADY_RUNNING) {
     printf("start failed (%lu)\n", GetLastError()); CloseServiceHandle(svc); CloseServiceHandle(scm); return 1;
   }
-  printf(update ? "updated and started\n" : "installed and started\n");
+  printf(update || wasOld ? "updated and started\n" : "installed and started\n");
   CloseServiceHandle(svc); CloseServiceHandle(scm);
   return 0;
 }
 static int uninstallService() {
   SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_ALL_ACCESS);
   if (!scm) { printf("open SCM failed (%lu); run as administrator\n", GetLastError()); return 1; }
-  SC_HANDLE svc = OpenServiceW(scm, SVC_NAME, SERVICE_ALL_ACCESS);
-  if (!svc) { printf("not installed\n"); CloseServiceHandle(scm); return 0; }
-  SERVICE_STATUS st; ControlService(svc, SERVICE_CONTROL_STOP, &st);
-  for (int i = 0; i < 50 && QueryServiceStatus(svc, &st) && st.dwCurrentState != SERVICE_STOPPED; i++) Sleep(100);
-  if (!DeleteService(svc)) printf("delete failed (%lu)\n", GetLastError()); else printf("removed\n");
-  CloseServiceHandle(svc); CloseServiceHandle(scm);
-  // Remove the installed program, its log and the folder (a file still in use goes at the next restart).
-  wchar_t dir[MAX_PATH], exe[MAX_PATH], log[MAX_PATH];
-  if (installPaths(dir, exe)) {
-    _snwprintf_s(log, MAX_PATH, _TRUNCATE, L"%ls\\assist.log", dir);
-    DeleteFileW(log);
-    if (!DeleteFileW(exe)) MoveFileExW(exe, nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
-    RemoveDirectoryW(dir);
-  }
+  bool any = removeService(scm, SVC_NAME, SVC_FOLDER);
+  if (removeService(scm, OLD_SVC_NAME, OLD_SVC_FOLDER)) any = true;
+  if (!any) printf("not installed\n");
+  CloseServiceHandle(scm);
   return 0;
 }
+// "running" / "installed" / "not-installed"; a service of the program's old name says so on a line of its own.
 static int statusService() {
   SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
   if (!scm) { printf("not-installed\n"); return 1; }
-  SC_HANDLE svc = OpenServiceW(scm, SVC_NAME, SERVICE_QUERY_STATUS);
   int rc = 1;
-  if (svc) {
+  const wchar_t* names[] = { SVC_NAME, OLD_SVC_NAME };
+  for (int i = 0; i < 2; i++) {
+    SC_HANDLE svc = OpenServiceW(scm, names[i], SERVICE_QUERY_STATUS);
+    if (!svc) continue;
     SERVICE_STATUS st;
     if (QueryServiceStatus(svc, &st)) { printf(st.dwCurrentState == SERVICE_RUNNING ? "running\n" : "installed\n"); rc = 0; }
     CloseServiceHandle(svc);
-  } else printf("not-installed\n");
+    if (i) printf("(as %ls, the program's old name: install updates it)\n", names[i]);
+    break;
+  }
+  if (rc) printf("not-installed\n");
   CloseServiceHandle(scm);
   return rc;
 }

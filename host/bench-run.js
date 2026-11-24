@@ -51,7 +51,7 @@ const nets = arg('net', 'direct').split(',');
 const tries = arg('try', 'base').split(',');
 const repeat = Number(arg('repeat', 1));
 const extra = JSON.parse(arg('set', '{}'));
-const outDir = arg('out', path.join(os.tmpdir(), 'myremote-bench', new Date().toISOString().replace(/[:.]/g, '-')));
+const outDir = arg('out', path.join(os.tmpdir(), 'pangmote-bench', new Date().toISOString().replace(/[:.]/g, '-')));
 fs.mkdirSync(outDir, { recursive: true });
 // More settings can be kept in a file next to the results instead of editing this one: { "name": { ...config } }
 const triesFile = arg('tries-file', '');

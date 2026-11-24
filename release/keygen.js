@@ -1,7 +1,8 @@
 // Makes the key pair that signs releases (Ed25519), once:
 //   node release/keygen.js [--key=<private key file>]
-// The private key goes to a file outside the repository (default ~/.my-remote-release/update-signing-key.pem,
-// readable by this user only) and is never printed. The public key is added to app/update-config.json,
+// The private key goes to a file outside the repository (default ~/.pangmote-release/update-signing-key.pem,
+// readable by this user only; a key made before the program was renamed in 0.10.0 is used where it is,
+// ~/.my-remote-release/: see defaultKey in build.js) and is never printed. The public key is added to app/update-config.json,
 // which is part of every installed app: an app installs only what a key listed there has signed.
 //
 // Whoever has the private key can update every installed app. Keep it on the machine that makes

@@ -15,7 +15,7 @@ const arg = (name, def) => { const a = process.argv.find((x) => x.startsWith('--
 const profile = arg('profile', process.env.CI ? 'ci' : 'dev');
 const limits = JSON.parse(fs.readFileSync(path.join(__dirname, 'bench-thresholds.json'), 'utf8'))[profile];
 if (!limits) { console.log(`no limits for profile "${profile}"`); process.exit(2); }
-const out = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-benchgate-'));
+const out = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-benchgate-'));
 const runs = Object.keys(limits);
 const nets = [...new Set(runs.map((r) => r.split('/')[0]))], tries = [...new Set(runs.map((r) => r.split('/')[1]))];
 

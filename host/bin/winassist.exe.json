@@ -1,7 +1,7 @@
 {
   "source": "native/winassist.cpp",
-  "sourceSha256": "5ceb2b0088b72430d30c24f36042dec0cf90d1fe7c1f38dbdd6a13fb2ab0da48",
-  "dllSha256": "b8944dd1041b36b23ee461cdc28ef2c3852482bdfb6e67c147a11efc4bf41272",
+  "sourceSha256": "6fc6a9cbeb70f52b407bfa275aa1469b9aa5c19a401ea259eeaee4ecda66157f",
+  "dllSha256": "e7861bb98e62b6962c84a8a358ab32ca3b85ffa2f13f5fab57d9042abfd814b8",
   "compiler": "x86_64-w64-mingw32-g++ (GCC) 10-win32 20220113",
   "command": "x86_64-w64-mingw32-g++ -O2 -Wall -municode -static -s -fno-exceptions -fno-rtti -Wl,--no-insert-timestamp -o winassist.exe winassist.cpp -lwtsapi32 -luserenv -ladvapi32 -lgdi32 -luser32"
 }

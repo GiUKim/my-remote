@@ -41,6 +41,9 @@ const log = (s) => console.log('[app] ' + s);
 
 // The names the two faces have always had: their profiles (the host's holds the access key, encrypted
 // under this name on Linux and macOS) stay where they are when a source folder is replaced by the app.
+// They keep the program's old name (My Remote, up to 0.9.x) for good, as do the data folder above, the
+// Windows app ids and the "my-remote" ids in what releases sign (core.js): a new name there would leave
+// every installed PC without its key, its devices and its list of PCs, or without updates.
 const NAME = { host: 'my-remote-host', client: 'my-remote-client' };
 if (mode !== 'ask') {
   app.setName(NAME[mode]);
@@ -50,6 +53,7 @@ if (mode !== 'ask') {
   // Asking which face, or only making the shortcuts: a profile of its own next to the installed versions.
   // Left to itself Electron names one after the product ("My Remote" in 0.3.0-0.4.0: a folder with a
   // space in its name). Every file and folder this app makes has a plain name: no spaces, ASCII only.
+  // (The old name, as for the profiles above.)
   app.setName('my-remote');
   app.setPath('userData', path.join(path.dirname(root), 'launcher'));
 }
@@ -140,10 +144,11 @@ global.__mrApp = {
 };
 
 // ---- the shortcut: the Start menu (Windows), the app menu (Linux) ----------------------------
-// One entry, "MyRemote", for the one app: it opens the start screen (two big buttons, host or client; the
+// One entry, "Pangmote", for the one app: it opens the start screen (two big buttons, host or client; the
 // code's client/launcher.html, run as the client app's first window). Packages up to 0.5.x made two
-// shortcuts (host, client); they go once the entry is there (the code does the same for apps installed
-// from those packages, see host/appsync.js). `into`: another folder (--shortcuts=<folder>, a test).
+// shortcuts (host, client), and up to 0.9.x the entry was "MyRemote" (the program's old name); they go
+// once the entry is there (the code does the same for apps installed from those packages, see
+// host/appsync.js). `into`: another folder (--shortcuts=<folder>, a test).
 function makeShortcuts(into) {
   const made = [];
   const about = '원격 데스크톱: 이 PC를 공유하거나(호스트) 다른 PC에 접속합니다(클라이언트)';
@@ -152,22 +157,23 @@ function makeShortcuts(into) {
       // File and folder names without spaces and in ASCII only (some tools and some systems' settings
       // trip over either); what the shortcut is for is in its description.
       const programs = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
-      const dir = into || path.join(programs, 'MyRemote'), file = path.join(dir, 'MyRemote.lnk');
+      const dir = into || path.join(programs, 'Pangmote'), file = path.join(dir, 'Pangmote.lnk');
       fs.mkdirSync(dir, { recursive: true });
       if (shell.writeShortcutLink(file, fs.existsSync(file) ? 'update' : 'create', { target: process.execPath, args: '--client --launcher', description: about, icon: path.join(__dirname, 'icon.ico'), iconIndex: 0, appUserModelId: 'kr.myremote.client' })) made.push(file);
       if (!into && made.length) {
-        for (const f of [path.join(dir, 'MyRemote-Host.lnk'), path.join(dir, 'MyRemote-Client.lnk'), path.join(programs, 'My Remote', 'My Remote 호스트.lnk'), path.join(programs, 'My Remote', 'My Remote 클라이언트.lnk')]) { try { fs.rmSync(f, { force: true }); } catch {} }
-        try { fs.rmdirSync(path.join(programs, 'My Remote')); } catch {} // only when nothing else is in it
+        const old = path.join(programs, 'MyRemote');
+        for (const f of [path.join(old, 'MyRemote.lnk'), path.join(old, 'MyRemote-Host.lnk'), path.join(old, 'MyRemote-Client.lnk'), path.join(programs, 'My Remote', 'My Remote 호스트.lnk'), path.join(programs, 'My Remote', 'My Remote 클라이언트.lnk')]) { try { fs.rmSync(f, { force: true }); } catch {} }
+        for (const d of [old, path.join(programs, 'My Remote')]) { try { fs.rmdirSync(d); } catch {} } // only when nothing else is in it
       }
     } else if (process.platform === 'linux') {
       const dir = into || path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'applications');
       fs.mkdirSync(dir, { recursive: true });
-      const launcher = path.join(path.dirname(process.execPath), 'my-remote.sh'), file = path.join(dir, 'my-remote.desktop');
-      fs.writeFileSync(file, `[Desktop Entry]\nType=Application\nName=My Remote\nComment=${about}\nExec="${launcher}" --client --launcher\nIcon=${path.join(__dirname, 'icon.png')}\nTerminal=false\nCategories=Network;RemoteAccess;\n`, { mode: 0o755 });
+      const launcher = path.join(path.dirname(process.execPath), 'pangmote.sh'), file = path.join(dir, 'pangmote.desktop');
+      fs.writeFileSync(file, `[Desktop Entry]\nType=Application\nName=Pangmote\nComment=${about}\nExec="${launcher}" --client --launcher\nIcon=${path.join(__dirname, 'icon.png')}\nTerminal=false\nCategories=Network;RemoteAccess;\n`, { mode: 0o755 });
       made.push(file);
-      // The two of 0.3.0-0.5.x go; entries of the same names that a source folder's setup.sh made (they start
-      // start-host.sh / start-client.sh) are not this app's and stay.
-      if (!into) for (const n of ['my-remote-host.desktop', 'my-remote-client.desktop']) { try { const f = path.join(dir, n); if (/my-remote\.sh"? --(host|client)\b/.test(fs.readFileSync(f, 'utf8'))) fs.rmSync(f, { force: true }); } catch {} }
+      // The two of 0.3.0-0.5.x and the entry of 0.6.0-0.9.x go; entries of the same names that a source
+      // folder's setup.sh made (they start start-host.sh / start-client.sh) are not this app's and stay.
+      if (!into) for (const n of ['my-remote.desktop', 'my-remote-host.desktop', 'my-remote-client.desktop']) { try { const f = path.join(dir, n); if (/my-remote\.sh"? --(host|client)\b/.test(fs.readFileSync(f, 'utf8'))) fs.rmSync(f, { force: true }); } catch {} }
     }
   } catch (e) { log('shortcuts: ' + e.message); }
   return made;
@@ -190,8 +196,8 @@ if (shortcutsArg) {
   // The same with code older than the start screen: ask in a dialog, and offer the shortcuts.
   app.whenReady().then(async () => {
     const r = await dialog.showMessageBox({
-      type: 'question', title: 'My Remote', noLink: true, cancelId: 2, defaultId: 0,
-      message: `My Remote ${pick.version}`,
+      type: 'question', title: 'Pangmote', noLink: true, cancelId: 2, defaultId: 0,
+      message: `Pangmote ${pick.version}`,
       detail: '무엇을 시작할까요?\n\n호스트: 이 PC를 다른 PC에서 원격으로 조종합니다.\n클라이언트: 다른 PC(호스트)에 접속합니다.',
       buttons: ['호스트 시작', '클라이언트 시작', '닫기'],
       checkboxLabel: process.platform === 'darwin' ? undefined : (process.platform === 'win32' ? '시작 메뉴' : '앱 메뉴') + '에 호스트와 클라이언트 바로가기 만들기', checkboxChecked: true,
@@ -206,6 +212,6 @@ if (shortcutsArg) {
   } catch (e) {
     console.error('[app] starting failed:', e);
     if (pick.source === 'installed') { up = false; failed('failed to start: ' + String((e && e.message) || e).slice(0, 120)); }
-    else app.whenReady().then(() => { dialog.showErrorBox('My Remote', `프로그램을 시작하지 못했습니다. 다시 설치해 주세요.\n\n${(e && e.message) || e}`); app.exit(1); });
+    else app.whenReady().then(() => { dialog.showErrorBox('Pangmote', `프로그램을 시작하지 못했습니다. 다시 설치해 주세요.\n\n${(e && e.message) || e}`); app.exit(1); });
   }
 }

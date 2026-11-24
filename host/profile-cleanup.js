@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const PROFILE = /^myremote-(local|peer)-/; // directly in the temp folder
+const PROFILE = /^(pangmote|myremote)-(local|peer)-/; // directly in the temp folder (myremote-: before the program was renamed in 0.10.0)
 const OWNER = 'run.pid';                   // in a profile: the pid of the run that uses it
 
 // Called by the run right after it made its profile folder.
@@ -69,7 +69,7 @@ if (require.main === module) {
       if (Date.now() > until) return;
       const dir = path.join(tmp, n);
       if (dir === own) continue;
-      if (n.startsWith('myremote-trash-')) { if (busy()) return; remove(dir, 1); continue; } // claimed by a sweep that did not finish
+      if (n.startsWith('pangmote-trash-') || n.startsWith('myremote-trash-')) { if (busy()) return; remove(dir, 1); continue; } // claimed by a sweep that did not finish
       if (!PROFILE.test(n)) continue;
       try {
         const st = fs.lstatSync(dir);
@@ -78,7 +78,7 @@ if (require.main === module) {
       const o = owner(dir);
       if (o && alive(o)) continue;
       if (busy()) return;
-      const trash = path.join(tmp, `myremote-trash-${process.pid}-${n}`);
+      const trash = path.join(tmp, `pangmote-trash-${process.pid}-${n}`);
       try { fs.renameSync(dir, trash); } catch { continue; }
       remove(trash, 1);
     }

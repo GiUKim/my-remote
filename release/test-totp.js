@@ -29,7 +29,7 @@ check('a step taken once does not count again', !T.verify(key, c, { now, lastSte
 check('what is not six digits is refused', ['', '12345', '1234567', 'abcdef', null].every((x) => !T.verify(key, x, { now }).ok) && T.verify(key, c.slice(0, 3) + ' ' + c.slice(3), { now }).ok);
 
 const u = T.uri({ secret, label: '김기우 PC' });
-check('the address an authenticator app scans', u.startsWith('otpauth://totp/MyRemote:%EA%B9%80') && u.includes('secret=' + secret) && u.includes('&issuer=MyRemote') && u.includes('period=30') && !/\s/.test(u));
+check('the address an authenticator app scans', u.startsWith('otpauth://totp/Pangmote:%EA%B9%80') && u.includes('secret=' + secret) && u.includes('&issuer=Pangmote') && u.includes('period=30') && !/\s/.test(u));
 const QR = require('../host/qr');
 const long = T.uri({ secret, label: '가'.repeat(40) });
 let fits = true;

@@ -153,7 +153,7 @@ exports.run = async ({ cfg, bench, buildClientHtml, app }) => {
   const P = { w: 1280, h: 720, sparse: 4000, scroll: 4000, speed: 24, every: 500, cell: 20, ...(bench.pattern || {}) };
   if (!P.phases) P.phases = [{ type: 'sparse', ms: P.sparse }, { type: 'scroll', ms: P.scroll }];
   P.phases = P.phases.filter((x) => x.ms > 0);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-bench-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-bench-'));
   const hostWin = BrowserWindow.getAllWindows()[0];
   let link = null, peer = null, done = false;
 

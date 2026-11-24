@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- The web page of My Remote on GitHub Pages (this repository's docs/ folder): what it is, the download for this
+<!-- The web page of Pangmote on GitHub Pages (this repository's docs/ folder): what it is, the download for this
      computer's system, how to start, support and business use. Its texts are in site.json (every language the app
      offers, the Korean here is the source, checked by release/test-i18n.js); i18n.js is host/i18n.js, copied by
      `npm run build-client` (release/ci-checks.js keeps the two equal). -->
@@ -8,7 +8,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://api.github.com">
-<title>My Remote</title>
+<title>Pangmote</title>
 <meta name="description" content="Free remote desktop: your own PC elsewhere, as if you sat at it. Peer-to-peer, end-to-end encrypted, every monitor.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%232b6cff'/%3E%3Crect x='5' y='6' width='14' height='9' rx='1.5' fill='%23fff'/%3E%3Cpath d='M9.5 19h5M12 15v4' stroke='%23fff' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E">
 <script src="i18n.js"></script>
@@ -60,7 +60,7 @@
 <div class="wrap">
   <header>
     <div class="logo"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="12" rx="2" fill="#fff"/><path d="M8.5 20h7M12 16.5V20" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></div>
-    <b>My Remote</b>
+    <b>Pangmote</b>
     <label class="lang" title="Language"><span aria-hidden="true">🌐</span><select id="lang" aria-label="Language"></select></label>
   </header>
 
@@ -68,23 +68,23 @@
     <h1 data-i18n>다른 곳에 있는 내 PC를, 그 앞에 앉은 것처럼</h1>
     <p class="sub" data-i18n>무료 원격 데스크톱. 계정 없이, 화면은 두 PC 사이에서 직접 암호화되어 오갑니다.</p>
     <div class="dl" id="dl">
-      <a class="btn" id="win" href="https://github.com/GiUKim/my-remote/releases/latest/download/MyRemote-Windows-x64.zip">
+      <a class="btn" id="win" href="https://github.com/GiUKim/pangmote/releases/latest/download/MyRemote-Windows-x64.zip">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 5.3 10.4 4.3v7.1H3zM11.4 4.2 21 3v8.4h-9.6zM3 12.5h7.4v7.2L3 18.7zM11.4 12.5H21V21l-9.6-1.3z"/></svg>
         <span><span data-i18n>Windows용 내려받기</span><small data-i18n>Windows 10 · 11 (64비트)</small></span>
       </a>
-      <a class="btn" id="linux" href="https://github.com/GiUKim/my-remote/releases/latest/download/MyRemote-Linux-x64.tar.gz">
+      <a class="btn" id="linux" href="https://github.com/GiUKim/pangmote/releases/latest/download/MyRemote-Linux-x64.tar.gz">
         <span class="emoji" aria-hidden="true">🐧</span>
         <span><span data-i18n>Linux용 내려받기</span><small data-i18n>Linux X11 세션 (Ubuntu 22.04 · 24.04)</small></span>
       </a>
     </div>
-    <div class="meta"><span id="ver"></span><span class="sep" id="verSep" hidden>·</span><a href="https://github.com/GiUKim/my-remote/releases" data-i18n>모든 버전과 바뀐 점</a></div>
+    <div class="meta"><span id="ver"></span><span class="sep" id="verSep" hidden>·</span><a href="https://github.com/GiUKim/pangmote/releases" data-i18n>모든 버전과 바뀐 점</a></div>
     <p class="notice" id="macNote" hidden data-i18n>macOS용은 아직 없습니다. Windows나 Linux PC에서 쓸 수 있습니다.</p>
   </div>
 
   <section>
     <h2 data-i18n>3단계로 시작</h2>
     <div class="grid">
-      <div class="card"><h3><span class="num">1</span><span data-i18n>두 PC에 설치</span></h3><p data-i18n-html>받은 파일을 풀고 <b>MyRemote</b>를 실행합니다. 처음 실행할 때 Windows가 경고하면 <b>추가 정보</b>를 누른 뒤 <b>실행</b>을 누르세요(아직 코드 서명 인증서가 없어서 뜨는 경고입니다).</p></div>
+      <div class="card"><h3><span class="num">1</span><span data-i18n>두 PC에 설치</span></h3><p data-i18n-html>받은 파일을 풀고 <b>Pangmote</b>를 실행합니다. 처음 실행할 때 Windows가 경고하면 <b>추가 정보</b>를 누른 뒤 <b>실행</b>을 누르세요(아직 코드 서명 인증서가 없어서 뜨는 경고입니다).</p></div>
       <div class="card"><h3><span class="num">2</span><span data-i18n>조종당할 PC에서</span></h3><p data-i18n-html><b>이 PC 공유</b>를 고르고, 호스트 창의 <b>키 복사</b>로 접속 키를 복사해 비밀번호 관리자에 보관합니다.</p></div>
       <div class="card"><h3><span class="num">3</span><span data-i18n>조종하는 PC에서</span></h3><p data-i18n-html><b>다른 PC에 접속</b>을 고르고, 그 키로 PC를 추가해 접속합니다. 다음부터는 키 없이 바로 접속합니다.</p></div>
     </div>
@@ -105,20 +105,20 @@
   <section>
     <div class="two">
       <div class="card warn"><h3><span class="icon" aria-hidden="true">⚠️</span><span data-i18n>사기에 주의하세요</span></h3><p data-i18n>접속 키와 1회용 코드는 PC를 통째로 넘기는 열쇠입니다. 전화나 메시지로 설치를 시키거나 코드를 알려 달라는 사람에게는 절대 알려 주지 마세요. 은행·기관·회사는 이런 요청을 하지 않습니다.</p></div>
-      <div class="card"><h3><span class="icon" aria-hidden="true">💙</span><span data-i18n>후원</span></h3><p data-i18n>My Remote는 무료입니다. 쓸모가 있었다면 개발을 후원해 주세요.</p><a class="btn" href="https://github.com/sponsors/GiUKim" data-i18n>GitHub Sponsors로 후원</a></div>
-      <div class="card"><h3><span class="icon" aria-hidden="true">🏢</span><span data-i18n>회사에서 쓰시나요?</span></h3><p data-i18n>규모와 필요한 기능(회사망에서의 연결, 기기 일괄 관리 등)을 알려 주시면 업무용 기능을 준비하는 데 반영합니다.</p><a class="btn" href="https://github.com/GiUKim/my-remote/issues/new?template=business.yml" data-i18n>업무용 사용 문의</a></div>
+      <div class="card"><h3><span class="icon" aria-hidden="true">💙</span><span data-i18n>후원</span></h3><p data-i18n>Pangmote는 무료입니다. 쓸모가 있었다면 개발을 후원해 주세요.</p><a class="btn" href="https://github.com/sponsors/GiUKim" data-i18n>GitHub Sponsors로 후원</a></div>
+      <div class="card"><h3><span class="icon" aria-hidden="true">🏢</span><span data-i18n>회사에서 쓰시나요?</span></h3><p data-i18n>규모와 필요한 기능(회사망에서의 연결, 기기 일괄 관리 등)을 알려 주시면 업무용 기능을 준비하는 데 반영합니다.</p><a class="btn" href="https://github.com/GiUKim/pangmote/issues/new?template=business.yml" data-i18n>업무용 사용 문의</a></div>
     </div>
   </section>
 
   <footer>
-    <a href="https://github.com/GiUKim/my-remote" data-i18n>소스 코드</a>
-    <a href="https://github.com/GiUKim/my-remote/releases" data-i18n>업데이트 내역</a>
-    <a href="https://github.com/GiUKim/my-remote/issues/new?template=bug_report.yml" data-i18n>문제 신고</a>
-    <a href="https://github.com/GiUKim/my-remote/security/policy" data-i18n>보안 문제 알리기</a>
-    <a href="https://github.com/GiUKim/my-remote/blob/main/docs/i18n.md" data-i18n>번역에 대해</a>
-    <a href="https://github.com/GiUKim/my-remote/blob/main/PRIVACY.md">Privacy policy</a>
-    <a href="https://github.com/GiUKim/my-remote#code-signing-policy">Code signing policy</a>
-    <a href="https://github.com/GiUKim/my-remote/blob/main/LICENSE">MIT License</a>
+    <a href="https://github.com/GiUKim/pangmote" data-i18n>소스 코드</a>
+    <a href="https://github.com/GiUKim/pangmote/releases" data-i18n>업데이트 내역</a>
+    <a href="https://github.com/GiUKim/pangmote/issues/new?template=bug_report.yml" data-i18n>문제 신고</a>
+    <a href="https://github.com/GiUKim/pangmote/security/policy" data-i18n>보안 문제 알리기</a>
+    <a href="https://github.com/GiUKim/pangmote/blob/main/docs/i18n.md" data-i18n>번역에 대해</a>
+    <a href="https://github.com/GiUKim/pangmote/blob/main/PRIVACY.md">Privacy policy</a>
+    <a href="https://github.com/GiUKim/pangmote#code-signing-policy">Code signing policy</a>
+    <a href="https://github.com/GiUKim/pangmote/blob/main/LICENSE">MIT License</a>
   </footer>
 </div>
 <script>
@@ -168,7 +168,7 @@ $('lang').onchange = () => {
   useLang(l);
 };
 fetch('site.json').then((r) => (r.ok ? r.json() : null)).then((c) => { if (c) { CAT = c; useLang(LANG); } }).catch(() => {});
-fetch('https://api.github.com/repos/GiUKim/my-remote/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
+fetch('https://api.github.com/repos/GiUKim/pangmote/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
   .then((r) => (r.ok ? r.json() : null)).then((r) => { if (r && r.tag_name) { release = r; showRelease(); } }).catch(() => {});
 </script>
 </body>

@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="docs/img/banner.svg" alt="My Remote" width="880">
+  <img src="docs/img/banner.svg" alt="Pangmote" width="880">
 </h1>
 
 <p align="center">
@@ -8,17 +8,21 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/GiUKim/my-remote/releases/latest/download/MyRemote-Windows-x64.zip"><img src="docs/img/download-windows.svg" alt="Windows용 내려받기" width="280"></a>
+  <a href="https://github.com/GiUKim/pangmote/releases/latest/download/MyRemote-Windows-x64.zip"><img src="docs/img/download-windows.svg" alt="Windows용 내려받기" width="280"></a>
   &nbsp;&nbsp;
-  <a href="https://github.com/GiUKim/my-remote/releases/latest/download/MyRemote-Linux-x64.tar.gz"><img src="docs/img/download-linux.svg" alt="Linux용 내려받기" width="280"></a>
+  <a href="https://github.com/GiUKim/pangmote/releases/latest/download/MyRemote-Linux-x64.tar.gz"><img src="docs/img/download-linux.svg" alt="Linux용 내려받기" width="280"></a>
 </p>
 
 <p align="center">
-  <sub>⊞ Windows 10 · 11 (64비트) &nbsp;|&nbsp; 🐧 Linux X11 세션 (Ubuntu 22.04 · 24.04) &nbsp;|&nbsp; 🍎 macOS용은 아직 없습니다 &nbsp;|&nbsp; <a href="https://github.com/GiUKim/my-remote/releases">모든 버전</a></sub>
+  <sub>⊞ Windows 10 · 11 (64비트) &nbsp;|&nbsp; 🐧 Linux X11 세션 (Ubuntu 22.04 · 24.04) &nbsp;|&nbsp; 🍎 macOS용은 아직 없습니다 &nbsp;|&nbsp; <a href="https://github.com/GiUKim/pangmote/releases">모든 버전</a></sub>
 </p>
 
 <p align="center">
-  <sub>🌐 <a href="https://giukim.github.io/my-remote/">소개 페이지 (12개 언어)</a> &nbsp;·&nbsp; 💙 <a href="https://github.com/sponsors/GiUKim">후원</a> &nbsp;·&nbsp; 🏢 <a href="https://github.com/GiUKim/my-remote/issues/new?template=business.yml">업무용 사용 문의</a> &nbsp;·&nbsp; 🔏 <a href="#code-signing-policy">Code signing policy</a> &nbsp;·&nbsp; 📜 <a href="LICENSE">MIT</a></sub>
+  <sub>🌐 <a href="https://giukim.github.io/pangmote/">소개 페이지 (12개 언어)</a> &nbsp;·&nbsp; 💙 <a href="https://github.com/sponsors/GiUKim">후원</a> &nbsp;·&nbsp; 🏢 <a href="https://github.com/GiUKim/pangmote/issues/new?template=business.yml">업무용 사용 문의</a> &nbsp;·&nbsp; 🔏 <a href="#code-signing-policy">Code signing policy</a> &nbsp;·&nbsp; 📜 <a href="LICENSE">MIT</a></sub>
+</p>
+
+<p align="center">
+  <sub>0.9.x까지의 이름은 <b>My Remote</b>였습니다. 이미 설치한 앱은 평소처럼 업데이트하면 Pangmote가 되고, 접속 키·PC 목록·설정은 그대로입니다.</sub>
 </p>
 
 ### 🐧 Ubuntu는 터미널로도 설치할 수 있습니다
@@ -26,7 +30,7 @@
 위 **Linux용 내려받기**와 같은 파일(데스크톱 앱)을 받아 `~/MyRemote`에 풉니다. 블록 오른쪽 위의 복사 단추로 복사해 터미널에 붙여 넣으세요.
 
 ```bash
-cd ~ && wget -qO- https://github.com/GiUKim/my-remote/releases/latest/download/MyRemote-Linux-x64.tar.gz | tar -xz
+cd ~ && wget -qO- https://github.com/GiUKim/pangmote/releases/latest/download/MyRemote-Linux-x64.tar.gz | tar -xz
 ```
 
 Ubuntu 24.04(23.10 이후)만, 한 번: 브라우저 엔진의 샌드박스 도우미를 켭니다(관리자 비밀번호를 묻습니다).
@@ -56,7 +60,7 @@ sudo chown root:root ~/MyRemote/chrome-sandbox && sudo chmod 4755 ~/MyRemote/chr
 | 2️⃣ | **호스트에서 키 복사** | 조종받을 PC에서 시작 화면의 `이 PC 공유` → 창의 `키 복사` → 비밀번호 관리자에 보관 |
 | 3️⃣ | **클라이언트에서 접속** | 내가 앉은 PC에서 시작 화면의 `다른 PC에 접속` → `＋ PC 추가`에 키 붙여넣기 → `추가하고 접속` |
 
-> 💡 **앱은 하나입니다.** 두 PC에 같은 앱을 설치하고, 실행하면 나오는 큰 버튼 두 개 중 **이 PC 공유**(호스트, 조종받을 PC)나 **다른 PC에 접속**(클라이언트, 내가 앉은 PC)을 고릅니다. 호스트 창과 PC 목록의 `나가기`를 누르면 이 처음 화면으로 돌아옵니다(호스트는 계속 켜져 있고, 끄려면 트레이 → 종료). 바로가기도 `MyRemote` 하나이고, 업데이트도 한 번이면 두 쪽 모두 새 버전이 됩니다.
+> 💡 **앱은 하나입니다.** 두 PC에 같은 앱을 설치하고, 실행하면 나오는 큰 버튼 두 개 중 **이 PC 공유**(호스트, 조종받을 PC)나 **다른 PC에 접속**(클라이언트, 내가 앉은 PC)을 고릅니다. 호스트 창과 PC 목록의 `나가기`를 누르면 이 처음 화면으로 돌아옵니다(호스트는 계속 켜져 있고, 끄려면 트레이 → 종료). 바로가기도 `Pangmote` 하나이고, 업데이트도 한 번이면 두 쪽 모두 새 버전이 됩니다.
 >
 > 🛡️ Windows에서 "Windows의 PC 보호" 창이 뜨면 `추가 정보` → `실행`을 누르세요.
 
@@ -189,8 +193,8 @@ sudo chown root:root ~/MyRemote/chrome-sandbox && sudo chmod 4755 ~/MyRemote/chr
 
 ## 💙 후원 · 업무용 사용
 
-- **My Remote는 무료입니다.** 쓸모가 있었다면 [GitHub Sponsors](https://github.com/sponsors/GiUKim)로 후원해 주세요.
-- **회사에서 쓰시나요?** [업무용 사용 문의](https://github.com/GiUKim/my-remote/issues/new?template=business.yml)로 규모와 필요한 기능을 알려 주세요. 회사망 안에서의 연결(중계 서버), 여러 PC의 기기 일괄 관리 같은 업무용 기능을 준비하는 데 반영합니다.
+- **Pangmote는 무료입니다.** 쓸모가 있었다면 [GitHub Sponsors](https://github.com/sponsors/GiUKim)로 후원해 주세요.
+- **회사에서 쓰시나요?** [업무용 사용 문의](https://github.com/GiUKim/pangmote/issues/new?template=business.yml)로 규모와 필요한 기능을 알려 주세요. 회사망 안에서의 연결(중계 서버), 여러 PC의 기기 일괄 관리 같은 업무용 기능을 준비하는 데 반영합니다.
 
 ## 📜 라이선스 · 개인정보 · 코드 서명
 
@@ -206,7 +210,7 @@ Free code signing provided by [SignPath.io](https://about.signpath.io), certific
 - Approvers: [GiUKim](https://github.com/GiUKim)
 - Privacy policy: [PRIVACY.md](PRIVACY.md)
 
-The Windows program of the release packages (`MyRemote.exe` in `MyRemote-Windows-x64.zip`) is built from this repository by its GitHub Actions workflow [sign.yml](.github/workflows/sign.yml) on GitHub-hosted runners and is signed through SignPath only after an approver has confirmed the request. Releases before the first one signed this way carry an unsigned `MyRemote.exe`. Updates that the installed app fetches are checked separately against the project's own release signature.
+The Windows program of the release packages (`Pangmote.exe` in `Pangmote-Windows-x64.zip`) is built from this repository by its GitHub Actions workflow [sign.yml](.github/workflows/sign.yml) on GitHub-hosted runners and is signed through SignPath only after an approver has confirmed the request. Releases before the first one signed this way carry an unsigned `Pangmote.exe` (up to 0.9.x, when the program was called My Remote: `MyRemote.exe`). Updates that the installed app fetches are checked separately against the project's own release signature.
 
 ## 📚 자세히
 
@@ -269,6 +273,7 @@ Chrome 원격 데스크톱과 같은 기술(WebRTC)을 쓰되, **멀티 모니�
 - 업데이트는 **만든 사람의 서명**이 맞을 때만 설치됩니다. 내려받는 곳이나 중간 경로가 바뀌어도 서명이 다른 파일은 설치되지 않습니다.
 - 새 버전이 **시작되지 않으면 스스로 이전 버전으로 돌아갑니다**(시작하다 오류가 나거나, 말없이 꺼지거나, 2분 안에 뜨지 않는 경우). 원격으로만 접속하는 호스트가 업데이트 때문에 먹통이 되는 일을 막기 위해서입니다. 그 버전은 그 PC에서 다시 설치하지 않습니다.
 - 업데이트로 받는 것은 호스트·클라이언트 코드(약 0.5MB)이고, 사용자 폴더(Windows `%LOCALAPPDATA%\my-remote\app`, Linux `~/.local/share/my-remote/app`)에 설치됩니다. 관리자 권한이 필요 없습니다.
+- 프로그램 이름은 0.10.0부터 Pangmote입니다(그 전에는 My Remote). 접속 키·PC 목록·기기 등록·설정을 그대로 쓰도록 사용자 폴더와 설정 폴더(`my-remote`, `my-remote-host`, `my-remote-client`)는 예전 이름을 유지합니다. 예전 묶음(`MyRemote.exe`)으로 설치한 앱은 코드를 0.10.0 이상으로 업데이트하면 앱 바탕이 새 이름의 묶음(`Pangmote.exe`)으로 바뀌고, 시작 메뉴·바탕 화면·작업 표시줄·시작 프로그램에 있던 `MyRemote.exe` 바로가기도 새 프로그램을 가리키게 됩니다. 푼 폴더의 위치와 이름은 그대로입니다. Windows 방화벽이 새 프로그램 이름으로 한 번 더 물을 수 있습니다.
 - 버전은 호스트 창 제목 옆에 `v0.3.0`처럼 보입니다. 트레이 메뉴의 `업데이트 확인`으로 바로 확인할 수 있습니다.
 - 아래 "빠른 시작"처럼 **소스 폴더에서 실행하는 경우에는 자동 업데이트가 없습니다.** `git pull` 뒤 설치 스크립트를 다시 실행합니다.
 
@@ -349,7 +354,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 - **클립보드는 모두가 함께.** 클립보드 공유는 접속한 PC마다 동작하므로, 여러 대에 접속해 있으면 한 PC에서 복사한 글자가 이 PC를 거쳐 다른 PC에도 전달됩니다. A에서 복사해 B에 붙여넣을 수 있다는 뜻이고, 민감한 내용을 복사할 때는 그 점을 기억하세요.
 - **예전에 저장해 둔 키.** 이전 버전에서 "키 저장"을 켜 두었다면 그 키는 처음 실행할 때 목록의 PC로 옮겨집니다.
 - **호스트가 예전 버전이면** 목록에 운영체제와 컴퓨터 이름이 채워지지 않습니다. 호스트를 0.4.0 이상으로 올리면 다음 접속부터 보입니다.
-- 브라우저로 접속할 때(`my-remote-client.html`)는 목록도 기기 등록도 없고, 접속할 때마다 키를 묻습니다. 브라우저에는 키를 저장하지 않습니다(같은 브라우저에서 연 다른 HTML 파일이 그 저장 공간을 함께 쓰기 때문). 탭을 여러 개 열면 여러 PC에 동시에 접속할 수 있습니다.
+- 브라우저로 접속할 때(`pangmote-client.html`)는 목록도 기기 등록도 없고, 접속할 때마다 키를 묻습니다. 브라우저에는 키를 저장하지 않습니다(같은 브라우저에서 연 다른 HTML 파일이 그 저장 공간을 함께 쓰기 때문). 탭을 여러 개 열면 여러 PC에 동시에 접속할 수 있습니다.
 
 </details>
 
@@ -391,7 +396,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 
 1. 내 PC(호스트) 창의 **1회용 코드로 도움 받기** 카드에서 `코드 만들기`를 누르면 `7KQ2-M9TX-4HPC` 같은 코드가 나옵니다.
 2. 이 코드를 도와줄 사람에게 알려 줍니다(전화로 불러 줘도 됩니다. 대소문자, 띄어쓰기, 하이픈은 상관없습니다).
-3. 도와줄 사람은 My Remote 클라이언트 앱의 `1회용 코드로 접속`(또는 `my-remote-client.html`의 접속 키 칸)에 코드를 넣습니다.
+3. 도와줄 사람은 Pangmote 클라이언트 앱의 `1회용 코드로 접속`(또는 `pangmote-client.html`의 접속 키 칸)에 코드를 넣습니다.
 4. 내 PC 창 맨 위에 요청이 뜨고, 양쪽 화면에 같은 4자리 숫자가 보입니다. 맞으면 `허용`을 누르세요.
 
 - 코드는 **10분** 안에 **한 번**만 쓸 수 있습니다. 다른 사람이 같은 코드로 다시 들어오려 하면 거절됩니다.
@@ -399,7 +404,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 - 카드의 **자동 허용**을 켜면 허용 카드 없이 바로 들어옵니다. 코드를 새로 만들 때마다 꺼진 채로 시작합니다. 켜 두면 코드를 아는 사람은 누구나 들어올 수 있으니, 도와줄 사람에게 직접 알려 줄 때만 켜세요.
 - 기기로 등록되지 않습니다. 접속이 끝나면 2분 뒤 코드도 사라지고, `끝내기`를 누르면 바로 끊기면서 코드가 사라집니다.
 - 접속 기록에는 "1회용 코드"로 남습니다.
-- `my-remote-client.html`은 0.9.0 이후 파일이어야 코드를 받습니다(예전 파일은 접속 키만 받습니다).
+- `pangmote-client.html`(0.9.x까지의 이름은 `my-remote-client.html`)은 0.9.0 이후 파일이어야 코드를 받습니다(예전 파일은 접속 키만 받습니다).
 
 </details>
 
@@ -417,7 +422,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 
 - 한 PC에 호스트와 클라이언트 앱을 같이 두고 다른 PC에 접속하는 것은 그대로 됩니다. A→B→C처럼 이어서 조종하는 것도 됩니다.
 - 거절은 호스트 창의 접속 기록에 "이 PC 자신에 접속", "서로를 조종"으로 남습니다.
-- 브라우저(`my-remote-client.html`)는 자기가 어느 PC에서 열렸는지 알 수 없어 이 판단을 못 합니다. 그래서 호스트는 **같은 키를 3초 안에 45번, 또는 클릭을 3초 안에 30번** 받는 것처럼 사람이 할 수 없는 반복이 들어오면 입력을 5초 멈추고(1분 안에 또 그러면 30초) 클라이언트에 알립니다. 키를 꾹 누르고 있는 것, 휴대폰 키보드로 지우는 것은 세지 않습니다.
+- 브라우저(`pangmote-client.html`)는 자기가 어느 PC에서 열렸는지 알 수 없어 이 판단을 못 합니다. 그래서 호스트는 **같은 키를 3초 안에 45번, 또는 클릭을 3초 안에 30번** 받는 것처럼 사람이 할 수 없는 반복이 들어오면 입력을 5초 멈추고(1분 안에 또 그러면 30초) 클라이언트에 알립니다. 키를 꾹 누르고 있는 것, 휴대폰 키보드로 지우는 것은 세지 않습니다.
 - 양쪽이 모두 0.9.0 이상이어야 막힙니다.
 
 </details>
@@ -431,7 +436,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 
 | | 클라이언트 앱 (권장) | 브라우저 |
 |---|---|---|
-| 준비 | 이 저장소를 받아 `setup.ps1` 한 번 실행 | 없음. `my-remote-client.html` 파일 하나 |
+| 준비 | 이 저장소를 받아 `setup.ps1` 한 번 실행 | 없음. `pangmote-client.html` 파일 하나 |
 | 모니터에 펼치기 | **한 번 클릭**으로 모든 모니터에 전체화면 | 창마다 한 번씩 클릭, 창 위치가 어긋날 수 있음 |
 | 권한 팝업 | 없음 | 팝업·창 관리 등 브라우저가 물어봄 |
 | 호스트에서 끌어내기 | 놓은 폴더·프로그램에 바로 들어감 | 글자는 클립보드로, 파일은 다운로드 폴더로 |
@@ -448,12 +453,12 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 
 **브라우저**: 아래 순서대로 합니다.
 
-1. `my-remote-client.html`을 Chrome 또는 Edge로 엽니다. 이 파일에는 키가 들어 있지 않으므로 메일이나 클라우드로 옮겨도 됩니다. **이 파일은 한 번만 받아 두면 됩니다.** 접속할 때마다 호스트에서 최신 클라이언트 화면을 받아 실행하므로, 호스트가 업데이트되면 클라이언트도 자동으로 따라갑니다.
+1. `pangmote-client.html`을 Chrome 또는 Edge로 엽니다(예전에 받아 둔 `my-remote-client.html`도 그대로 쓸 수 있습니다). 이 파일에는 키가 들어 있지 않으므로 메일이나 클라우드로 옮겨도 됩니다. **이 파일은 한 번만 받아 두면 됩니다.** 접속할 때마다 호스트에서 최신 클라이언트 화면을 받아 실행하므로, 호스트가 업데이트되면 클라이언트도 자동으로 따라갑니다.
 2. 접속 키를 붙여넣고 `접속`을 누릅니다.
 3. 브라우저가 묻는 팝업, 클립보드, 창 관리 권한을 허용합니다.
 4. `모니터에 펼치기`를 누르면 이 PC의 모니터마다 호스트 모니터가 하나씩 놓입니다. 새로 열린 창은 한 번씩 클릭하면 전체화면이 됩니다(지금 창도 한 번 클릭하라고 안내합니다). 어느 모니터를 어디에 띄울지 직접 정하려면 `모니터 배치`를 누릅니다.
 
-2026-11-13 이후의 `my-remote-client.html`은 브라우저에 저장해 둔 클라이언트 화면이 호스트가 확인해 준 것과 같은지 검사한 뒤 실행하고, 중개 서버와의 연결이 끊기면 스스로 다시 연결합니다. 그 전에 받은 파일도 그대로 쓸 수 있습니다.
+2026-11-13 이후의 `pangmote-client.html`(`my-remote-client.html`)은 브라우저에 저장해 둔 클라이언트 화면이 호스트가 확인해 준 것과 같은지 검사한 뒤 실행하고, 중개 서버와의 연결이 끊기면 스스로 다시 연결합니다. 그 전에 받은 파일도 그대로 쓸 수 있습니다.
 
 | 기능 | 사용법 |
 |---|---|
@@ -599,7 +604,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 
 #### 휴대폰·태블릿에서 (시험 단계)
 
-클라이언트 화면이 손가락 조작을 알아듣습니다. 휴대폰 브라우저(Chrome, Safari)에서 `my-remote-client.html`을 열어 접속하면, 휴대폰에 맞는 툴바로 바뀝니다.
+클라이언트 화면이 손가락 조작을 알아듣습니다. 휴대폰 브라우저(Chrome, Safari)에서 `pangmote-client.html`을 열어 접속하면, 휴대폰에 맞는 툴바로 바뀝니다.
 
 | 동작 | 결과 |
 |---|---|
@@ -613,7 +618,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 
 휴대폰이 AV1 영상을 하드웨어로 풀지 못하면 자동으로 H.264를 요청해 배터리와 발열을 줄입니다. 가로로 돌리면 화면이 크게 보입니다.
 
-아직 실제 휴대폰에서는 시험하지 않았습니다(자체 테스트에서 손가락 동작을 흉내 내어 확인). 휴대폰은 내려받은 HTML 파일을 열기 어렵기 때문에(특히 iPhone), `my-remote-client.html`을 휴대폰에서 여는 방법은 따로 정해야 합니다. 호스트가 Windows일 때만 휴대폰 키보드의 글자 입력이 됩니다.
+아직 실제 휴대폰에서는 시험하지 않았습니다(자체 테스트에서 손가락 동작을 흉내 내어 확인). 휴대폰은 내려받은 HTML 파일을 열기 어렵기 때문에(특히 iPhone), `pangmote-client.html`을 휴대폰에서 여는 방법은 따로 정해야 합니다. 호스트가 Windows일 때만 휴대폰 키보드의 글자 입력이 됩니다.
 
 </details>
 
@@ -648,7 +653,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
    - 시스템에는 아무것도 설치하지 않고, 관리자 권한도 필요 없습니다.
    - 파일 관리자에서 실행했으면 진행 상황이 터미널 창으로 보입니다.
 
-**그다음부터:** 앱 메뉴(Activities)에서 "My Remote Host"를 누르면 됩니다. 설치할 때 "My Remote Host"와 "My Remote Client"가 이 사용자의 앱 메뉴에 추가됩니다. 지우려면 `~/.local/share/applications/my-remote-*.desktop`을 지우세요.
+**그다음부터:** 앱 메뉴(Activities)에서 "Pangmote Host"를 누르면 됩니다. 설치할 때 "Pangmote Host"와 "Pangmote Client"가 이 사용자의 앱 메뉴에 추가됩니다. 지우려면 `~/.local/share/applications/pangmote-*.desktop`을 지우세요.
 
 **화면 앞에 없는 PC(SSH로만 접속하는 서버 등):**
 
@@ -661,13 +666,13 @@ powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipSelfTest
 | 상황 | 안내 |
 |---|---|
 | Wayland 세션 | 위의 Xorg 세션 안내가 창으로 뜹니다 |
-| Ubuntu 23.10 이후(24.04 포함)의 Chromium 샌드박스 제한 | 설치 중에 sudo로 샌드박스 도우미를 한 번 설치할지 묻습니다(권장). 설치하지 않으면 `MY_REMOTE_NO_SANDBOX=1 ./start-host.sh`로 실행합니다 |
+| Ubuntu 23.10 이후(24.04 포함)의 Chromium 샌드박스 제한 | 설치 중에 sudo로 샌드박스 도우미를 한 번 설치할지 묻습니다(권장). 설치하지 않으면 `PANGMOTE_NO_SANDBOX=1 ./start-host.sh`로 실행합니다 |
 | 데스크톱 라이브러리(GTK 3 등)가 빠진 최소 설치 | 빠진 것과 설치 명령(예: `sudo apt install libgtk-3-0 libnss3 libasound2`)이 나옵니다 |
 | curl과 wget이 모두 없음 | `sudo apt install wget`을 안내합니다(Ubuntu 데스크톱에는 wget이 기본으로 있습니다) |
 | 자동 로그인을 쓰는 PC | 접속 키를 키링에 암호화해 두므로, 시작할 때 "로그인 키링 잠금 해제" 창이 뜰 수 있습니다. 로그인 비밀번호를 넣으면 이어서 뜹니다(비밀번호로 로그인하면 이미 열려 있어 뜨지 않습니다) |
 
 ```bash
-./start-host.sh       # 호스트 (처음엔 설치부터). 백그라운드로 뜨고, 출력은 $XDG_RUNTIME_DIR/my-remote-host.log
+./start-host.sh       # 호스트 (처음엔 설치부터). 백그라운드로 뜨고, 출력은 $XDG_RUNTIME_DIR/pangmote-host.log
 ./start-host.sh --show-key   # 이 PC의 접속 키를 터미널에 출력 (SSH로 관리하는 PC용)
 ./start-client.sh     # 클라이언트 앱 (처음엔 설치부터)
 ./setup.sh            # 설치만 다시, 자체 테스트 포함 (문제를 찾을 때)
@@ -684,7 +689,7 @@ Windows와 다른 점:
 | 호스트로 끌어넣기 | 놓은 자리에 X11의 끌어 놓기(XDND)로 놓습니다. Windows 호스트와 같이 폴더 창, 폴더 아이콘, 바탕화면, 프로그램 창이 각자 받습니다. 받는 곳이 없으면 호스트 클립보드에 넣고 알려 줍니다. GTK·Chromium 창에서 확인했고, Nautilus와 실제 데스크톱에서는 아직 확인하지 못했습니다 |
 | 클라이언트 앱에 놓기 | 바탕화면에 놓은 파일은 바탕화면 폴더에 저장됩니다. 그 밖의 곳에 놓은 것은 클립보드에 올려 두므로, 넣을 곳(파일은 파일 관리자의 폴더)에서 Ctrl+V를 누르세요. 대신 클릭하거나 붙여 넣어 주지 않습니다 |
 | 접속 키 | `~/.config/my-remote-host/config.json`. GNOME 키링이나 KWallet이 있으면 그것으로 암호화하고, 없으면 암호화하지 못해 알아보기 어렵게만 저장합니다(이 사용자만 읽을 수 있는 파일. 시작할 때 경고가 나옵니다) |
-| 샌드박스 | Ubuntu 23.10 이후는 Chromium 샌드박스에 필요한 기능을 막아 두어, 스크립트가 멈추고 두 가지 방법(sudo로 샌드박스 도우미 설치, 또는 `MY_REMOTE_NO_SANDBOX=1`을 붙여 샌드박스 없이 실행)을 알려 줍니다 |
+| 샌드박스 | Ubuntu 23.10 이후는 Chromium 샌드박스에 필요한 기능을 막아 두어, 스크립트가 멈추고 두 가지 방법(sudo로 샌드박스 도우미 설치, 또는 `PANGMOTE_NO_SANDBOX=1`을 붙여 샌드박스 없이 실행)을 알려 줍니다 |
 | 트레이 | 데스크톱에 따라 트레이 아이콘이 안 보일 수 있습니다. 호스트 창을 닫았다면 `./start-host.sh`를 다시 실행하면 창이 다시 나옵니다 |
 | 휴대폰 키보드 입력 | 됩니다. 다만 X11은 글자를 바로 칠 수 없어 빈 키에 글자를 잠시 배정해 누르므로, 서로 다른 글자가 아주 많은 긴 글은 몇 초에 걸쳐 입력됩니다 |
 | 없는 기능 | HDR 모니터 감지, Chrome 원격 데스크톱 동시 접속 경고 |
@@ -744,7 +749,7 @@ Windows와 다른 점:
 
 | 한계 | 설명 |
 |---|---|
-| 잠금 화면·UAC (Windows 호스트) | Windows는 이 화면들을 시스템 계정만 접근할 수 있는 별도 화면에 띄웁니다. 그래서 **"잠금 화면에서도 원격 조종"**을 관리자 권한으로 한 번 설치해야 합니다(호스트를 처음 시작할 때 묻고, 나중에는 호스트 창에서. 원격 접속 중에는 안 됩니다). 설치하면 시스템 서비스(`MyRemoteAssist`, `C:\Program Files\MyRemote`)가 잠금 화면을 클라이언트에 보여 주고, 원격에서 입력한 비밀번호를 넣어 줍니다. 비밀번호를 우회하지는 않습니다. 권한 확인(UAC) 창은 보이기만 하고 입력은 넣지 않습니다. 같은 사용자의 다른 프로그램이 이 통로로 사람 몰래 관리자 권한을 얻는 일이 없게 하려는 것입니다. 잠금 화면은 모든 모니터에 보입니다(0.9.3부터. 그 전에 설치한 서비스는 주 모니터만 보내므로 호스트 창의 칸에서 "업데이트"를 한 번 누르세요). 재부팅 직후의 로그인 화면은 되지 않습니다. 설치하지 않으면 잠금 화면과 UAC 창은 보이지도 조작되지도 않고, 클라이언트에는 그렇다고만 표시됩니다 |
+| 잠금 화면·UAC (Windows 호스트) | Windows는 이 화면들을 시스템 계정만 접근할 수 있는 별도 화면에 띄웁니다. 그래서 **"잠금 화면에서도 원격 조종"**을 관리자 권한으로 한 번 설치해야 합니다(호스트를 처음 시작할 때 묻고, 나중에는 호스트 창에서. 원격 접속 중에는 안 됩니다). 설치하면 시스템 서비스(`PangmoteAssist`, `C:\Program Files\Pangmote`. 0.9.x까지 설치한 것은 `MyRemoteAssist`로, 호스트 창의 칸에서 "업데이트"를 누르면 새 이름으로 바뀝니다)가 잠금 화면을 클라이언트에 보여 주고, 원격에서 입력한 비밀번호를 넣어 줍니다. 비밀번호를 우회하지는 않습니다. 권한 확인(UAC) 창은 보이기만 하고 입력은 넣지 않습니다. 같은 사용자의 다른 프로그램이 이 통로로 사람 몰래 관리자 권한을 얻는 일이 없게 하려는 것입니다. 잠금 화면은 모든 모니터에 보입니다(0.9.3부터. 그 전에 설치한 서비스는 주 모니터만 보내므로 호스트 창의 칸에서 "업데이트"를 한 번 누르세요). 재부팅 직후의 로그인 화면은 되지 않습니다. 설치하지 않으면 잠금 화면과 UAC 창은 보이지도 조작되지도 않고, 클라이언트에는 그렇다고만 표시됩니다 |
 | 잠금 화면 (Linux 호스트) | X11 세션의 GNOME 잠금 화면은 원격 화면에 그대로 보이고, 비밀번호를 입력해 풀 수 있습니다(가상 화면에서 확인). 로그인 전 화면(GDM 등), Wayland 세션, 잠글 때 다른 화면으로 전환하는 잠금 프로그램(light-locker)은 되지 않습니다 |
 | P2P가 막힌 네트워크 | 접속이 실패합니다. TURN 중계 서버를 설정에 직접 추가해야 합니다 |
 | 화면 가리기 없음 | 원격 중에도 호스트 모니터에 화면이 그대로 보이고 소리도 스피커로 납니다 |
@@ -836,7 +841,7 @@ node native/build.js 사용자@리눅스PC주소
 
 ### 릴리스 만들기 (배포하는 사람)
 
-[![CI](https://github.com/GiUKim/my-remote/actions/workflows/ci.yml/badge.svg)](https://github.com/GiUKim/my-remote/actions/workflows/ci.yml)
+[![CI](https://github.com/GiUKim/pangmote/actions/workflows/ci.yml/badge.svg)](https://github.com/GiUKim/pangmote/actions/workflows/ci.yml)
 
 모든 변경은 **CI(GitHub Actions)를 통과해야 릴리스할 수 있습니다.** CI는 정적 검사, 네이티브 실행 파일 재현 빌드, Windows·Linux 자체 테스트, 설치 묶음 테스트, 성능 기준을 확인하고, `release/build.js`는 CI를 통과하지 못한 커밋으로는 릴리스를 만들지 않습니다. 커밋 전 검사는 `git config core.hooksPath .githooks`로 켭니다.
 
@@ -846,21 +851,21 @@ node native/build.js 사용자@리눅스PC주소
 |---|---|
 | `latest.json` | 최신 버전의 목록(버전, 파일마다의 SHA-256, 중요 업데이트 여부, 바뀐 점) |
 | `latest.json.sig` | 그 목록의 서명(Ed25519) |
-| `my-remote-<버전>.bundle` | 그 버전의 호스트·클라이언트 코드 |
+| `pangmote-<버전>.bundle` | 그 버전의 호스트·클라이언트 코드 |
 
 1. `host/package.json`의 `version`을 올리고, 바뀐 점을 `release/notes/<버전>.json`에 적습니다(`ko`, `en` 줄 목록).
 2. 자체 테스트와 `node release/test-update.js`, `node release/test-app.js --packaged`를 통과시킨 뒤 커밋하고 태그를 붙입니다(`git tag v<버전>`).
 3. `node release/build.js`를 실행합니다. 커밋된 내용으로 `dist/release`에 위 세 파일을 만듭니다.
    - 반드시 설치돼야 하는 수정이면 `--critical`을 붙입니다. 그 버전보다 낮은 앱은 묻지 않고 업데이트합니다. 이때 바뀌는 `release/policy.json`도 커밋하세요(이후 릴리스가 계속 그 버전 미만을 강제합니다).
-4. 설치 묶음을 만듭니다. 운영체제마다 그 운영체제에서 `node release/package.js`를 실행합니다(`dist/pack`에 `MyRemote-Windows-x64.zip` 또는 `MyRemote-Linux-x64.tar.gz`, 그리고 그 묶음의 기록 `<이름>.package.json`). 파일 이름에 버전이 없어서, 릴리스에 올리면 이 문서 맨 위의 내려받기 단추가 항상 최신 묶음을 가리킵니다.
-   - **Windows 실행 파일 서명**(위 "Code signing policy"): `MyRemote.exe`는 Electron이 같으면 릴리스마다 같은 파일이라, Electron이 바뀌었을 때만 서명을 새로 받습니다. GitHub의 Actions에서 "Sign the Windows program"을 실행하고(`gh workflow run sign.yml`), SignPath에서 승인한 뒤, 결과물을 `gh run download <실행 번호> -n MyRemote-exe-signed-<Electron 버전> -D dist/signed/<Electron 버전>`으로 받습니다. `package.js`는 `dist/signed/<Electron 버전>/MyRemote.exe`가 이 프로그램에 유효한 SignPath Foundation 서명만 더한 파일인지 확인한 뒤 넣고(아니면 멈춤), 없으면 서명 없이 만들며 그렇다고 알립니다. `--require-signed`를 붙이면 서명 없는 묶음은 만들지 않습니다.
+4. 설치 묶음을 만듭니다. 운영체제마다 그 운영체제에서 `node release/package.js`를 실행합니다(`dist/pack`에 `Pangmote-Windows-x64.zip` 또는 `Pangmote-Linux-x64.tar.gz`, 그리고 그 묶음의 기록 `<이름>.package.json`). 파일 이름에 버전이 없어서, 릴리스에 올리면 이 문서 맨 위의 내려받기 단추가 항상 최신 묶음을 가리킵니다.
+   - **Windows 실행 파일 서명**(위 "Code signing policy"): `Pangmote.exe`는 Electron이 같으면 릴리스마다 같은 파일이라, Electron이 바뀌었을 때만 서명을 새로 받습니다. GitHub의 Actions에서 "Sign the Windows program"을 실행하고(`gh workflow run sign.yml`), SignPath에서 승인한 뒤, 결과물을 `gh run download <실행 번호> -n Pangmote-exe-signed-<Electron 버전> -D dist/signed/<Electron 버전>`으로 받습니다. `package.js`는 `dist/signed/<Electron 버전>/Pangmote.exe`가 이 프로그램에 유효한 SignPath Foundation 서명만 더한 파일인지 확인한 뒤 넣고(아니면 멈춤), 없으면 서명 없이 만들며 그렇다고 알립니다. `--require-signed`를 붙이면 서명 없는 묶음은 만들지 않습니다.
 5. 두 묶음과 그 기록을 한 폴더에 모은 뒤 `node release/build.js --sign-packages=<폴더>`를 실행합니다. 묶음마다 해시를 다시 계산해 `packages.json`(묶음의 SHA-256과 그 안의 바탕 식별값)과 그 서명 `packages.json.sig`를 만듭니다. 설치된 앱은 이 목록으로 앱 바탕을 스스로 바꿉니다(위 "앱 바탕 교체").
-6. 이 저장소의 GitHub 릴리스를 태그 `v<버전>`으로 만들고, `dist/release`의 세 파일, 설치 묶음 두 개, `packages.json`과 `packages.json.sig`를 첨부해 게시합니다. Pre-release로 두면 '최신'으로 치지 않아 내려받기 단추와 업데이트가 그 릴리스를 보지 않습니다. GitHub CLI로는 `gh release create v<버전> <파일 7개> --title "My Remote <버전>" --notes-file <바뀐 점> --latest` 한 줄이면 됩니다.
+6. 이 저장소의 GitHub 릴리스를 태그 `v<버전>`으로 만들고, `dist/release`의 세 파일, 설치 묶음 두 개, `packages.json`과 `packages.json.sig`를 첨부해 게시합니다. Pre-release로 두면 '최신'으로 치지 않아 내려받기 단추와 업데이트가 그 릴리스를 보지 않습니다. GitHub CLI로는 `gh release create v<버전> <파일 7개> --title "Pangmote <버전>" --notes-file <바뀐 점> --latest` 한 줄이면 됩니다.
 
 올리기 전에 실제 앱에서 먼저 써 보거나, 업데이트 폴더에 닿지 못하는 PC의 앱을 올리려면 그 PC에서 `node release/install-local.js`를 실행합니다. `dist/release`의 릴리스를 앱의 업데이트 기능과 똑같은 절차(서명 확인, 다음 시작 때 시험 실행, 실패하면 되돌리기)로 그 PC의 설치된 앱에 넣습니다.
 
-**업데이트 폴더는 이 저장소의 릴리스입니다**: `https://github.com/GiUKim/my-remote/releases/latest/download/`는 늘 가장 최근 릴리스의 파일을 가리킵니다. 누구나 로그인 없이 받을 수 있어야 하므로 저장소는 공개여야 합니다(비공개 저장소의 릴리스는 로그인 없이는 받을 수 없습니다). 주소는 `app/update-config.json`의 `feed`(설치 묶음 내려받기 페이지는 `downloads`)이고, 앱에 들어가는 값이라 바꾸면 설치 묶음을 새로 배포해야 합니다. 0.3.0~0.4.1 설치 묶음은 따로 두려던 공개 저장소(`GiUKim/my-remote-releases`, 만들지 않음)를 보므로, 그 묶음으로 설치한 앱은 0.4.2 이상의 설치 묶음으로 한 번 직접 다시 설치해야 이후 업데이트를 받습니다.
+**업데이트 폴더는 이 저장소의 릴리스입니다**: `https://github.com/GiUKim/pangmote/releases/latest/download/`는 늘 가장 최근 릴리스의 파일을 가리킵니다. 누구나 로그인 없이 받을 수 있어야 하므로 저장소는 공개여야 합니다(비공개 저장소의 릴리스는 로그인 없이는 받을 수 없습니다). 주소는 `app/update-config.json`의 `feed`(설치 묶음 내려받기 페이지는 `downloads`)이고, 앱에 들어가는 값이라 바꾸면 설치 묶음을 새로 배포해야 합니다. 0.3.0~0.4.1 설치 묶음은 따로 두려던 공개 저장소(`GiUKim/my-remote-releases`, 만들지 않음)를 보므로, 그 묶음으로 설치한 앱은 0.4.2 이상의 설치 묶음으로 한 번 직접 다시 설치해야 이후 업데이트를 받습니다. 0.4.2~0.9.x 묶음의 앱은 저장소의 예전 주소(`GiUKim/my-remote`)를 보는데, GitHub가 그 주소를 새 주소로 넘겨 주므로 그대로 업데이트됩니다(그래서 `my-remote`라는 이름의 저장소를 새로 만들면 안 됩니다). 0.10.0부터의 앱 바탕은 새 주소를 직접 봅니다.
 
-**서명 키**(`node release/keygen.js`가 만든 `~/.my-remote-release/update-signing-key.pem`)는 저장소에 없고, 넣어서도 안 됩니다. 이 키를 가진 사람은 설치된 모든 앱에 코드를 보낼 수 있습니다. 릴리스를 만드는 PC에만 두고, 오프라인 사본을 안전한 곳에 보관하세요. 잃어버리면 이미 설치된 앱은 더 이상 업데이트할 수 없습니다(새 키로 다시 설치해야 합니다).
+**서명 키**(`node release/keygen.js`가 만든 `~/.pangmote-release/update-signing-key.pem`. 0.10.0 전에 만든 키는 `~/.my-remote-release/`에 있고 그대로 쓰입니다)는 저장소에 없고, 넣어서도 안 됩니다. 이 키를 가진 사람은 설치된 모든 앱에 코드를 보낼 수 있습니다. 릴리스를 만드는 PC에만 두고, 오프라인 사본을 안전한 곳에 보관하세요. 잃어버리면 이미 설치된 앱은 더 이상 업데이트할 수 없습니다(새 키로 다시 설치해야 합니다).
 
 </details>

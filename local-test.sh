@@ -6,4 +6,4 @@ set -euo pipefail
 ensure_setup
 check_session
 check_sandbox
-launch my-remote-localtest "$root/host" --localtest "$@"
+launch pangmote-localtest "$root/host" --localtest "$@"

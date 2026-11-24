@@ -31,7 +31,8 @@ const RD = (() => {
   }
 
   // `salt`: DEVICE for a device token (a client app's own secret, given to it by the host; see
-  // host/devices.js), which gives keys and topics of its own; the access key uses the default.
+  // host/devices.js), which gives keys and topics of its own; the access key uses the default. The salts carry
+  // the program's old name (My Remote; Pangmote since 0.10.0) for good: every loader handed out derives with them.
   const DEVICE = 'my-remote-device-v1';
   async function derive(secret, salt) {
     const raw = unb64u(secret.trim());

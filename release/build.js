@@ -3,7 +3,7 @@
 //   node release/build.js [--out=dist/release] [--key=<private key file>] [--critical] [--allow-dirty]
 //
 // What goes into the feed folder afterwards (a release of a public repository, or any https folder):
-//   latest.json, latest.json.sig, my-remote-<version>.bundle
+//   latest.json, latest.json.sig, pangmote-<version>.bundle
 // and what release/package.js builds the installable packages from:
 //   bundle/   the same files unpacked, with manifest.json and manifest.sig
 //
@@ -14,8 +14,9 @@
 //                  release/policy.json remembers it as the oldest version still allowed (`minimum`),
 //                  so that later, ordinary releases keep forcing the apps that never got it. Commit that file.
 //   --allow-dirty  take the files from the folder as they are (for trying things out; never for a release)
-// The signing key (release/keygen.js makes one) is never in the repository: --key, or
-// MY_REMOTE_RELEASE_KEY, or ~/.my-remote-release/update-signing-key.pem.
+// The signing key (release/keygen.js makes one) is never in the repository: --key, or PANGMOTE_RELEASE_KEY
+// (MY_REMOTE_RELEASE_KEY), or ~/.pangmote-release/update-signing-key.pem - or, where only that one is,
+// ~/.my-remote-release/update-signing-key.pem (where keys were made before the program was renamed in 0.10.0).
 //
 //   node release/build.js --sign-packages=<folder>
 // After the packages are made (release/package.js on each system): the list of them, packages.json and its
@@ -32,9 +33,15 @@ const core = require('../app/core');
 const ROOT = path.join(__dirname, '..');
 // The code an installed app runs: the host, the client app and the loader page the client app shows.
 // Not the bench (a developer's tool) and not what npm installs (koffi is part of the app's shell).
-const INCLUDE = ['host', 'client', 'my-remote-client.html'];
+const INCLUDE = ['host', 'client', 'pangmote-client.html'];
 const EXCLUDE = [/^host\/package-lock\.json$/, /^host\/bench[^/]*$/, /^host\/netem\.js$/, /(^|\/)node_modules\//];
-const defaultKey = () => process.env.MY_REMOTE_RELEASE_KEY || path.join(os.homedir(), '.my-remote-release', 'update-signing-key.pem');
+function defaultKey() {
+  const env = process.env.PANGMOTE_RELEASE_KEY || process.env.MY_REMOTE_RELEASE_KEY;
+  if (env) return env;
+  const now = path.join(os.homedir(), '.pangmote-release', 'update-signing-key.pem');
+  const before = path.join(os.homedir(), '.my-remote-release', 'update-signing-key.pem');
+  return fs.existsSync(now) || !fs.existsSync(before) ? now : before;
+}
 
 function git(args, opts = {}) { return execFileSync('git', ['-C', ROOT, ...args], { maxBuffer: 256 * 1024 * 1024, ...opts }); }
 
@@ -100,7 +107,7 @@ function build({ out = path.join(ROOT, 'dist', 'release'), key = defaultKey(), c
     files.set('host/page.json', statement);
     files.set('host/page.sig', Buffer.from(core.signManifest(statement, pagePem) + '\n'));
   }
-  const bundle = core.packBundle(files), bundleFile = `my-remote-${version}.bundle`;
+  const bundle = core.packBundle(files), bundleFile = `pangmote-${version}.bundle`;
   const manifest = {
     format: 1, app: core.APP, version, date, needsBase, minimum, critical: !!critical, notes,
     bundle: { file: bundleFile, size: bundle.length, sha256: core.sha256(bundle) },
@@ -138,7 +145,9 @@ function signPackages(dir, key = defaultKey()) {
     if (buf.length !== r.size || core.sha256(buf) !== r.sha256) throw new Error(`${r.file} is not the archive its record names`);
     packages[r.platform] = { file: r.file, sha256: r.sha256, size: r.size, shell: r.shell };
   }
-  const bytes = Buffer.from(JSON.stringify({ format: 1, app: core.APP, kind: 'packages', version, packages }, null, 1) + '\n');
+  // format 2: the packages' program has the program's new name (Pangmote.exe, pangmote), which code from before
+  // 0.10.0 would not find after a swap; it takes a list of format 2 for no list (see host/shellswap.js).
+  const bytes = Buffer.from(JSON.stringify({ format: 2, app: core.APP, kind: 'packages', version, packages }, null, 1) + '\n');
   let pem;
   try { pem = fs.readFileSync(key, 'utf8'); } catch { throw new Error(`no signing key at ${key} (node release/keygen.js makes one)`); }
   const sig = core.signManifest(bytes, pem);
@@ -155,7 +164,7 @@ async function ciPassed(sha) {
   const m = /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/.exec(url);
   if (!m) return { ok: false, why: `origin (${url}) is not on GitHub` };
   let res;
-  try { res = await fetch(`https://api.github.com/repos/${m[1]}/${m[2]}/commits/${sha}/check-runs?per_page=100`, { headers: { 'User-Agent': 'my-remote-release', Accept: 'application/vnd.github+json' } }); }
+  try { res = await fetch(`https://api.github.com/repos/${m[1]}/${m[2]}/commits/${sha}/check-runs?per_page=100`, { headers: { 'User-Agent': 'pangmote-release', Accept: 'application/vnd.github+json' } }); }
   catch (e) { return { ok: false, why: `GitHub could not be asked (${e.message})` }; }
   if (res.status === 404 || res.status === 422) return { ok: false, why: `GitHub does not know ${sha.slice(0, 7)}: push it and let CI run` };
   if (!res.ok) return { ok: false, why: `GitHub answered ${res.status}` };

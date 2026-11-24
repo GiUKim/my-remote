@@ -2,8 +2,10 @@
 # Electron is the one npm installed under host/node_modules (setup.sh).
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# The installed app (app/my-remote.sh) names its own program and has no folder to pass (mr_app).
-electron="${MY_REMOTE_ELECTRON:-$root/host/node_modules/electron/dist/electron}"
+# The installed app (app/pangmote.sh) names its own program and has no folder to pass (mr_app).
+# (MY_REMOTE_*: the names of these settings before the program was renamed in 0.10.0; still taken.)
+electron="${PANGMOTE_ELECTRON:-${MY_REMOTE_ELECTRON:-$root/host/node_modules/electron/dist/electron}}"
+no_sandbox="${PANGMOTE_NO_SANDBOX:-${MY_REMOTE_NO_SANDBOX:-}}"
 mr_app=("$root/host")
 # Terminals inside VS Code / Cursor set this; with it Electron runs as plain Node and the app cannot start.
 unset ELECTRON_RUN_AS_NODE
@@ -13,8 +15,8 @@ unset ELECTRON_RUN_AS_NODE
 fail() {
   printf '%s\n' "$@" >&2
   if [ ! -t 2 ] && [ -n "${DISPLAY:-}" ]; then
-    if command -v zenity >/dev/null 2>&1; then zenity --error --title="My Remote" --no-wrap --text="$(printf '%s\n' "$@")" >/dev/null 2>&1 || true
-    elif command -v notify-send >/dev/null 2>&1; then notify-send "My Remote" "$(printf '%s\n' "$@")" >/dev/null 2>&1 || true; fi
+    if command -v zenity >/dev/null 2>&1; then zenity --error --title="Pangmote" --no-wrap --text="$(printf '%s\n' "$@")" >/dev/null 2>&1 || true
+    elif command -v notify-send >/dev/null 2>&1; then notify-send "Pangmote" "$(printf '%s\n' "$@")" >/dev/null 2>&1 || true; fi
   fi
   exit 1
 }
@@ -31,20 +33,20 @@ ensure_setup() {
   if [ ! -x "$electron" ]; then
     echo "First start: setting this folder up (Node.js if needed, then Electron; a few minutes)"
     if [ -t 1 ]; then
-      MY_REMOTE_FROM_LAUNCHER=1 bash "$root/setup.sh" --skip-selftest || fail "Setup did not finish; see the messages above."
+      PANGMOTE_FROM_LAUNCHER=1 bash "$root/setup.sh" --skip-selftest || fail "Setup did not finish; see the messages above."
     else
       # A terminal window of its own; setup.sh marks that it ran (a window that cannot open - no desktop
       # session - runs nothing, and then it runs here, into a log).
       local mark ran=""
       mark="$(mktemp)"
       if [ -n "${DISPLAY:-}" ] && command -v gnome-terminal >/dev/null 2>&1; then
-        gnome-terminal --wait --title="My Remote setup" -- env MY_REMOTE_FROM_LAUNCHER=1 MY_REMOTE_SETUP_MARK="$mark" bash "$root/setup.sh" --skip-selftest --hold >/dev/null 2>&1 || true
+        gnome-terminal --wait --title="Pangmote setup" -- env PANGMOTE_FROM_LAUNCHER=1 PANGMOTE_SETUP_MARK="$mark" bash "$root/setup.sh" --skip-selftest --hold >/dev/null 2>&1 || true
         ran="$(cat "$mark" 2>/dev/null || true)"
       fi
       rm -f "$mark"
       if [ -z "$ran" ]; then
-        local log="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/my-remote-setup.log"
-        (umask 077; MY_REMOTE_FROM_LAUNCHER=1 bash "$root/setup.sh" --skip-selftest >"$log" 2>&1) || fail "Setup did not finish. Its messages: $log" "Or run ./setup.sh in a terminal."
+        local log="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/pangmote-setup.log"
+        (umask 077; PANGMOTE_FROM_LAUNCHER=1 bash "$root/setup.sh" --skip-selftest >"$log" 2>&1) || fail "Setup did not finish. Its messages: $log" "Or run ./setup.sh in a terminal."
       fi
     fi
     [ -x "$electron" ] || fail "Setup did not finish. Run ./setup.sh in a terminal to see why."
@@ -96,14 +98,14 @@ check_session() {
   if [ -n "${SSH_CONNECTION:-}" ] && [ -n "${disp%%:*}" ] && [ "${disp%%:*}" != unix ]; then disp=""; fi # localhost:10.0
   if [ -z "$disp" ]; then
     desktop_env || r=$?
-    [ "$r" = 2 ] && fail "You are logged in at this PC's desktop with Wayland, which My Remote does not support. Log out there," \
+    [ "$r" = 2 ] && fail "You are logged in at this PC's desktop with Wayland, which Pangmote does not support. Log out there," \
       "and on the login screen pick \"Ubuntu on Xorg\" (the gear icon at the bottom right, after choosing your name)."
     [ "$r" = 0 ] || fail "No desktop to run on: this terminal has no display, and you ($(id -un)) are not logged in at this PC's" \
       "desktop. Log in there first (on Ubuntu pick \"Ubuntu on Xorg\" on the login screen), then run this again."
     echo "No display in this terminal: starting on the desktop you are logged in to on this PC (display $DISPLAY)."
   fi
   if [ "${XDG_SESSION_TYPE:-}" = "wayland" ]; then
-    fail "This is a Wayland session, which My Remote does not support. Log out, and on the login" \
+    fail "This is a Wayland session, which Pangmote does not support. Log out, and on the login" \
       "screen pick \"Ubuntu on Xorg\" (the gear icon at the bottom right, after choosing your name), then start it again."
   fi
 }
@@ -151,7 +153,7 @@ desktop_env() {
 # Chromium's sandbox needs either its setuid helper (chrome-sandbox owned by root, mode 4755: npm does
 # not install it that way) or unprivileged user namespaces, which Ubuntu 22.04 allows and Ubuntu 23.10
 # and later restrict through AppArmor. Where neither is available Electron cannot start with the
-# sandbox; it then runs without it only when the person says so (MY_REMOTE_NO_SANDBOX=1).
+# sandbox; it then runs without it only when the person says so (PANGMOTE_NO_SANDBOX=1).
 sandbox_args=()
 sandbox_helper="$(dirname "$electron")/chrome-sandbox"
 sandbox_ok() { # 0: Chromium's sandbox can run here
@@ -163,8 +165,8 @@ sandbox_ok() { # 0: Chromium's sandbox can run here
 }
 check_sandbox() {
   sandbox_ok && return
-  if [ "${MY_REMOTE_NO_SANDBOX:-}" = 1 ]; then
-    echo "Running Electron without Chromium's sandbox (MY_REMOTE_NO_SANDBOX=1)." >&2
+  if [ "$no_sandbox" = 1 ]; then
+    echo "Running Electron without Chromium's sandbox (PANGMOTE_NO_SANDBOX=1)." >&2
     sandbox_args=(--no-sandbox)
     return
   fi
@@ -172,7 +174,7 @@ check_sandbox() {
     "later), and Electron's sandbox helper is not installed. Either install the helper once (needs sudo;" \
     "./setup.sh offers to do it):" \
     "  sudo chown root:root \"$sandbox_helper\" && sudo chmod 4755 \"$sandbox_helper\"" \
-    "or run without the sandbox: MY_REMOTE_NO_SANDBOX=1 $0"
+    "or run without the sandbox: PANGMOTE_NO_SANDBOX=1 $0"
 }
 
 # ./start-host.sh --show-key: prints the access key in this terminal, for a host reached over ssh (its
@@ -180,7 +182,7 @@ check_sandbox() {
 # file: the key goes to stdout only. No display is used (an ssh client's X11 forwarding is left alone);
 # a desktop session's keyring is reached through the user's session bus, as from a terminal on that desktop.
 show_key() {
-  [ -x "$electron" ] || fail "My Remote is not set up in this folder yet: run ./start-host.sh on this PC's desktop first."
+  [ -x "$electron" ] || fail "Pangmote is not set up in this folder yet: run ./start-host.sh on this PC's desktop first."
   check_libs
   # It opens no window and loads no page, so Chromium's sandbox guards nothing here: where it cannot run
   # (Ubuntu 23.10 and later without its helper), this runs without it instead of stopping.

@@ -3,7 +3,10 @@
 // archive that is not the listed one), and the swap script itself (PowerShell on Windows, sh on Linux) on
 // fake app folders whose program is a copy of this Node (in a folder whose name has Korean, a space and an
 // apostrophe): swapped and confirmed; not confirmed (put back, never again); the app still running (not
-// swapped); nothing to start (the new program runs once as Node; and a broken one, put back).
+// swapped); nothing to start (the new program runs once as Node; and a broken one, put back). And the program's
+// new name (0.10.0): a folder of the old name (MyRemote.exe, my-remote.sh) takes a package of the new one
+// (Pangmote.exe, pangmote.sh) and starts its program after the swap; packages of the old name still swap; the
+// list of the new name is format 2; a Linux folder keeps a my-remote.sh that starts pangmote.sh.
 //   node release/test-shellswap.js
 'use strict';
 const crypto = require('crypto');
@@ -18,8 +21,10 @@ const S = require('../host/shellswap');
 let failed = 0, passed = 0;
 const ok = (name, cond, extra) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? '  (' + extra + ')' : ''}`); if (cond) passed++; else failed++; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const win = process.platform === 'win32', EXE = S.EXE[process.platform];
+const win = process.platform === 'win32', EXE = S.EXE[process.platform], OLD_EXE = S.OLD_EXE[process.platform];
 if (!EXE) { console.log('SKIP  no shell swap on this system'); process.exit(0); }
+// The program's names in a package: the new ones (0.10.0) or those from before.
+const NAMES = { new: { folder: 'Pangmote', exe: EXE, sh: S.LAUNCHER }, old: { folder: 'MyRemote', exe: OLD_EXE, sh: S.OLD_LAUNCHER } };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mr-shellswap-'));
 
 const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
@@ -32,7 +37,7 @@ const SHELL_B = { ...SHELL_A, app: 'b'.repeat(32) };
 const ID_B = S.identityOf(SHELL_B);
 const KEY = S.platformKey();
 const L0 = { minSize: 1, maxSize: 1 << 30 };
-const listOf = (version, packages) => ({ format: 1, app: 'my-remote', kind: 'packages', version, packages });
+const listOf = (version, packages, format = 2) => ({ format, app: 'my-remote', kind: 'packages', version, packages });
 const entry = (file, buf, shell) => ({ file, sha256: core.sha256(buf), size: buf.length, shell });
 
 (async () => {
@@ -47,6 +52,13 @@ const entry = (file, buf, shell) => ({ file, sha256: core.sha256(buf), size: buf
     try { const b = signed(listOf('0.7.0', { [KEY]: { file: '../x.zip', sha256: 'c'.repeat(64), size: 20 << 20, shell: SHELL_B } })); S.verifyList(b.bytes, b.sig, [PUB]); } catch (e) { e5 = e.message; }
     ok('a list signed by a trusted key is taken; a changed signature, another key, a manifest that is no list, a file name with a path are not',
       !!l && !e1 && /signature/.test(e2) && /not by a key/.test(e3) && /not a list/.test(e4) && /bad entry/.test(e5), JSON.stringify({ e1, e2, e3, e4, e5 }));
+    // Format 2 lists packages of the new name; format 1 (before 0.10.0) is still taken; a format to come is not.
+    const one = signed(listOf('0.7.0', { [KEY]: { file: 'a.zip', sha256: 'c'.repeat(64), size: 20 << 20, shell: SHELL_B } }, 1));
+    const three = signed(listOf('0.7.0', { [KEY]: { file: 'a.zip', sha256: 'c'.repeat(64), size: 20 << 20, shell: SHELL_B } }, 3));
+    let f1 = '', f3 = '';
+    try { S.verifyList(one.bytes, one.sig, [PUB]); } catch (e) { f1 = e.message; }
+    try { S.verifyList(three.bytes, three.sig, [PUB]); } catch (e) { f3 = e.message; }
+    ok('lists of format 2 (the program\'s new name) and 1 are taken, a format to come is not', l && l.format === 2 && !f1 && /not a list/.test(f3), JSON.stringify({ f1, f3 }));
   }
 
   // 2. Which package replaces which shell
@@ -67,20 +79,27 @@ const entry = (file, buf, shell) => ({ file, sha256: core.sha256(buf), size: buf
   const server = http.createServer((req, res) => { const b = files.get(decodeURIComponent(req.url.slice(1))); if (!b) { res.writeHead(404); res.end(); return; } res.writeHead(200, { 'content-length': b.length }); res.end(b); });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const feed = `http://127.0.0.1:${server.address().port}/`;
-  const archiveOf = (version, shell) => {
-    const src = fs.mkdtempSync(path.join(tmp, 'pkg-')), app = path.join(src, 'MyRemote', 'resources', 'app');
+  const archiveOf = (version, shell, names = NAMES.new) => {
+    const src = fs.mkdtempSync(path.join(tmp, 'pkg-')), top = path.join(src, names.folder), app = path.join(top, 'resources', 'app');
     fs.mkdirSync(app, { recursive: true });
-    fs.writeFileSync(path.join(src, 'MyRemote', EXE), 'program');
-    fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: 'my-remote', version, base: 1 }));
+    fs.writeFileSync(path.join(top, names.exe), 'program');
+    if (!win) fs.writeFileSync(path.join(top, names.sh), '#!/bin/sh\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: 'pangmote', version, base: 1 }));
     fs.writeFileSync(path.join(app, 'shell.json'), JSON.stringify(shell));
     const out = path.join(src, win ? 'p.zip' : 'p.tar.gz');
-    if (win) execFileSync(path.join(process.env.SystemRoot, 'System32', 'tar.exe'), ['-a', '-c', '-f', out, '-C', src, 'MyRemote']);
-    else execFileSync('tar', ['-czf', out, '-C', src, 'MyRemote']);
+    if (win) execFileSync(path.join(process.env.SystemRoot, 'System32', 'tar.exe'), ['-a', '-c', '-f', out, '-C', src, names.folder]);
+    else execFileSync('tar', ['-czf', out, '-C', src, names.folder]);
     return fs.readFileSync(out);
   };
-  const FILE = win ? 'MyRemote-Windows-x64.zip' : 'MyRemote-Linux-x64.tar.gz';
+  const FILE = win ? 'Pangmote-Windows-x64.zip' : 'Pangmote-Linux-x64.tar.gz';
   const publish = (version, buf, listed, pem) => { const l = signed(listOf(version, { [KEY]: listed }), pem); files.set('packages.json', l.bytes); files.set('packages.json.sig', Buffer.from(l.sig)); files.set(FILE, buf); };
-  const appFolder = (name) => { const d = path.join(tmp, name, 'MyRemote'); fs.mkdirSync(path.join(d, 'resources', 'app'), { recursive: true }); return d; };
+  // An app folder as the person unpacked it (an older package: MyRemote, with my-remote.sh on Linux).
+  const appFolder = (name, names = NAMES.old) => {
+    const d = path.join(tmp, name, names.folder);
+    fs.mkdirSync(path.join(d, 'resources', 'app'), { recursive: true });
+    if (!win) fs.writeFileSync(path.join(d, names.sh), '#!/bin/sh\n', { mode: 0o755 });
+    return d;
+  };
   const looks = (root, appDir, current = { version: '0.6.1', identity: '' }) => S.look({ feed, keys: [PUB], root, appDir, current, fetchFn: fetch, limits: L0 });
   {
     const pkgB = archiveOf('0.7.0', SHELL_B);
@@ -107,6 +126,33 @@ const entry = (file, buf, shell) => ({ file, sha256: core.sha256(buf), size: buf
       t.state === 'error' && /SHA-256|list says/.test(t.why) && w.state === 'error' && /another shell/.test(w.why) && k.state === 'error' && /not by a key/.test(k.why)
         && !S.readNext(root2, app2) && !fs.existsSync(app2 + '.next') && !fs.existsSync(app2 + '.next-tmp'),
       JSON.stringify({ t: t.why, w: w.why, k: k.why }));
+
+    // The program's new name: a folder of the old name (MyRemote, my-remote.sh) stages a package of the new one; the
+    // staged shell's program is the new one (what the swap starts), and on Linux the folder keeps a my-remote.sh
+    // that starts pangmote.sh. A package of the old name is still staged (a release before 0.10.0).
+    const rootN = path.join(tmp, 'data-newname'), appN = appFolder('newname');
+    publish('0.7.0', pkgB, entry(FILE, pkgB, SHELL_B));
+    const rn = await looks(rootN, appN), nn = S.readNext(rootN, appN);
+    const prog = nn && S.programIn(nn.dir), face = S.hostFace(process.platform, nn);
+    let forwards = true;
+    if (!win) {
+      const fwd = path.join(appN + '.next', S.OLD_LAUNCHER);
+      forwards = fs.existsSync(fwd) && fs.readFileSync(fwd, 'utf8') === S.FORWARD_SH && (fs.statSync(fwd).mode & 0o111) !== 0;
+      // It starts pangmote.sh beside it, with the arguments it was given (sh: the CI's Linux and this machine).
+      fs.writeFileSync(path.join(appN + '.next', S.LAUNCHER), `#!/bin/sh\nprintf '%s\\n' "$@" > "$(dirname "$0")/started.txt"\n`, { mode: 0o755 });
+      execFileSync('sh', [fwd, '--host', 'two words']);
+      forwards = forwards && fs.readFileSync(path.join(appN + '.next', 'started.txt'), 'utf8') === '--host\ntwo words\n';
+    }
+    ok('a folder of the old name stages a package of the new one: its program is what the swap starts (Pangmote.exe / pangmote.sh); on Linux my-remote.sh stays and starts pangmote.sh',
+      rn.state === 'staged' && !!nn && nn.exe === EXE && prog && prog.exe === EXE && face.file === (win ? EXE : S.LAUNCHER) && forwards,
+      JSON.stringify({ rn, exe: nn && nn.exe, launcher: nn && nn.launcher, face, forwards }));
+    const rootO = path.join(tmp, 'data-oldname'), appO = appFolder('oldname');
+    const pkgOld = archiveOf('0.7.0', SHELL_B, NAMES.old);
+    publish('0.7.0', pkgOld, entry(FILE, pkgOld, SHELL_B));
+    const ro = await looks(rootO, appO), no = S.readNext(rootO, appO);
+    ok('a package of the old name (a release before 0.10.0) is still staged, and its program (MyRemote.exe / my-remote.sh) is what the swap starts',
+      ro.state === 'staged' && !!no && no.exe === OLD_EXE && S.hostFace(process.platform, no).file === (win ? OLD_EXE : S.OLD_LAUNCHER) && (win || !fs.readFileSync(path.join(appO + '.next', S.OLD_LAUNCHER), 'utf8').includes('pangmote.sh')),
+      JSON.stringify({ ro, exe: no && no.exe }));
   }
   server.close();
 
@@ -121,17 +167,18 @@ const entry = (file, buf, shell) => ({ file, sha256: core.sha256(buf), size: buf
   }
   const shellswapJs = path.join(__dirname, '..', 'host', 'shellswap.js');
   const parent = path.join(tmp, "앱 폴더's");
-  // An app folder: the program, the shell's package.json (and shell.json), a core.js, a "face" that says it
-  // is up when told to (face.json: confirm, life) and lives a while.
-  function makeApp(dir, { version, shell, confirm, life, coreThrows, root }) {
+  // An app folder: the program (by the names of a package from before 0.10.0, or of one after), the shell's
+  // package.json (and shell.json), a core.js, a "face" that says it is up when told to (face.json: confirm, life)
+  // and lives a while.
+  function makeApp(dir, { version, shell, confirm, life, coreThrows, root, names = NAMES.new }) {
     const app = path.join(dir, 'resources', 'app'), node = shell ? nodes.new : nodes.old;
     fs.mkdirSync(app, { recursive: true });
-    try { fs.linkSync(node, path.join(dir, EXE)); } catch { fs.copyFileSync(node, path.join(dir, EXE)); }
+    try { fs.linkSync(node, path.join(dir, names.exe)); } catch { fs.copyFileSync(node, path.join(dir, names.exe)); }
     if (!win) {
-      fs.chmodSync(path.join(dir, EXE), 0o755);
-      fs.writeFileSync(path.join(dir, 'my-remote.sh'), '#!/bin/sh\nd=$(cd "$(dirname "$0")" && pwd)\nexec "$d/my-remote" "$d/resources/app/face.js"\n', { mode: 0o755 });
+      fs.chmodSync(path.join(dir, names.exe), 0o755);
+      fs.writeFileSync(path.join(dir, names.sh), `#!/bin/sh\nd=$(cd "$(dirname "$0")" && pwd)\nexec "$d/${names.exe}" "$d/resources/app/face.js"\n`, { mode: 0o755 });
     }
-    fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: 'my-remote', version, base: 1 }));
+    fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: 'pangmote', version, base: 1 }));
     if (shell) fs.writeFileSync(path.join(app, 'shell.json'), JSON.stringify(shell));
     fs.writeFileSync(path.join(app, 'core.js'), coreThrows ? 'throw new Error("broken");\n' : 'module.exports = {};\n');
     fs.writeFileSync(path.join(app, 'face.json'), JSON.stringify({ confirm: !!confirm, life, root }));
@@ -143,22 +190,26 @@ if (f.confirm) { const me = S.readShell(__dirname); const t = setInterval(() => 
 setTimeout(() => process.exit(0), f.life);
 `);
   }
-  const restart = win ? [{ file: 'MyRemote.exe', args: ['@APP@/resources/app/face.js'] }] : [{ file: 'my-remote.sh', args: [] }];
-  const startFace = (dir) => spawn(win ? path.join(dir, EXE) : path.join(dir, 'my-remote.sh'), win ? [path.join(dir, 'resources', 'app', 'face.js')] : [], { stdio: 'ignore', windowsHide: true });
+  // What the host does (host/main.js shellSwapIfFits): the face to start again is the staged shell's program
+  // (hostFace), here with the fake face's arguments.
+  const restartFor = (next) => { const f = S.hostFace(process.platform, next); return [{ file: f.file, args: win ? ['@APP@/resources/app/face.js'] : [] }]; };
+  const startFace = (dir, names = NAMES.old) => spawn(win ? path.join(dir, names.exe) : path.join(dir, names.sh), win ? [path.join(dir, 'resources', 'app', 'face.js')] : [], { stdio: 'ignore', windowsHide: true });
   const killFaces = (root) => { try { for (const l of fs.readFileSync(path.join(root, 'faces.log'), 'utf8').split('\n')) { const pid = Number(l.split(' ')[0]); if (pid) try { process.kill(pid); } catch {} } } catch {} };
   const logOf = (root) => { try { return fs.readFileSync(path.join(S.shellRoot(root), 'swap.log'), 'utf8').replace(/^﻿/, '').replace(/\r/g, ''); } catch { return ''; } }; // PowerShell 5.1 starts the file with a BOM
-  // Runs one swap to its end (swap.json gone) and returns the log.
-  async function swap(name, { oldFace, newFace, restartFaces = restart, waitSecs = 20, upSecs = 20, coreThrows = false }) {
+  // Runs one swap to its end (swap.json gone) and returns the log. The folder is one of a package from before
+  // 0.10.0 (MyRemote.exe, my-remote.sh); the staged one of the new name unless `newNames` says otherwise.
+  async function swap(name, { oldFace, newFace, restartFaces, waitSecs = 20, upSecs = 20, coreThrows = false, newNames = NAMES.new }) {
     const root = path.join(tmp, 'data-' + name), dir = path.join(parent, name, 'MyRemote');
     fs.mkdirSync(root, { recursive: true });
-    makeApp(dir, { version: '0.6.1', shell: null, root, ...oldFace });
-    makeApp(dir + '.next', { version: '0.7.0', shell: SHELL_B, root, coreThrows, ...newFace });
+    makeApp(dir, { version: '0.6.1', shell: null, root, names: NAMES.old, ...oldFace });
+    makeApp(dir + '.next', { version: '0.7.0', shell: SHELL_B, root, coreThrows, names: newNames, ...newFace });
     // As stage() leaves it.
     fs.mkdirSync(S.shellRoot(root), { recursive: true });
-    fs.writeFileSync(path.join(S.shellRoot(root), 'next.json'), JSON.stringify({ version: '0.7.0', identity: ID_B, dir: dir + '.next', appDir: dir, at: Date.now() }));
+    const next = { version: '0.7.0', identity: ID_B, dir: dir + '.next', appDir: dir, at: Date.now() };
+    fs.writeFileSync(path.join(S.shellRoot(root), 'next.json'), JSON.stringify(next));
     let face = null;
     if (oldFace.run) { face = startFace(dir); await sleep(1500); }
-    await S.begin({ root, appDir: dir, next: { dir: dir + '.next', version: '0.7.0', identity: ID_B }, restart: restartFaces, waitSecs, upSecs });
+    await S.begin({ root, appDir: dir, next, restart: restartFaces || restartFor(next), waitSecs, upSecs });
     const until = Date.now() + 120e3;
     while (fs.existsSync(path.join(S.shellRoot(root), 'swap.json')) && Date.now() < until) await sleep(500);
     killFaces(root);
@@ -169,8 +220,9 @@ setTimeout(() => process.exit(0), f.life);
   {
     const a = await swap('swapped', { oldFace: { run: true, life: 2500 }, newFace: { confirm: true, life: 6000 } });
     const waited = /begins/.test(a.log) && (Date.parse(a.log.split('\n').find((l) => /folders swapped/.test(l)).slice(0, 19)) - Date.parse(a.log.split('\n')[0].slice(0, 19))) >= 0;
-    ok('the swap waits for the app to end, swaps the folders, starts it from the new one, which says it is up; the old folder goes',
-      a.now === ID_B && !fs.existsSync(a.dir + '.old') && !fs.existsSync(a.dir + '.next') && !S.readNext(a.root, a.dir) && waited && /folders swapped/.test(a.log) && /is up/.test(a.log),
+    ok('the swap waits for the app to end, swaps the folders, starts it from the new one - by the new name (Pangmote), a folder of the old one - which says it is up; the old folder goes',
+      a.now === ID_B && !fs.existsSync(a.dir + '.old') && !fs.existsSync(a.dir + '.next') && !S.readNext(a.root, a.dir) && waited && /folders swapped/.test(a.log) && /is up/.test(a.log)
+        && fs.existsSync(path.join(a.dir, EXE)) && !fs.existsSync(path.join(a.dir, OLD_EXE)),
       JSON.stringify({ now: a.now === ID_B, old: fs.existsSync(a.dir + '.old'), next: fs.existsSync(a.dir + '.next'), staged: !!S.readNext(a.root, a.dir) }) + ' ' + a.log.trim().split('\n').map((l) => l.slice(11)).join(' | '));
     const b = await swap('notup', { oldFace: { run: false, life: 4000 }, newFace: { confirm: false, life: 4000 }, upSecs: 6 });
     const bad = S.badList(b.root);
@@ -183,17 +235,23 @@ setTimeout(() => process.exit(0), f.life);
       c.now === '' && fs.existsSync(c.dir + '.next') && !!S.readNext(c.root, c.dir) && S.heldRecently(c.root) && /still runs/.test(c.log), c.log.trim().split('\n').map((l) => l.slice(20)).join(' | '));
     const d = await swap('nostart', { oldFace: { run: false, life: 1000 }, newFace: { confirm: false, life: 1000 }, restartFaces: [] });
     const e = await swap('broken', { oldFace: { run: false, life: 1000 }, newFace: { confirm: false, life: 1000 }, restartFaces: [], coreThrows: true });
-    ok('with nothing to start, the new program runs once as Node: a working one stays, a broken one is put back',
+    ok('with nothing to start, the new program (Pangmote) runs once as Node: a working one stays, a broken one is put back',
       d.now === ID_B && /is up/.test(d.log) && e.now === '' && /going back/.test(e.log) && !!S.badList(e.root)['0.7.0'],
       `${d.log.trim().split('\n').pop().slice(20)} / ${e.log.trim().split('\n').pop().slice(20)}`);
+    const o = await swap('oldnames', { oldFace: { run: true, life: 2500 }, newFace: { confirm: true, life: 6000 }, newNames: NAMES.old });
+    ok('a package of the old name (a release before 0.10.0) swaps as before: its MyRemote program is started and says it is up',
+      o.now === ID_B && /is up/.test(o.log) && fs.existsSync(path.join(o.dir, OLD_EXE)), o.log.trim().split('\n').map((l) => l.slice(20)).join(' | '));
   }
 
   // 4b. A script that never starts (a policy, a virus scanner): begin rejects, so the app does not quit.
   {
     const root = path.join(tmp, 'data-nostart'), dir = path.join(tmp, 'nostart', 'MyRemote');
     fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir + '.next', { recursive: true });
+    fs.writeFileSync(path.join(dir + '.next', EXE), 'program');
+    if (!win) fs.writeFileSync(path.join(dir + '.next', S.LAUNCHER), '#!/bin/sh\n');
     let err = '';
-    try { await S.begin({ root, appDir: dir, next: { dir: dir + '.next', version: '0.7.0', identity: ID_B }, restart, startSecs: 2, spawnFn: () => ({ unref() {} }), spawnSyncFn: () => ({ status: 0 }) }); } catch (e) { err = e.message; }
+    try { await S.begin({ root, appDir: dir, next: { dir: dir + '.next', version: '0.7.0', identity: ID_B }, restart: restartFor({ dir: dir + '.next' }), startSecs: 2, spawnFn: () => ({ unref() {} }), spawnSyncFn: () => ({ status: 0 }) }); } catch (e) { err = e.message; }
     ok('a swap script that never starts makes begin fail (the app keeps running) and leaves no swap marked as under way',
       /did not start/.test(err) && !S.pending(root), err);
   }

@@ -1,0 +1,14 @@
+{
+  "ko": [
+    "프로그램 이름이 My Remote에서 Pangmote로 바뀌었습니다. 접속 키, PC 목록, 등록한 기기, 설정은 그대로 이어집니다",
+    "업데이트 뒤 앱이 새 이름의 앱 바탕(Pangmote.exe)으로 스스로 바뀌고(원격 접속이 없을 때), 시작 메뉴와 바탕 화면·작업 표시줄·시작 프로그램에 있던 MyRemote.exe 바로가기도 새 프로그램을 가리키게 됩니다. Windows 방화벽이 새 이름으로 한 번 더 물을 수 있습니다",
+    "잠금 화면 지원 서비스는 호스트 창의 칸에서 \"업데이트\"를 누르면 새 이름(PangmoteAssist)으로 바뀝니다. 그 전까지는 지금 서비스가 그대로 동작합니다",
+    "예전에 받아 둔 my-remote-client.html도 그대로 쓸 수 있습니다. 새 파일 이름은 pangmote-client.html입니다"
+  ],
+  "en": [
+    "The program is now called Pangmote (it was My Remote). Access keys, the list of PCs, registered devices and settings carry over",
+    "After this update the app replaces its own base with one of the new name (Pangmote.exe) when no remote session is on, and the Start menu entry and your shortcuts to MyRemote.exe on the desktop, the taskbar and in Startup start the new program. Windows Firewall may ask once more for the new name",
+    "The lock screen service takes the new name (PangmoteAssist) when you press \"Update\" on its card in the host window; until then the installed one keeps working",
+    "A my-remote-client.html you kept still works; the new file is called pangmote-client.html"
+  ]
+}

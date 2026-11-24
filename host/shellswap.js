@@ -21,6 +21,15 @@
 //     aside, the old one comes back and is started again, and that release is never staged again. With
 //     nothing to start, the new program runs once as Node (ELECTRON_RUN_AS_NODE) and must load the
 //     shell's core.js.
+//  5. The program's name: Pangmote.exe / pangmote (pangmote.sh) since 0.10.0, MyRemote.exe / my-remote
+//     (my-remote.sh) before, when the program was called My Remote. A swap goes from either to either: what
+//     to start is read from the folders (programIn), never assumed. packages.json lists packages of the new
+//     name as format 2, which code from before takes for no list at all: its stage() wants MyRemote.exe (it
+//     would fetch the package every 6 hours and throw it away) and its script would start MyRemote.exe after
+//     the swap. Such an app keeps its shell until its code is updated; then this code swaps it. A Linux folder
+//     that had my-remote.sh keeps one that starts pangmote.sh (a menu entry or a script of the person's may
+//     name it); on Windows the code points the shortcuts that named MyRemote.exe at the new program
+//     (host/appsync.js retarget).
 // Electron-free (fetch is given), so release/test-shellswap.js runs all of it in plain Node.
 'use strict';
 const crypto = require('crypto');
@@ -28,13 +37,29 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
-const APP = 'my-remote';
+const APP = 'my-remote'; // the id in what a release signs: the program's old name, kept (see app/core.js)
 const VERSION = /^(\d{1,6})\.(\d{1,6})\.(\d{1,6})$/;
 const SAFE_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 const MAX_LIST = 64 * 1024;
 const LIMITS = { minSize: 10 * 1024 * 1024, maxSize: 1024 * 1024 * 1024 };
-const EXE = { win32: 'MyRemote.exe', linux: 'my-remote' };
+const EXE = { win32: 'Pangmote.exe', linux: 'pangmote' }, LAUNCHER = 'pangmote.sh';
+const OLD_EXE = { win32: 'MyRemote.exe', linux: 'my-remote' }, OLD_LAUNCHER = 'my-remote.sh'; // up to 0.9.x
+// The program a folder holds, by its new name or else its old one: { exe, launcher } (the launcher, Linux's
+// start script, is '' on Windows), or null when it holds neither.
+function programIn(dir, platform = process.platform) {
+  for (const [exe, launcher] of [[EXE[platform], LAUNCHER], [OLD_EXE[platform], OLD_LAUNCHER]]) {
+    if (exe && fs.existsSync(path.join(dir, exe))) return { exe, launcher: platform === 'win32' ? '' : launcher };
+  }
+  return null;
+}
+// A folder that had my-remote.sh keeps one after a swap to a package of the new name: whatever starts the app
+// by that name (a menu entry, a script of the person's, a desktop file) still does.
+const FORWARD_SH = `#!/bin/sh
+# The program is called Pangmote since 0.10.0 (My Remote before). This name stays for whatever still starts it
+# by its old one; it starts pangmote.sh beside it.
+exec "$(dirname "$(readlink -f "$0")")/pangmote.sh" "$@"
+`;
 
 function cmp(a, b) {
   const x = VERSION.exec(a), y = VERSION.exec(b);
@@ -80,7 +105,8 @@ function verifyList(bytes, sig, keys, limits = LIMITS) {
   let l;
   try { l = JSON.parse(bytes.toString('utf8')); } catch { throw new Error('packages.json: not JSON'); }
   // kind: a signed manifest (latest.json) is not a list of packages, nor the other way round (core.js wants files and a bundle).
-  if (!l || typeof l !== 'object' || l.format !== 1 || l.app !== APP || l.kind !== 'packages' || !VERSION.test(l.version) || !l.packages || typeof l.packages !== 'object' || Array.isArray(l.packages)) throw new Error('packages.json: not a list of packages of this app');
+  // format 2: packages whose program has the new name (see the top), which code from before takes for no list.
+  if (!l || typeof l !== 'object' || (l.format !== 1 && l.format !== 2) || l.app !== APP || l.kind !== 'packages' || !VERSION.test(l.version) || !l.packages || typeof l.packages !== 'object' || Array.isArray(l.packages)) throw new Error('packages.json: not a list of packages of this app');
   for (const [k, p] of Object.entries(l.packages)) {
     if (!/^[a-z0-9]{1,20}-[a-z0-9]{1,20}$/.test(k) || !p || typeof p !== 'object' || !SAFE_FILE.test(p.file) || !HEX64.test(p.sha256) || !(Number.isInteger(p.size) && p.size >= limits.minSize && p.size <= limits.maxSize) || !identityOf(p.shell)) throw new Error(`packages.json: bad entry ${JSON.stringify(k).slice(0, 40)}`);
   }
@@ -108,7 +134,7 @@ function decide({ list, current, bad = {}, key = platformKey() }) {
 // Whether the folder can be swapped at all: the folder above it writable (Program Files is not), room on the disk.
 function cannotSwap(appDir, need) {
   const parent = path.dirname(appDir);
-  try { const t = path.join(parent, `.my-remote-write-test-${process.pid}`); fs.writeFileSync(t, ''); fs.rmSync(t, { force: true }); } catch { return 'the folder above the app cannot be written'; }
+  try { const t = path.join(parent, `.pangmote-write-test-${process.pid}`); fs.writeFileSync(t, ''); fs.rmSync(t, { force: true }); } catch { return 'the folder above the app cannot be written'; }
   try { const s = fs.statfsSync(parent); if (Number(s.bavail) * Number(s.bsize) < need) return 'not enough room on the disk'; } catch {}
   return '';
 }
@@ -178,8 +204,7 @@ function readNext(root, appDir) {
 
 // Fetches, checks and unpacks `entry` next to appDir. -> the staged shell (next.json)
 async function stage({ entry, feed, appDir, root, fetchFn, platform = process.platform, signal, log = () => {}, onProgress }) {
-  const exe = EXE[platform];
-  if (!exe) throw new Error('no package for this system');
+  if (!EXE[platform]) throw new Error('no package for this system');
   const dir = path.join(shellRoot(root), entry.version), archive = path.join(dir, entry.file);
   const next = appDir + '.next', tmp = appDir + '.next-tmp';
   log(`shell ${entry.version}: fetching ${entry.file} (${(entry.size / 1048576).toFixed(0)} MB)`);
@@ -192,12 +217,16 @@ async function stage({ entry, feed, appDir, root, fetchFn, platform = process.pl
     if (top.length !== 1) throw new Error('the archive does not hold one folder');
     const got = path.join(tmp, top[0].name);
     const s = readShell(path.join(got, 'resources', 'app'));
-    if (!fs.existsSync(path.join(got, exe))) throw new Error(`the archive has no ${exe}`);
+    const prog = programIn(got, platform);
+    if (!prog || (prog.launcher && !fs.existsSync(path.join(got, prog.launcher)))) throw new Error(`the archive has no ${EXE[platform]}`);
     if (s.identity !== entry.identity || s.version !== entry.version) throw new Error('the archive holds another shell than the list says');
+    if (platform !== 'win32' && prog.launcher !== OLD_LAUNCHER && fs.existsSync(path.join(appDir, OLD_LAUNCHER)) && !fs.existsSync(path.join(got, OLD_LAUNCHER))) {
+      fs.writeFileSync(path.join(got, OLD_LAUNCHER), FORWARD_SH, { mode: 0o755 });
+    }
     fs.rmSync(path.join(shellRoot(root), 'next.json'), { force: true });
     fs.rmSync(next, { recursive: true, force: true });
     fs.renameSync(got, next);
-    const n = { version: entry.version, identity: entry.identity, dir: next, appDir, at: Date.now() };
+    const n = { version: entry.version, identity: entry.identity, dir: next, appDir, at: Date.now(), exe: prog.exe, launcher: prog.launcher };
     writeJson(path.join(shellRoot(root), 'next.json'), n);
     log(`shell ${entry.version}: staged at ${next}`);
     return n;
@@ -243,14 +272,15 @@ const psArg = (a) => (a.startsWith('@APP@/') ? `('"' + (Join-Path $App ${psq(a.s
 const shArg = (a) => (a.startsWith('@APP@/') ? `"$APP/${a.slice(6).replace(/["$`\\]/g, '\\$&')}"` : shq(a));
 
 // restart: [{ file, args }] relative to the app folder (the faces that were running); waitSecs: how long the
-// processes of the folder may take to end; upSecs: how long the new code may take to say it is up.
-function scriptWin({ appDir, next, root, version, identity, restart, waitSecs, upSecs }) {
+// processes of the folder may take to end; upSecs: how long the new code may take to say it is up; exe: the
+// new shell's program (run once as Node when nothing is to be started).
+function scriptWin({ appDir, next, root, version, identity, restart, waitSecs, upSecs, exe = EXE.win32 }) {
   const starts = restart.map((r) => `  Start-Process -FilePath (Join-Path $App ${psq(r.file)}) -WorkingDirectory $App${r.args.length ? ' -ArgumentList (@(' + r.args.map(psArg).join(', ') + ') -join \' \')' : ''}`).join('\n');
   return `# The installed app's shell swap (host/shellswap.js). Written for this one swap.
 $ErrorActionPreference = 'Continue'
 $App = ${psq(appDir)}; $Next = ${psq(next)}; $Old = $App + '.old'; $Failed = $App + '.failed'
 $Dir = ${psq(shellRoot(root))}; $Log = Join-Path $Dir 'swap.log'; $Up = Join-Path $Dir 'up.json'
-$Version = ${psq(version)}; $Identity = ${psq(identity)}; $Exe = ${psq(EXE.win32)}
+$Version = ${psq(version)}; $Identity = ${psq(identity)}; $Exe = ${psq(exe)}
 function Log([string]$m) { try { Add-Content -LiteralPath $Log -Value ((Get-Date).ToString('yyyy-MM-ddTHH:mm:ss') + ' ' + $m) -Encoding UTF8 } catch {} }
 # The processes started from the app folder. Windows lets a folder be renamed while a program in it runs
 # (measured), so this wait is what keeps a running app's folder in place. Counted inside the function: a
@@ -318,13 +348,13 @@ exit 1
 `;
 }
 
-function scriptSh({ appDir, next, root, version, identity, restart, waitSecs, upSecs }) {
+function scriptSh({ appDir, next, root, version, identity, restart, waitSecs, upSecs, exe = EXE.linux }) {
   const starts = restart.map((r) => `  (cd "$APP" && setsid "$APP/${r.file}"${r.args.map((a) => ' ' + shArg(a)).join('')} </dev/null >/dev/null 2>&1 &)`).join('\n');
   return `#!/bin/sh
 # The installed app's shell swap (host/shellswap.js). Written for this one swap.
 APP=${shq(appDir)}; NEXT=${shq(next)}; OLD="$APP.old"; FAILED="$APP.failed"
 DIR=${shq(shellRoot(root))}; LOG="$DIR/swap.log"; UP="$DIR/up.json"
-VERSION=${shq(version)}; IDENTITY=${shq(identity)}; EXE=${shq(EXE.linux)}
+VERSION=${shq(version)}; IDENTITY=${shq(identity)}; EXE=${shq(exe)}
 log() { printf '%s %s\\n' "$(date +%Y-%m-%dT%H:%M:%S)" "$*" >> "$LOG"; }
 running() { for p in /proc/[0-9]*; do e=$(readlink "$p/exe" 2>/dev/null) || continue; case "$e" in "$APP"/*) return 0;; esac; done; return 1; }
 start_all() {
@@ -366,8 +396,12 @@ exit 1
 `;
 }
 
-// The faces to start again after the swap (relative to the app folder).
-const hostFace = (platform = process.platform) => ({ file: platform === 'win32' ? EXE.win32 : 'my-remote.sh', args: ['--host'] });
+// The faces to start again after the swap (relative to the app folder): the program of the staged shell `next`
+// (which may have another name than this one's: see the top).
+function hostFace(platform = process.platform, next = null) {
+  const p = (next && next.dir && programIn(next.dir, platform)) || { exe: EXE[platform] || EXE.win32, launcher: LAUNCHER };
+  return { file: platform === 'win32' ? p.exe : p.launcher, args: ['--host'] };
+}
 
 // Writes swap.json and the script, starts the script on its own and resolves once the script has said it
 // runs (swap.started): only then may the caller quit. A script that does not start in startSecs (a policy,
@@ -385,7 +419,9 @@ async function begin({ root, appDir, next, restart = [], platform = process.plat
   const dir = shellRoot(root), started = path.join(dir, 'swap.started');
   fs.mkdirSync(dir, { recursive: true });
   fs.rmSync(started, { force: true });
-  const o = { appDir, next: next.dir, root, version: next.version, identity: next.identity, restart, waitSecs, upSecs };
+  const prog = programIn(next.dir, platform);
+  if (!prog) throw new Error(`the staged shell has no ${EXE[platform]}`);
+  const o = { appDir, next: next.dir, root, version: next.version, identity: next.identity, restart, waitSecs, upSecs, exe: prog.exe };
   const file = path.join(dir, platform === 'win32' ? 'swap.ps1' : 'swap.sh');
   fs.writeFileSync(file, platform === 'win32' ? '\uFEFF' + scriptWin(o) : scriptSh(o), { mode: 0o755 }); // the BOM: PowerShell 5.1 reads the paths as UTF-8
   writeJson(path.join(dir, 'swap.json'), { version: next.version, identity: next.identity, appDir, next: next.dir, restart, by: process.pid, at: Date.now() });
@@ -448,4 +484,4 @@ function confirm(root, identity) {
   try { writeJson(path.join(shellRoot(root), 'up.json'), { identity, pid: process.pid, at: Date.now() }); return true; } catch { return false; }
 }
 
-module.exports = { identityOf, readShell, verifyList, decide, badList, cannotSwap, look, stage, readNext, begin, pending, confirm, heldRecently, sweep, hostFace, platformKey, shellRoot, scriptWin, scriptSh, cmp, EXE, LIMITS };
+module.exports = { identityOf, readShell, verifyList, decide, badList, cannotSwap, look, stage, readNext, begin, pending, confirm, heldRecently, sweep, hostFace, programIn, platformKey, shellRoot, scriptWin, scriptSh, cmp, EXE, LAUNCHER, OLD_EXE, OLD_LAUNCHER, FORWARD_SH, LIMITS };

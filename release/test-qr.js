@@ -41,7 +41,7 @@ function layout(q) {
   const mask = FORMAT_M.indexOf(a.toString(2).padStart(15, '0'));
   return { finders: finder(3, 3) && finder(s - 4, 3) && finder(3, s - 4), timing, darkModule: d(8, s - 8), format: a === b && mask >= 0, mask };
 }
-for (const [text, version] of [['hello', 1], ['otpauth://totp/MyRemote:HOST-PC?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=MyRemote', 6], ['x'.repeat(150), 8], ['가'.repeat(60), 9]]) {
+for (const [text, version] of [['hello', 1], ['otpauth://totp/Pangmote:HOST-PC?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Pangmote', 6], ['x'.repeat(150), 8], ['가'.repeat(60), 9]]) {
   const q = QR.encode(text), l = layout(q);
   check(`a code of ${Buffer.byteLength(text)} bytes: version ${q.version}, size ${q.size}, finders, timing, dark module, format information`,
     q.version === version && q.size === 17 + 4 * version && l.finders && l.timing && l.darkModule && l.format, JSON.stringify(l));

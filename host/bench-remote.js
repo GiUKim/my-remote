@@ -15,7 +15,7 @@ const { performance } = require('perf_hooks');
 
 let opts = {};
 try { opts = JSON.parse(Buffer.from(process.argv[process.argv.length - 1], 'base64').toString('utf8')); } catch {}
-app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-peer-')));
+app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-peer-')));
 // The answer must carry this machine's real addresses: there is no STUN in an isolated run.
 app.commandLine.appendSwitch('disable-features', ['WebRtcHideLocalIpsWithMdns', ...(opts.disableFeatures || [])].join(','));
 if (opts.trials) app.commandLine.appendSwitch('force-fieldtrials', opts.trials);
@@ -27,7 +27,7 @@ setTimeout(() => { cleanup(); app.exit(3); }, 10 * 60 * 1000);
 
 app.on('window-all-closed', () => {});
 app.whenReady().then(() => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-page-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-page-'));
   let win = null;
   const rl = readline.createInterface({ input: process.stdin });
   rl.on('line', async (line) => {

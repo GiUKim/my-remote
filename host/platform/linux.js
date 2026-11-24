@@ -89,7 +89,7 @@ function open() {
         CLIPBOARD: atom('CLIPBOARD'), XdndSelection: atom('XdndSelection'), WM_STATE: atom('WM_STATE'), WM_CLASS: 67, WM_NAME: 39, STRING: 31,
         _NET_WM_NAME: atom('_NET_WM_NAME'), _NET_WM_WINDOW_TYPE: atom('_NET_WM_WINDOW_TYPE'), _NET_WM_WINDOW_TYPE_DESKTOP: atom('_NET_WM_WINDOW_TYPE_DESKTOP'),
         TARGETS: atom('TARGETS'), INCR: atom('INCR'), URI_LIST: atom('text/uri-list'), UTF8_STRING: atom('UTF8_STRING'),
-        TEXT_UTF8: atom('text/plain;charset=utf-8'), TEXT_PLAIN: atom('text/plain'), DATA: atom('MY_REMOTE_DND_DATA'),
+        TEXT_UTF8: atom('text/plain;charset=utf-8'), TEXT_PLAIN: atom('text/plain'), DATA: atom('PANGMOTE_DND_DATA'),
         XdndAware: atom('XdndAware'), XdndProxy: atom('XdndProxy'), XdndEnter: atom('XdndEnter'), XdndPosition: atom('XdndPosition'),
         XdndStatus: atom('XdndStatus'), XdndLeave: atom('XdndLeave'), XdndDrop: atom('XdndDrop'), XdndFinished: atom('XdndFinished'),
         XdndActionCopy: atom('XdndActionCopy'), ATOM: 4,

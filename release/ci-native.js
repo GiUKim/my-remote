@@ -17,7 +17,7 @@ const strict = process.argv.includes('--strict');
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 let compiler = '';
 try { compiler = execSync('x86_64-w64-mingw32-g++ --version', { encoding: 'utf8' }).split('\n')[0].trim(); } catch { console.log('FAIL  x86_64-w64-mingw32-g++ is not installed (apt install mingw-w64)'); process.exit(1); }
-const work = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-native-'));
+const work = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-native-'));
 let failed = 0;
 for (const rec of fs.readdirSync(path.join(ROOT, 'host', 'bin')).filter((n) => /\.(dll|exe)\.json$/.test(n))) {
   const r = JSON.parse(fs.readFileSync(path.join(ROOT, 'host', 'bin', rec), 'utf8'));

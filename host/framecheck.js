@@ -9,7 +9,7 @@ const input = require('./input');
 
 exports.run = async ({ check, info, guardHb }) => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const win = BrowserWindow.getAllWindows().find((w) => /My Remote Host/.test(w.getTitle()));
+  const win = BrowserWindow.getAllWindows().find((w) => /Pangmote Host/.test(w.getTitle()));
   if (!win) return check('frame check: the host window is there', false, 'not found');
   win.setBounds({ x: 120, y: 120, width: 560, height: 680 });
   win.show(); win.focus();

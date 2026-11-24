@@ -200,7 +200,7 @@ function makeApp(name, builtin, port) {
     build({ out: rel, key: keyFile, dirty: true });
     fs.writeFileSync(conf, JSON.stringify({ feed: '', keys: [PUB], dataRoot: path.join(tmp, 'real-data') }));
     const p = require('./package').pack({ release: rel, out: path.join(tmp, 'pack'), archive: false, config: conf, quiet: true });
-    const exe = path.join(p.dir, process.platform === 'win32' ? 'MyRemote.exe' : 'my-remote');
+    const exe = path.join(p.dir, process.platform === 'win32' ? 'Pangmote.exe' : 'pangmote');
     const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
     // What a failed run said that tells why (the CI log keeps only this test's lines): frames the engine took for
     // out of order (host.js stalled()), the host noticing an encoder that takes none, sessions ending.
@@ -251,7 +251,7 @@ function makeApp(name, builtin, port) {
     const lnk = path.join(tmp, 'shortcuts');
     const sc = spawnSync(exe, [...EXTRA, '--shortcuts=' + lnk], { env, encoding: 'utf8', timeout: 60e3 });
     const made = fs.existsSync(lnk) ? fs.readdirSync(lnk) : [];
-    const entry = process.platform === 'win32' ? 'MyRemote.lnk' : 'my-remote.desktop';
+    const entry = process.platform === 'win32' ? 'Pangmote.lnk' : 'pangmote.desktop';
     check('--shortcuts makes the one entry, which opens the start screen', sc.status === 0 && made.length === 1 && made[0] === entry && fs.statSync(path.join(lnk, entry)).size > 100
       && (process.platform === 'win32' || /--client --launcher/.test(fs.readFileSync(path.join(lnk, entry), 'utf8'))), `exit ${sc.status}: ${made.join(', ')}`);
     // Every file is dated when the package was made: Electron's own come dated 1980-01-01, and Windows keeps
@@ -270,11 +270,11 @@ function makeApp(name, builtin, port) {
     check('names in the package and of the shortcuts: no spaces, ASCII only; the asking start has a profile of its own', odd.length === 0 && fs.existsSync(path.join(tmp, 'launcher')),
       odd.length ? 'not plain: ' + odd.slice(0, 5).join(', ') : `shortcuts ${made.join(', ')}; profile ${fs.existsSync(path.join(tmp, 'launcher')) ? 'next to the data folder' : 'not where expected'}`);
     // Windows shows the program by its version resource (the firewall's prompt, Task Manager): as
-    // MyRemote, not as Electron by GitHub (release/package.js rewrites it; the self-test above ran it).
+    // Pangmote, not as Electron by GitHub (release/package.js rewrites it; the self-test above ran it).
     if (process.platform === 'win32') {
       const vi = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$v = (Get-Item -LiteralPath '${exe.replace(/'/g, "''")}').VersionInfo; "$($v.FileDescription)|$($v.ProductName)|$($v.CompanyName)"`], { encoding: 'utf8', timeout: 30e3 });
       const shown = String(vi.stdout || '').trim();
-      check('Windows names the program MyRemote (its version resource), not Electron by GitHub', shown === 'MyRemote|MyRemote|MyRemote', shown || String(vi.stderr || '').trim());
+      check('Windows names the program Pangmote (its version resource), not Electron by GitHub', shown === 'Pangmote|Pangmote|Pangmote', shown || String(vi.stderr || '').trim());
     }
   }
 

@@ -1,4 +1,4 @@
-// My Remote client app. Its first window is the list of the PCs this one can connect to (home.html, kept
+// Pangmote client app. Its first window is the list of the PCs this one can connect to (home.html, kept
 // by hosts.js); each PC opens in a window of its own, so several can be watched and used side by side,
 // whatever they run. A PC's window is a thin shell around the same client page a browser uses: it loads
 // the loader file, which fetches the current page from that host, so the page needs no update of this
@@ -31,7 +31,7 @@ const argOf = (name) => (process.argv.find((a) => a.startsWith(name)) || '').sli
 // app ends (a look at the list with made-up PCs; an entry of home-import.json may then say what its PC
 // "said": seen: { os, name, pc, monitors }, lastAt; --home-size=<w>x<h>, --home-js=<code to run first>).
 // --launcher: the start screen first (launcher.html: two big buttons, this PC shared as the host or
-// another PC reached as the client), which the one "MyRemote" entry opens (host/appsync.js).
+// another PC reached as the client), which the one "Pangmote" entry opens (host/appsync.js).
 const LAUNCHER = process.argv.includes('--launcher');
 const loaderArg = argOf('--loader='), listTest = !!loaderArg && process.argv.includes('--list');
 const alt = listTest ? '' : loaderArg;
@@ -55,7 +55,7 @@ shell.setLocalHost(() => {
     return typeof r.instance === 'string' && /^[A-Za-z0-9_-]{8,40}$/.test(r.instance) ? r.instance : '';
   } catch { return ''; }
 });
-const LOADER = alt || homeAlt ? path.resolve(alt || homeAlt) : path.join(__dirname, '..', 'my-remote-client.html');
+const LOADER = alt || homeAlt ? path.resolve(alt || homeAlt) : path.join(__dirname, '..', 'pangmote-client.html');
 
 // The installed app (started by app/boot.js, see host/main.js): the shell finds and installs updates of
 // the app itself - these files, which the host cannot send as it does the page. Here the person is
@@ -67,14 +67,14 @@ const APP = global.__mrApp || null;
 // This PC's choice, kept with the host's in host/settings.js (either face changes it, both follow), else the
 // system's. The start screen and the list read and set it (i18n:*), a PC's window through mrShell (lang, setLang,
 // onLang: the page that host sent has its texts from the loader and that host); every window hears of a change at
-// once. The test runs show Korean, which their checks read, unless MY_REMOTE_LANG names another.
+// once. The test runs show Korean, which their checks read, unless PANGMOTE_LANG (or MY_REMOTE_LANG) names another.
 const I18N = require('../host/i18n');
 const settings = require('../host/settings');
 const CLIENT_STRINGS = (() => { try { return require('../host/i18n/client.json'); } catch { return {}; } })();
 let langStore = null, LANG = 'ko', t = I18N.translator('ko'), langReady = false;
 const langFile = () => langStore || (langStore = settings.create(settings.fileFor(app, testDir ? app.getPath('userData') : '')));
 function systemLang() {
-  if (process.env.MY_REMOTE_LANG) return I18N.normalize(process.env.MY_REMOTE_LANG) || 'en';
+  if (settings.testLang()) return I18N.normalize(settings.testLang()) || 'en';
   if (testDir) return 'ko';
   let prefs = [];
   try { prefs = app.getPreferredSystemLanguages(); } catch {}
@@ -132,7 +132,7 @@ function watchUpdates(win) {
     }
     const r = await dialog.showMessageBox(parent, { type: 'question', noLink: true, buttons: [t('지금 업데이트'), t('나중에')], defaultId: 0, cancelId: 1,
       message: t('새 버전 {0}이 있습니다. 지금 업데이트할까요?', a.version), detail: `${notes(a)}\n\n${t('업데이트하면 앱이 다시 시작됩니다. 원격 접속 중이면 다시 연결해야 합니다. 이 PC의 호스트도 같은 버전이 됩니다(켜져 있으면 원격 접속이 없을 때 다시 시작합니다). (현재 v{0})', APP.version)}`.trim() });
-    if (r.response === 0) u.install().catch((e) => dialog.showErrorBox('My Remote', t('업데이트하지 못했습니다: {0}', e.message)));
+    if (r.response === 0) u.install().catch((e) => dialog.showErrorBox('Pangmote', t('업데이트하지 못했습니다: {0}', e.message)));
   };
   u.onChange((s) => { if (s.state === 'available') offerUpdate(s.available, false); });
   u.setCanRestart(async (s) => {
@@ -157,7 +157,7 @@ function single() {
   app.whenReady().then(() => {
     initLang();
     const win = new BrowserWindow({
-      width: 1280, height: 800, title: 'My Remote' + (APP ? ` ${APP.version}` : ''), autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
+      width: 1280, height: 800, title: 'Pangmote' + (APP ? ` ${APP.version}` : ''), autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
       webPreferences: { preload: shell.PRELOAD, backgroundThrottling: false },
     });
     shell.attach(win);
@@ -195,13 +195,13 @@ function listMode() {
   let home = null;
 
   const changed = () => { if (home && !home.isDestroyed()) home.webContents.send('home:changed'); };
-  const titleOf = (h) => `${h.name || h.pc || t('이름 없는 PC')} · My Remote`;
+  const titleOf = (h) => `${h.name || h.pc || t('이름 없는 PC')} · Pangmote`;
   const retitle = (id) => { const w = open.get(id), h = hosts.get(id); if (w && !w.isDestroyed() && h) w.setTitle(titleOf(h)); };
 
   function showHome() {
     if (home && !home.isDestroyed()) { if (home.isMinimized()) home.restore(); home.show(); home.focus(); return home; }
     home = new BrowserWindow({
-      width: 940, height: 660, minWidth: 520, minHeight: 420, show: false, title: 'My Remote', autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
+      width: 940, height: 660, minWidth: 520, minHeight: 420, show: false, title: 'Pangmote', autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
       webPreferences: { preload: path.join(__dirname, 'home-preload.js') },
     });
     home.setMenuBarVisibility(false);
@@ -219,7 +219,7 @@ function listMode() {
   function showLauncher() {
     if (launcher && !launcher.isDestroyed()) { if (launcher.isMinimized()) launcher.restore(); launcher.show(); launcher.focus(); return launcher; }
     launcher = new BrowserWindow({
-      width: 760, height: 470, minWidth: 640, minHeight: 440, show: false, title: 'My Remote', autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
+      width: 760, height: 470, minWidth: 640, minHeight: 440, show: false, title: 'Pangmote', autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
       webPreferences: { preload: path.join(__dirname, 'launcher-preload.js') },
     });
     launcher.setMenuBarVisibility(false);
@@ -232,7 +232,7 @@ function listMode() {
   }
   const dataHome = () => process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
   const entryOpts = () => ({ appData: app.getPath('appData'), dataHome: dataHome(), execPath: process.execPath, iconDir: APP ? path.dirname(require.main.filename) : path.join(__dirname, '..', 'app'),
-    writeLink: (f, op, o) => openWith.writeShortcutLink(f, op, o) });
+    writeLink: (f, op, o) => openWith.writeShortcutLink(f, op, o), readLink: (f) => openWith.readShortcutLink(f) });
   // The host, as a program of its own (its window, tray and profile; a second start only brings it forward).
   // The installed app is told --host; on Linux through its launcher script, which brings the checks and the
   // sandbox switch. From a source folder Electron is given the host folder. Not in a test (--loader).
@@ -244,9 +244,9 @@ function listMode() {
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
     const o = { env, detached: true, stdio: 'ignore' };
-    const sh = path.join(path.dirname(process.execPath), 'my-remote.sh');
+    const sh = appsync.launcherOf(process.execPath); // pangmote.sh (my-remote.sh in a folder of a package before 0.10.0)
     if (!APP) spawn(process.execPath, [path.join(__dirname, '..', 'host')], o).unref();
-    else if (process.platform === 'linux' && fs.existsSync(sh)) spawn(sh, ['--host'], o).unref();
+    else if (process.platform === 'linux' && sh) spawn(sh, ['--host'], o).unref();
     else spawn(process.execPath, ['--host', ...process.argv.filter((a) => a === '--no-sandbox')], o).unref();
   }
   // Versions are x.y.z (release/build.js); anything else counts as not older.
@@ -406,7 +406,7 @@ function listMode() {
     const width = Math.min(1280, area.width), height = Math.min(800, area.height);
     const win = new BrowserWindow({
       width, height, x: area.x + Math.max(0, Math.round((area.width - width) / 2)), y: area.y + Math.max(0, Math.round((area.height - height) / 2)),
-      title: t('1회용 접속') + ' · My Remote', autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
+      title: t('1회용 접속') + ' · Pangmote', autoHideMenuBar: true, backgroundColor: '#14171c', icon: shell.ICON,
       webPreferences: { preload: shell.PRELOAD, backgroundThrottling: false, partition: 'onetime-' + (++codeWins) },
     });
     win.on('page-title-updated', (e) => e.preventDefault());
@@ -428,9 +428,16 @@ function listMode() {
   // Packages up to 0.5.x made two shortcuts (host, client): the one entry takes their place, at the start
   // and when another start reaches this running app (an older shell's first-start dialog makes the two
   // again when its box is ticked, then starts this face: see oneEntry in host/main.js). Never in a test.
+  // The program by its new name in a folder of an older package's place (0.10.0): the entry and the person's
+  // shortcuts to MyRemote.exe start Pangmote.exe now (appsync.retarget).
   function oneEntry() {
     if (!APP || testDir) return;
-    try { const r = appsync.unifyShortcuts(entryOpts()); if (r.made.length) console.log('[client] shortcuts: one entry ' + r.made.join(', ')); } catch (e) { console.error('[client] shortcuts', e.message); }
+    try {
+      const r = appsync.unifyShortcuts(entryOpts());
+      if (r.made.length) console.log('[client] shortcuts: one entry ' + r.made.join(', '));
+      const moved = appsync.retarget({ ...entryOpts(), desktop: app.getPath('desktop'), mark: path.join(app.getPath('userData'), 'shortcuts-retargeted.json') });
+      if (moved.length) console.log('[client] shortcuts to MyRemote.exe now start ' + path.basename(process.execPath) + ': ' + moved.join(', '));
+    } catch (e) { console.error('[client] shortcuts', e.message); }
   }
   // Started again: the list comes forward, or the start screen when that is what was started (the entry).
   app.on('second-instance', (_e, argv) => { oneEntry(); return Array.isArray(argv) && argv.includes('--launcher') ? showLauncher() : showHome(); });

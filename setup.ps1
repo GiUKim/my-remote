@@ -69,7 +69,7 @@ if (-not (Test-Path $electron)) { throw 'Electron was not installed (node_module
 
 if (-not $SkipSelfTest) {
     Write-Host '[setup] Running local self-test (about 1 minute; captures the screen locally, sends nothing out)'
-    $log = Join-Path $env:TEMP 'my-remote-selftest.log'
+    $log = Join-Path $env:TEMP 'pangmote-selftest.log'
     $p = Start-Process -FilePath $electron -ArgumentList "`"$hostDir`"", '--selftest' -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
     $null = $p.Handle
     if (-not $p.WaitForExit(240000)) { $p.Kill(); throw 'Self-test timed out' }
@@ -82,4 +82,4 @@ Write-Host '[setup] Done.'
 Write-Host '  Start the host : start-host.bat   (the first run may show a Windows Firewall prompt)'
 Write-Host '  Try it locally : local-test.bat   (view-only, no internet traffic)'
 Write-Host '  Client app     : start-client.bat      (on the PC you connect FROM; one-click multi-monitor layout)'
-Write-Host '  Client, no install: my-remote-client.html (open in Chrome or Edge on the other PC)'
+Write-Host '  Client, no install: pangmote-client.html (open in Chrome or Edge on the other PC)'

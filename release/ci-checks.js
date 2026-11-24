@@ -5,7 +5,7 @@
 //
 //  - syntax: every tracked .js file, and the scripts of the built client page and loader;
 //  - every tracked .json file parses;
-//  - my-remote-client.html is what host/build-client.js makes now (a change to the loader or signal.js
+//  - pangmote-client.html is what host/build-client.js makes now (a change to the loader or signal.js
 //    must come with the rebuilt file, which users keep);
 //  - names: tracked paths are ASCII without spaces (the plain-names rule, see CLAUDE.md);
 //  - committed native binaries have a record whose source hash is the source's now (the hash of the
@@ -44,7 +44,7 @@ const pass = (what) => console.log(`PASS  ${what}`);
     const scripts = [...text.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
     scripts.forEach((s, i) => { try { new Function(s); } catch (e) { bad.push(`${name}, script ${i + 1}: ${e.message}`); } });
   }
-  for (const f of tracked.filter((n) => /\.html$/.test(n) && !/template/.test(n) && n !== 'my-remote-client.html')) {
+  for (const f of tracked.filter((n) => /\.html$/.test(n) && !/template/.test(n) && n !== 'pangmote-client.html')) {
     const text = fs.readFileSync(path.join(ROOT, f), 'utf8');
     [...text.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].forEach((m, i) => { try { new Function(m[1]); } catch (e) { bad.push(`${f}, script ${i + 1}: ${e.message}`); } });
   }
@@ -62,9 +62,9 @@ const pass = (what) => console.log(`PASS  ${what}`);
 {
   const builder = require(path.join(ROOT, 'host', 'build-client.js'));
   const want = builder.buildLoader('https://ntfy.sh').replace(/\r\n/g, '\n');
-  const have = fs.readFileSync(path.join(ROOT, 'my-remote-client.html'), 'utf8').replace(/\r\n/g, '\n');
-  if (want !== have) fail('my-remote-client.html is the loader built from the sources', 'run: cd host && npm run build-client (and give users the new file: see CLAUDE.md)');
-  else pass('my-remote-client.html is the loader built from the sources');
+  const have = fs.readFileSync(path.join(ROOT, 'pangmote-client.html'), 'utf8').replace(/\r\n/g, '\n');
+  if (want !== have) fail('pangmote-client.html is the loader built from the sources', 'run: cd host && npm run build-client (and give users the new file: see CLAUDE.md)');
+  else pass('pangmote-client.html is the loader built from the sources');
   // The web page (docs/index.html on GitHub Pages) uses a copy of the app's translator and flag picker.
   const norm = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8').replace(/\r\n/g, '\n');
   if (!fs.existsSync(path.join(ROOT, 'docs', 'i18n.js')) || norm('docs/i18n.js') !== norm('host/i18n.js')) fail('docs/i18n.js is host/i18n.js', 'run: cd host && npm run build-client');

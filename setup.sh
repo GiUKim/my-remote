@@ -8,7 +8,8 @@
 #    verified), as setup.ps1 does on Windows. Ubuntu's own nodejs package is too old (22.04: 12, 24.04: 18).
 # 2. Runs npm install in ./host (Electron, koffi) and fetches Electron's program.
 # 3. Where Chromium's sandbox is restricted (Ubuntu 23.10 and later), offers to install its helper (sudo).
-# 4. Adds "My Remote Host" and "My Remote Client" to this user's app menu.
+# 4. Adds "Pangmote Host" and "Pangmote Client" to this user's app menu (in place of "My Remote Host" and
+#    "My Remote Client", which this folder's setup added before the program was renamed in 0.10.0).
 # 5. Runs the self-test. It is fully local: no internet traffic, throwaway key, no input injected.
 # --hold: in a terminal window of its own (a start from the file manager), wait before it closes.
 set -euo pipefail
@@ -22,7 +23,7 @@ if [ "$(uname -s)" != "Linux" ]; then
   echo "[setup] This script is for Linux. On Windows run setup.ps1." >&2
   exit 1
 fi
-[ -n "${MY_REMOTE_SETUP_MARK:-}" ] && echo started > "$MY_REMOTE_SETUP_MARK" # the launcher's terminal window did run this
+[ -n "${PANGMOTE_SETUP_MARK:-}" ] && echo started > "$PANGMOTE_SETUP_MARK" # the launcher's terminal window did run this
 tmp=""
 finish() {
   local status=$?
@@ -33,7 +34,7 @@ finish() {
 }
 trap finish EXIT
 
-# Node.js >= 22.12 with npm. MY_REMOTE_NODE_DIST points the download elsewhere (tests).
+# Node.js >= 22.12 with npm. PANGMOTE_NODE_DIST (or MY_REMOTE_NODE_DIST) points the download elsewhere (tests).
 nodedir="$root/tools/node"
 node_ok() { [ -n "$1" ] && [ -x "$1" ] && [ "$("$1" -p 'const [a, b] = process.versions.node.split(".").map(Number); a > 22 || (a === 22 && b >= 12) ? 1 : 0' 2>/dev/null)" = 1 ]; }
 fetch() { # url file: curl, or wget (what a fresh Ubuntu desktop has)
@@ -52,7 +53,7 @@ elif ! { command -v npm >/dev/null 2>&1 && node_ok "$(command -v node 2>/dev/nul
     x86_64) arch=x64 ;; aarch64|arm64) arch=arm64 ;; armv7l) arch=armv7l ;;
     *) echo "[setup] There is no portable Node.js for this processor ($(uname -m)): install Node.js 22.12 or newer with npm, then run this again." >&2; exit 1 ;;
   esac
-  dist="${MY_REMOTE_NODE_DIST:-https://nodejs.org/dist}/latest-v22.x"
+  dist="${PANGMOTE_NODE_DIST:-${MY_REMOTE_NODE_DIST:-https://nodejs.org/dist}}/latest-v22.x"
   echo "[setup] Node.js 22.12 or newer not found (found: $(node -v 2>/dev/null || echo none)) - downloading portable Node 22 LTS into tools/node"
   mkdir -p "$root/tools"
   tmp="$(mktemp -d "$root/tools/.node-download.XXXXXX")"
@@ -90,13 +91,13 @@ echo "[setup] npm install (downloads Electron, about 100 MB)"
 need_electron
 
 # Ubuntu 23.10 and later: Chromium's sandbox needs its helper installed by root. Asked here, once.
-if ! sandbox_ok && [ "${MY_REMOTE_NO_SANDBOX:-}" != 1 ] && [ -t 0 ]; then
+if ! sandbox_ok && [ "$no_sandbox" != 1 ] && [ -t 0 ]; then
   echo "[setup] This system restricts what Chromium's sandbox needs (Ubuntu 23.10 and later). Electron's"
   echo "        sandbox helper can be installed once with sudo (recommended); otherwise the programs must"
-  echo "        be started with MY_REMOTE_NO_SANDBOX=1 (without the sandbox)."
+  echo "        be started with PANGMOTE_NO_SANDBOX=1 (without the sandbox)."
   read -r -p "[setup] Install the sandbox helper now with sudo? [Y/n] " answer || answer=n
   case "$answer" in
-    [Nn]*) echo "[setup] Not installed. Start the programs with MY_REMOTE_NO_SANDBOX=1 in front, e.g. MY_REMOTE_NO_SANDBOX=1 ./start-host.sh" ;;
+    [Nn]*) echo "[setup] Not installed. Start the programs with PANGMOTE_NO_SANDBOX=1 in front, e.g. PANGMOTE_NO_SANDBOX=1 ./start-host.sh" ;;
     *) sudo chown root:root "$sandbox_helper" && sudo chmod 4755 "$sandbox_helper" && echo "[setup] Sandbox helper installed." ;;
   esac
 fi
@@ -108,11 +109,14 @@ case "$root" in
   *)
     if mkdir -p "$apps" 2>/dev/null; then
       for kind in host client; do
-        if [ "$kind" = host ]; then title="My Remote Host"; what="Lets another PC see and control this PC"; else title="My Remote Client"; what="Shows and controls another PC"; fi
+        if [ "$kind" = host ]; then title="Pangmote Host"; what="Lets another PC see and control this PC"; else title="Pangmote Client"; what="Shows and controls another PC"; fi
         printf '%s\n' '[Desktop Entry]' 'Type=Application' "Name=$title" "Comment=$what" "Exec=\"$root/start-$kind.sh\"" \
-          "Icon=$root/host/icon.svg" 'Terminal=false' 'Categories=Network;RemoteAccess;' > "$apps/my-remote-$kind.desktop"
+          "Icon=$root/host/icon.svg" 'Terminal=false' 'Categories=Network;RemoteAccess;' > "$apps/pangmote-$kind.desktop"
+        # The entry of the old name, when it is this folder's own (another folder's stays).
+        old="$apps/my-remote-$kind.desktop"
+        if [ -f "$old" ] && grep -qF "Exec=\"$root/start-$kind.sh\"" "$old"; then rm -f "$old"; fi
       done
-      echo "[setup] Added \"My Remote Host\" and \"My Remote Client\" to the app menu ($apps)"
+      echo "[setup] Added \"Pangmote Host\" and \"Pangmote Client\" to the app menu ($apps)"
     fi
     ;;
 esac
@@ -120,7 +124,7 @@ esac
 if [ "$skip" = 0 ]; then
   check_session
   check_sandbox
-  log="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/my-remote-selftest.log"
+  log="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/pangmote-selftest.log"
   echo "[setup] Running local self-test (about 1 minute; captures the screen locally, sends nothing out)"
   status=0
   (umask 077; timeout 300 "$electron" "${sandbox_args[@]}" "$root/host" --selftest >"$log" 2>&1) || status=$?
@@ -133,8 +137,8 @@ fi
 
 echo
 echo "[setup] Done."
-if [ "${MY_REMOTE_FROM_LAUNCHER:-}" = 1 ]; then exit 0; fi # the launcher that ran this starts the program now
-echo "  Start the host : ./start-host.sh    (or \"My Remote Host\" in the app menu)"
+if [ "${PANGMOTE_FROM_LAUNCHER:-}" = 1 ]; then exit 0; fi # the launcher that ran this starts the program now
+echo "  Start the host : ./start-host.sh    (or \"Pangmote Host\" in the app menu)"
 echo "  Try it locally : ./local-test.sh    (view-only, no internet traffic)"
-echo "  Client app     : ./start-client.sh  (on the PC you connect FROM; or \"My Remote Client\" in the app menu)"
-echo "  Client, no install: my-remote-client.html (open in Chrome, Edge or Chromium on the other PC)"
+echo "  Client app     : ./start-client.sh  (on the PC you connect FROM; or \"Pangmote Client\" in the app menu)"
+echo "  Client, no install: pangmote-client.html (open in Chrome, Edge or Chromium on the other PC)"

@@ -32,9 +32,13 @@ const PROTOCOL = 1; // ASSIST_PROTOCOL in native/winassist.cpp
 // from before 2026-11-18 answers three bytes and its helper gets the primary monitor's pictures only ('F'),
 // as before (it would end on a 'V').
 const CAP_MONITORS = 0x4d;
-const SERVICE = 'MyRemoteAssist';
+// The service and the folder its program runs from. Up to 0.9.x the program was called My Remote and so were they:
+// a PC whose service was installed then keeps it (the pipes above kept their names, the protocol is the same)
+// until the host window's card updates it, which installs this one and removes that one (winassist.exe install).
+const SERVICES = [{ name: 'PangmoteAssist', folder: 'Pangmote' }, { name: 'MyRemoteAssist', folder: 'MyRemote' }];
+let found = SERVICES[0]; // the one serviceState() found last (the new one when there is none)
 const BUNDLED = path.join(__dirname, 'bin', 'winassist.exe');
-const installedPath = () => path.join(process.env.ProgramFiles || 'C:\\Program Files', 'MyRemote', 'winassist.exe');
+const installedPath = (s = found) => path.join(process.env.ProgramFiles || 'C:\\Program Files', s.folder, 'winassist.exe');
 const log = (s) => console.log('[assist] ' + s);
 const supported = process.platform === 'win32';
 // release/test-assist.js and the self-test only: other pipe names, the session the control pipe's server
@@ -164,15 +168,20 @@ class Pipe {
 }
 
 // ---- installed, running, current ------------------------------------------------------------
-function serviceState() { // 'none' | 'stopped' | 'running' | 'other'
+function serviceState() { // 'none' | 'stopped' | 'running' | 'other'; sets `found`
+  found = SERVICES[0];
   if (T.serviceState) return T.serviceState();
   const k = win();
   const scm = k.OpenSCManagerW(0, 0, 0x0001 /* SC_MANAGER_CONNECT */);
   if (!scm) return 'none';
   try {
-    const svc = k.OpenServiceW(scm, SERVICE, 0x0004 /* SERVICE_QUERY_STATUS */);
-    if (!svc) return 'none';
-    try { const st = {}; return k.QueryServiceStatus(svc, st) ? (st.state === 4 ? 'running' : st.state === 1 ? 'stopped' : 'other') : 'other'; } finally { k.CloseServiceHandle(svc); }
+    for (const s of SERVICES) {
+      const svc = k.OpenServiceW(scm, s.name, 0x0004 /* SERVICE_QUERY_STATUS */);
+      if (!svc) continue;
+      found = s;
+      try { const st = {}; return k.QueryServiceStatus(svc, st) ? (st.state === 4 ? 'running' : st.state === 1 ? 'stopped' : 'other') : 'other'; } finally { k.CloseServiceHandle(svc); }
+    }
+    return 'none';
   } finally { k.CloseServiceHandle(scm); }
 }
 function sameFile(a, b) {

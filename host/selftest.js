@@ -296,7 +296,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     if (dump && b) fs.writeFileSync(dump.split('=')[1], nativeImage.createFromBitmap(b.bgra, { width: b.width, height: b.height }).resize({ width: b.width * 6, quality: 'nearest' }).toPNG());
   }
 
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-client-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-client-'));
   const file = path.join(dir, 'client.html');
   fs.writeFileSync(file, buildClientHtml());
   await sleep(2500); // let the host subscribe first
@@ -689,7 +689,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     {
       const crypto = require('crypto');
       const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
-      const src = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-dragsrc-')), dst = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-dragdst-'));
+      const src = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-dragsrc-')), dst = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-dragdst-'));
       const big = path.join(src, 'big file \ud55c\uae00.bin'), small = path.join(src, 'note.txt');
       fs.writeFileSync(big, crypto.randomBytes(3 * 1024 * 1024 + 123));
       fs.writeFileSync(small, 'hello drag\n');
@@ -872,7 +872,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     // under the host's inbox (a local trial never drops or pastes them). Names from the client can
     // never leave the transfer's folder, a file that sends more than it announced is refused.
     {
-      const inbox = path.join(os.tmpdir(), 'my-remote-in');
+      const inbox = path.join(os.tmpdir(), 'pangmote-in');
       const shaOf = (file) => require('crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex');
       const before = new Set(fs.existsSync(inbox) ? fs.readdirSync(inbox) : []);
       const r = await js(`(async () => {
@@ -918,7 +918,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     if (process.argv.includes('--clip-check')) {
       const keep = await keepTextClipboard(['text/plain', 'text/html']);
       if (keep) {
-        const cdir = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-clipfiles-'));
+        const cdir = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-clipfiles-'));
         const a = path.join(cdir, 'copied-a.bin'), b = path.join(cdir, 'copied-b.txt');
         fs.writeFileSync(a, require('crypto').randomBytes(200000)); fs.writeFileSync(b, 'copied on the host\n');
         const shaOf = (f) => require('crypto').createHash('sha256').update(fs.readFileSync(f)).digest('hex');
@@ -935,8 +935,8 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
             && files.some((f) => f.name === 'copied-a.bin' && f.sha === shaOf(a)) && files.some((f) => f.name === 'copied-b.txt' && f.sha === shaOf(b)),
             `announced ${!!noted}, received ${files.map((f) => f.name).join(', ') || 'nothing'}`);
           // Files the client sent itself (a paste: they lie in the host's inbox) are not announced back.
-          fs.mkdirSync(path.join(os.tmpdir(), 'my-remote-in'), { recursive: true });
-          idir = fs.mkdtempSync(path.join(os.tmpdir(), 'my-remote-in', 'selftest-'));
+          fs.mkdirSync(path.join(os.tmpdir(), 'pangmote-in'), { recursive: true });
+          idir = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-in', 'selftest-'));
           const c = path.join(idir, 'from-client.txt');
           fs.writeFileSync(c, 'sent by the client\n');
           const notes1 = (await state()).xfer.clipNotes;
@@ -1672,7 +1672,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
           `after: ${JSON.stringify(s3)}; devices ${devicesBefore} -> ${devicesAfter}`);
 
         // 자동 허용 on the card (the user's wish, 2026-11-20): off for a new code, and the card's text says that the
-        // host window will ask (no longer naming my-remote-client.html); turned on, the text says it connects at once,
+        // host window will ask (no longer naming the loader file, pangmote-client.html or my-remote-client.html before); turned on, the text says it connects at once,
         // the first page with the code comes in without being asked (no card here, no question there), a second is
         // turned away as before, the access log has it as approved 'auto', and the switch is gone once it is used.
         await idle();
@@ -1694,7 +1694,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         await qa.guntil((x) => x.state !== 'connected', 15);
         await qa.close();
         check('one-time code with 자동 허용: off for a new code, turned on the first page comes in without being asked, a second is turned away, the card says which way it is',
-          !offFirst.auto && offFirst.checked === 'false' && offFirst.shown && /이 창에 허용 카드가 뜹니다/.test(offFirst.text) && !/my-remote-client/.test(offFirst.text) &&
+          !offFirst.auto && offFirst.checked === 'false' && offFirst.shown && /이 창에 허용 카드가 뜹니다/.test(offFirst.text) && !/(pangmote|my-remote)-client/.test(offFirst.text) &&
           onNow.auto && onNow.checked === 'true' && /바로 연결됩니다/.test(onNow.text) && inA && !askedA && !cardA.shown && usedA && autoLog && !afterUse.shown,
           JSON.stringify({ offFirst, onNow, inA, askedA, card: cardA.shown, second: ub && ub.denied, autoLog, afterUse: afterUse.shown }));
       }

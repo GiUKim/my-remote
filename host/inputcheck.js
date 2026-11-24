@@ -175,7 +175,7 @@ exports.run = async ({ check, info, js, until, dragOut, native }) => {
 
     // Files from the client dropped where the host's pointer is, as a drag from another program would
     // (dropFiles: the XDND source of platform/linux.js); a GTK 3 window and Nautilus speak the same protocol.
-    const dropDir = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-dropin-x11-')), dropFile = path.join(dropDir, 'dropped-in.txt');
+    const dropDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-dropin-x11-')), dropFile = path.join(dropDir, 'dropped-in.txt');
     fs.writeFileSync(dropFile, 'dropped by the host\n');
     try {
       moveTo(mid.x, mid.y); await sleep(200);
@@ -191,8 +191,8 @@ exports.run = async ({ check, info, js, until, dragOut, native }) => {
 
   // ---- D ----
   const text = 'dragged ' + crypto.randomBytes(4).toString('hex');
-  const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-dragsrc-'));
-  fs.writeFileSync(path.join(srcDir, 'package.json'), JSON.stringify({ name: 'myremote-dragsource', main: 'main.js', private: true }));
+  const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-dragsrc-'));
+  fs.writeFileSync(path.join(srcDir, 'package.json'), JSON.stringify({ name: 'pangmote-dragsource', main: 'main.js', private: true }));
   fs.writeFileSync(path.join(srcDir, 'main.js'), DRAG_SOURCE.replace('__TEXT__', JSON.stringify(text)));
   fs.writeFileSync(path.join(srcDir, 'preload.js'), DRAG_SOURCE_PRELOAD);
   const fileText = crypto.randomBytes(3000).toString('hex');
@@ -239,7 +239,7 @@ exports.run = async ({ check, info, js, until, dragOut, native }) => {
 
     // ---- E ----
     const shell = require('../client/shell');
-    const desk = app.getPath('desktop'), stand = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-desktop-'));
+    const desk = app.getPath('desktop'), stand = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-desktop-'));
     const sw = new BrowserWindow({ show: false, webPreferences: { preload: shell.PRELOAD, partition: 'input-check' } }); // its own session: attach() sets permission handlers
     try {
       app.setPath('desktop', stand);

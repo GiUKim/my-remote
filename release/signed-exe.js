@@ -1,4 +1,4 @@
-// The Windows program (MyRemote.exe) as SignPath signed it (Authenticode, certificate of the SignPath
+// The Windows program (Pangmote.exe) as SignPath signed it (Authenticode, certificate of the SignPath
 // Foundation; .github/workflows/sign.yml asks for it), checked before a package takes it in place of the
 // unsigned one that release/package.js makes (Electron's electron.exe with its version resource rewritten,
 // brandExe). The same Electron gives the same bytes, so one signed copy serves every release until Electron
@@ -9,7 +9,7 @@
 //   - the certificate table is the end of the file;
 //   - Windows says that the signature is valid, by the expected signer and timestamped (so it stays valid
 //     after the certificate expires): PowerShell's Get-AuthenticodeSignature, the system's own check.
-//   node release/signed-exe.js <signed MyRemote.exe> <unsigned MyRemote.exe> [--signer=<name>]
+//   node release/signed-exe.js <signed Pangmote.exe> <unsigned Pangmote.exe> [--signer=<name>]
 'use strict';
 const fs = require('fs');
 const path = require('path');

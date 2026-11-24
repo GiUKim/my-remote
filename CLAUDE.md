@@ -1,6 +1,7 @@
 # CLAUDE.md
 
-Personal P2P remote desktop for Windows, and for Linux with an X11 session (see "Linux (X11)" under
+**Pangmote** (called My Remote up to 0.9.x; renamed 2026-11-24, see "The name" below): personal P2P remote
+desktop for Windows, and for Linux with an X11 session (see "Linux (X11)" under
 Gotchas). `host/` is an Electron app that captures every monitor and
 injects input; the client is a single HTML file opened in Chrome/Edge on another PC. Media and input
 flow peer-to-peer over WebRTC; a public ntfy server is used only to exchange encrypted handshake
@@ -24,7 +25,7 @@ When the user asks you to set this up, do the following in order.
    On Linux (X11 session) run `./setup.sh` instead: the same, Node 22 LTS into `tools/node` when none
    >= 22.12 with npm is on PATH (from nodejs.org's `latest-v22.x`, SHA-256 checked against its list;
    curl or wget), plus an offer to install Chromium's sandbox helper with sudo where Ubuntu 23.10+
-   restricts the sandbox, and "My Remote Host"/"My Remote Client" entries in the user's app menu. The
+   restricts the sandbox, and "Pangmote Host"/"Pangmote Client" entries in the user's app menu. The
    person can skip it: `start-host.sh`/`start-client.sh` run it (without the self-test) on their first
    start, in a terminal window of their own when started from the file manager.
 3. **Check the result.** Success is `[selftest] ALL PASS` and exit code 0. `INFO` lines are not
@@ -36,7 +37,7 @@ When the user asks you to set this up, do the following in order.
    host connects the PC to an external server and makes it reachable with the key, so that step is the
    user's decision and action. Tell them a Windows Firewall prompt may appear on first run.
 5. **Hand over the usage steps** from README.md "사용 방법": copy the key from the host window into a
-   password manager, take `my-remote-client.html` to the other PC, leave the PC unlocked with sleep
+   password manager, take `pangmote-client.html` to the other PC, leave the PC unlocked with sleep
    disabled.
 
 If the user only wants to see it working, run or point them to `local-test.bat` (same isolation as the
@@ -55,7 +56,7 @@ the client app instead).
   `키 복사` button, or, on a Linux PC reached over ssh, reads it in their own terminal with
   `./start-host.sh --show-key`. Never run `--show-key` yourself, in any form and on any machine: its
   output is the key.
-- **Never bake a key into `my-remote-client.html`.** The committed client contains no key by design.
+- **Never bake a key into `pangmote-client.html`** (or a copy of the old name, `my-remote-client.html`). The committed client contains no key by design.
 - **The client app's list of PCs holds keys too.** `%APPDATA%\my-remote-client\hosts.json` (Linux:
   `~/.config/my-remote-client/hosts.json`) has the access key of every PC the person added, and
   `tokens.json` next to it the device tokens, encrypted like the host's own: never read or decrypt them,
@@ -67,7 +68,7 @@ the client app instead).
   has one reaches that host as that device. Never read or decrypt it, nor its `devices.json.bad-<time>`
   copies. `access.log` next to it holds no secret (times, device names, addresses); reading the person's
   is reading where they connect from, so only when they ask.
-- **Keep the loader and its bootstrap protocol stable.** `my-remote-client.html` is a loader that users
+- **Keep the loader and its bootstrap protocol stable.** `pangmote-client.html` (`my-remote-client.html` up to 0.9.x) is a loader that users
   receive once and keep; old copies stay in use. Changing the `ver`/`app` exchange, the key derivation
   or the signaling format in `signal.js` strands them. New behaviour belongs in
   `client.template.html`, which the host serves and which therefore updates by itself.
@@ -95,15 +96,16 @@ the client app instead).
   pane and a real folder of the user's was dragged (nothing was changed; see Gotchas). So does
   `--input-check` (Linux: moves the pointer, clicks, scrolls and types into windows and a second
   program it opens itself): on a virtual display (Xvfb) only, or after the user agreed.
-- **Never read, print, copy or commit the release signing key** (`~/.my-remote-release/update-signing-key.pem`,
-  or wherever `--key` / `MY_REMOTE_RELEASE_KEY` points). Whoever has it can send code to every installed
+- **Never read, print, copy or commit the release signing key** (`~/.my-remote-release/update-signing-key.pem`
+  on the PC that makes releases, made before the rename; `~/.pangmote-release/` for a key made after; or wherever
+  `--key` / `PANGMOTE_RELEASE_KEY` / `MY_REMOTE_RELEASE_KEY` points). Whoever has it can send code to every installed
   app. `release/build.js` signs with it and `release/keygen.js` makes it; nothing else touches it, and
   it stays on the machine that makes releases. The tests make keys of their own.
 - **Code signing goes through SignPath only** (the user's choice, 2026-11-24: SignPath Foundation's free
   certificate for open source, MIT licence; README "Code signing policy", `PRIVACY.md`). Never read, print or
   set the SignPath API token (the repository secret `SIGNPATH_API_TOKEN`), never ask the user to paste it, and
   never approve a signing request: approving in SignPath is the user's step (they are the Approver the policy
-  names). A signed `MyRemote.exe` goes into a package only through `release/package.js`, which checks it
+  names). A signed `Pangmote.exe` goes into a package only through `release/package.js`, which checks it
   (`release/signed-exe.js`); never sign anything with a certificate or tool of your own, and keep the policy
   page true: what it says about who builds, reviews and approves, and `PRIVACY.md` about every connection the
   program makes (a new one needs a line there before it ships).
@@ -114,7 +116,7 @@ the client app instead).
   both archives and both records in one folder and `release/build.js --sign-packages=<folder>`
   (`packages.json` + `.sig`, from 0.7.0 on: what installed apps replace their shell by), tag `v<version>`
   on that commit, then `gh release create v<version> <latest.json, latest.json.sig, the bundle, both
-  packages, packages.json, packages.json.sig> --title "My Remote <version>" --notes-file <from
+  packages, packages.json, packages.json.sig> --title "Pangmote <version>" --notes-file <from
   release/notes> --latest` (GitHub CLI, logged in as the user on the Windows PC; never print its token),
   and check that `releases/latest/download/latest.json` and `packages.json` are the new ones. Every installed app sees it within 6 h. Never mark a release `--critical` (it installs itself on
   every app, without asking) unless the user said so for that release.
@@ -122,6 +124,11 @@ the client app instead).
   `core.js`, `updater.js` or `guard.js` stays with every installed app until its user installs a new
   package by hand. Change it only with `release/test-update.js` and `release/test-app.js --packaged`
   passing, and raise `base` in `app/package.json` when the code needs something new of the shell.
+- **The old name stays where it is an id** (see "The name"): the `my-remote` id in what releases sign, the key
+  derivation's salts and fingerprints, the profile and data folders, the Windows app ids, the assist pipes and
+  the source folder's package names. A new name in any of them strands every installed app or loader out there
+  (no updates, or no key, devices and list of PCs). Never create a repository named `my-remote` under the
+  user's account: shells of 0.4.2-0.9.x fetch their updates through GitHub's forwarding of that old address.
 - Do not commit `node_modules/`, `tools/`, `dist/`, or any `config.json` (see `.gitignore`).
 - **A change goes in only with its checks passing** (see "CI, gates and checks"): `release/ci-checks.js`
   (the pre-commit hook), the self-test, new checks for new behaviour, and the bench within its limits.
@@ -338,7 +345,7 @@ the client app instead).
 
 - **Files dragged or pasted in (client -> host).** (On a Linux host the drop is an XDND drag, see the
   Linux notes; what follows is Windows.) The page uploads them on an `upload` channel;
-  `main.js` writes them under `%TEMP%\my-remote-in\<id>` (asynchronously: input shares that thread)
+  `main.js` writes them under `%TEMP%\pangmote-in\<id>` (asynchronously: input shares that thread)
   and then drops them for real where they were let go: `so_drop` in `host/bin/shellops.dll`
   (`native/shellops.cpp`) runs an OLE drag of the shell's own data object for the items, so a folder
   window, a folder icon, the desktop, a mail or chat window each react as to a local drop. Things
@@ -684,7 +691,7 @@ the client app instead).
   display for the length of the test; before 2026-11-14 only on Linux.
 - **Throwaway profiles.** Every isolated run (`--selftest`, `--localtest`, `--bench`, and the bench's
   client side) starts `profile-cleanup.js` as a small detached process of its own, which removes the
-  run's `%TEMP%\myremote-local-*` / `myremote-peer-*` profile once the run's process has ended and then
+  run's `%TEMP%\pangmote-local-*` / `pangmote-peer-*` profile (`myremote-*` before 0.10.0, swept too) once the run's process has ended and then
   sweeps old ones (older than 10 min, their run dead, never while another run is going on, at low
   priority). On Windows a detached child inherits Electron's std handles and would keep whatever
   started the run waiting (a script that reads the self-test's output, `spawnSync` in `bench-run.js`),
@@ -818,7 +825,7 @@ the client app instead).
   - The client app on Linux never clicks or types: files let go over the bare desktop (no window there,
     a `_NET_WM_WINDOW_TYPE_DESKTOP` window, or GNOME's desktop-icons window) go into
     `app.getPath('desktop')`, anything else onto the clipboard and the page says to paste. Received
-    files wait in `~/.cache/my-remote-drop` (on Linux `/tmp` is shared by all users).
+    files wait in `~/.cache/pangmote-drop` (on Linux `/tmp` is shared by all users; `my-remote-drop` before 0.10.0, swept too).
   - No keyring (`safeStorage` backend `basic_text`, usual outside a GNOME/KDE session): the key is only
     obscured ('v10', a fixed password); the host prints a warning and keeps `config.json` at mode 0600.
     The asynchronous calls work there without `setUsePlainTextEncryption` (the synchronous ones needed it).
@@ -852,10 +859,10 @@ the client app instead).
   - Chromium's sandbox needs its setuid helper (npm does not install it so) or unprivileged user
     namespaces: Ubuntu 22.04 has them (the self-test ran with the sandbox on), 23.10 and later restrict
     them through AppArmor. `host/linux-launch.sh` then stops and names the two ways out (the helper,
-    with sudo, or `MY_REMOTE_NO_SANDBOX=1`).
+    with sudo, or `PANGMOTE_NO_SANDBOX=1`; `MY_REMOTE_NO_SANDBOX=1` is still taken).
   - `--localtest` opens the client app, not the default browser (often Firefox, which the page is not
     made for). The launchers start Electron in the background like the `.bat` files; its output goes to
-    `$XDG_RUNTIME_DIR/my-remote-*.log`.
+    `$XDG_RUNTIME_DIR/pangmote-*.log`.
   - Windows-only: `capture.dll` (X11 has its own native capture, above), cursor hiding, HDR detection,
     the Chrome Remote Desktop and outline checks (`others` is `{crd: false, outline: false}`),
     `--dragout-check`, `--cursor-check`.
@@ -874,7 +881,7 @@ the client app instead).
   - `native/winassist.cpp` -> `host/bin/winassist.exe` (built and recorded by `native/build.js`, checked by
     the self-test like the DLLs). Installed from the host window's card "잠금 화면에서도 원격 조종"
     (`host/assist.js` runs `winassist.exe install` elevated: a UAC prompt at the host PC; `install` copies
-    it to `%ProgramFiles%\MyRemote`, admin-only, registers the LocalSystem service `MyRemoteAssist` and
+    it to `%ProgramFiles%\Pangmote`, admin-only, registers the LocalSystem service `PangmoteAssist` and
     starts it; run again it updates in place; `uninstall` removes it all). The card says "업데이트 필요"
     when the installed program is not the one this app brings.
   - **Offered at the host's first start** (the user's wish, 2026-11-15: "설치 시 크롬원격처럼 한번에"; Chrome
@@ -908,7 +915,8 @@ the client app instead).
     (`assistMonitor`, else by top left), repeats each on its own, and the `lock` message lists them (`ds`,
     `d` the primary among them); the client shows the bar on every window that shows one of them. The
     protocol byte stays 1. `winassist.exe grabmon <prefix>` writes every monitor as the helper sends them.
-  - Pipes: control `\\.\pipe\my-remote-assist` (service, reply "ok"+`ASSIST_PROTOCOL`+`ASSIST_CAPS`), data
+  - Pipes (their names keep the program's old name: hosts and services of either name talk to each other):
+    control `\\.\pipe\my-remote-assist` (service, reply "ok"+`ASSIST_PROTOCOL`+`ASSIST_CAPS`), data
     `\\.\pipe\my-remote-assist-data` (helper; first instance only; DACL: SYSTEM and the session's user
     from `WTSQueryUserToken`). Both byte mode; the data pipe overlapped. **Bit once:** with a synchronous
     handle the helper's main thread could not write while its reader thread waited in ReadFile (Windows
@@ -1101,7 +1109,7 @@ the client app instead).
   translation; the same Korean word used for two meanings needs two sources (the access log's `접속 종료`/`허용됨`/
   `거부됨` against the buttons' `종료`/`허용`/`거부`). Isolated runs start in Korean (their checks read Korean), the pages too (`--lang`:
   a test window's page follows the browser's language; on GitHub's English runners it started in English), unless
-  `MY_REMOTE_LANG` is set; a person changing the language of a test run's window fails those checks (seen
+  `PANGMOTE_LANG` (or `MY_REMOTE_LANG`) is set; a person changing the language of a test run's window fails those checks (seen
   once). The client page carries no catalog (the loader's 40-chunk reply): the loader brings it, else the host
   sends the page's texts on request (`lang`/`strings`), kept per page hash. The picker is a hidden `<select>` shown
   as a button with SVG flags (Windows draws flag emoji as letters; `I18N.picker`); its keys stay in the page
@@ -1243,7 +1251,7 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
 
 - **Two layers.** The *shell* (`app/`: Electron as npm installed it, `boot.js`, `updater.js`, `guard.js`,
   koffi) changes rarely and has a generation number (`base` in `app/package.json`). The *code* it runs
-  (`host/`, `client/`, `my-remote-client.html`: about 0.5 MB) is a *bundle*: the one built into the
+  (`host/`, `client/`, `pangmote-client.html`: about 0.5 MB) is a *bundle*: the one built into the
   package (`resources/app/bundle`), or a newer one the updater put into the user's data folder
   (`%LOCALAPPDATA%\my-remote\app\versions\<version>`, `~/.local/share/my-remote/app/...`). `boot.js`
   picks one at every start (`core.choose`) and `require`s its `host/main.js` or `client/main.js`, which
@@ -1256,7 +1264,8 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
   installed. Installed files are checked against their signed manifest at every start. So the feed
   (`feed` in `update-config.json`: any https folder with `latest.json`, `latest.json.sig` and the bundle
   file) need not be trusted. Never an older version than the one running. The feed is this repository's
-  own GitHub releases (`https://github.com/GiUKim/my-remote/releases/latest/download/`; the README's
+  own GitHub releases (`https://github.com/GiUKim/pangmote/releases/latest/download/`; shells of 0.4.2-0.9.x ask
+  the repository's old address, which GitHub forwards: see "The name"; the README's
   download buttons point there too), which is why the repository is public: a private repository's
   releases cannot be fetched without logging in. Decided 2026-11-14, after checking the history (only the
   noreply address as author; no address, account name, path or key-shaped string in any commit). Packages
@@ -1268,7 +1277,7 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
   installed when the person says so. "업데이트 확인" (the user's wish, 2026-11-15: both apps show their
   version and have the button; an update found is asked about, "지금 업데이트할까요?") looks at once: next
   to the version in the host window (`checkUpdate`/`updateChecked` in the page, `askUpdate` in main, also
-  the tray's item; shown only in the installed app) and next to "My Remote vX" in the client app's list
+  the tray's item; shown only in the installed app) and next to "Pangmote vX" in the client app's list
   (`home:checkUpdate`, `offerUpdate`). An update put off before is asked about again then, and the client
   app's question is asked once although a check also tells its listeners. Both windows' titles carry the
   version. Also on the start screen (the user's wish, 2026-11-16: "여기 화면에 업데이트 확인을 넣어서 한번에";
@@ -1312,18 +1321,19 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
     start counted against a trial.
 - **Names.** The two faces keep the profile names they always had (`my-remote-host`: its config and
   the key, encrypted under that name on Linux and macOS; `my-remote-client`), set in `boot.js` before
-  anything else, so an app installed over a source folder's use keeps the key.
+  anything else, so an app installed over a source folder's use keeps the key. They keep the program's old name
+  for good (see "The name").
 - **Packages** (`release/package.js`) are made on the platform they are for, from
   `host/node_modules/electron/dist` (nothing else is downloaded): a folder to unpack and run
-  (`MyRemote.exe`, `./my-remote.sh`), zipped as `MyRemote-Windows-x64.zip` / `MyRemote-Linux-x64.tar.gz` holding a folder `MyRemote` (on Windows `MyRemote.exe`'s version resource is rewritten in place to say MyRemote instead of "Electron" by "GitHub, Inc.", which the firewall's prompt, Task Manager and a notification without a shortcut showed: `brandExe` in `release/package.js`, same-length UTF-16 values, no outside tool (installing one was refused by the permission check); the exe's icon is still Electron's, the shortcuts carry ours; `test-app.js --packaged` checks the names Windows reads): no version in the names, so the README's download buttons (`.../releases/latest/download/<name>`) always fetch the newest and a self-updating folder is not named after an old version. No installer. Up to
+  (`Pangmote.exe`, `./pangmote.sh`), zipped as `Pangmote-Windows-x64.zip` / `Pangmote-Linux-x64.tar.gz` holding a folder `Pangmote` (`MyRemote.exe`, `my-remote.sh`, `MyRemote-*` and `MyRemote/` up to 0.9.x; on Windows `Pangmote.exe`'s version resource is rewritten in place to say Pangmote instead of "Electron" by "GitHub, Inc.", which the firewall's prompt, Task Manager and a notification without a shortcut showed: `brandExe` in `release/package.js`, same-length UTF-16 values, no outside tool (installing one was refused by the permission check); the exe's icon is still Electron's, the shortcuts carry ours; `test-app.js --packaged` checks the names Windows reads): no version in the names, so the README's download buttons (`.../releases/latest/download/<name>`) always fetch the newest and a self-updating folder is not named after an old version. No installer. Up to
   0.9.7 no code signing: Windows SmartScreen warns at the first start ("Windows의 PC 보호", 추가 정보 -> 실행).
   **Code signing** (prepared 2026-11-24, SignPath's approval of the project pending): SmartScreen judges only the
-  program started, `MyRemote.exe`, and Electron's program branded the same way is byte for byte the same in every
+  program started, `Pangmote.exe`, and Electron's program branded the same way is byte for byte the same in every
   release on the same Electron (0.9.5-0.9.7: one hash). So it is signed once per Electron version:
   `.github/workflows/sign.yml` (by hand) builds it on a GitHub-hosted runner (`release/package.js --exe-only`),
   SignPath signs it after the user approves (`release/signpath/artifact-configuration.xml` is the project's
   artifact configuration there), the workflow checks the result and keeps it as the artifact
-  `MyRemote-exe-signed-<Electron>`, and `release/package.js` takes it from `dist/signed/<Electron>/MyRemote.exe`
+  `Pangmote-exe-signed-<Electron>`, and `release/package.js` takes it from `dist/signed/<Electron>/Pangmote.exe`
   only when `release/signed-exe.js` finds it to be this very program with only a signature appended (the PE
   checksum and certificate-table entry aside, at most 7 zero bytes of alignment, the table at the end) and Windows'
   own verdict (`Get-AuthenticodeSignature`) Valid, timestamped and by the SignPath Foundation; else the package
@@ -1346,10 +1356,12 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
     공유" (host) and "다른 PC에 접속" (client), the host's state ("켜져 있음", from `running.json` that the
     host keeps in its profile while it runs) and, where there is no entry yet, "바로가기 만들기". It runs as
     the client app's first window (`--client --launcher`): the client choice turns it into the list, the
-    host choice starts the host as a program of its own (`--host`; Linux through `my-remote.sh`; a
+    host choice starts the host as a program of its own (`--host`; Linux through `pangmote.sh`, or `my-remote.sh` in a
+    folder of a package before 0.10.0: `appsync.launcherOf`; a
     second start only brings a running host forward) and the client app ends with it.
-  - One entry, "MyRemote" (Windows `Start menu\Programs\MyRemote\MyRemote.lnk`, Linux
-    `my-remote.desktop`), runs `--client --launcher`. The shell makes it (`makeShortcuts`, `--shortcuts`)
+  - One entry, "Pangmote" (Windows `Start menu\Programs\Pangmote\Pangmote.lnk`, Linux
+    `pangmote.desktop`; up to 0.9.x "MyRemote", `MyRemote\MyRemote.lnk`, `my-remote.desktop`, which the code
+    replaces, and makes anew when it starts another program than the running one), runs `--client --launcher`. The shell makes it (`makeShortcuts`, `--shortcuts`)
     and, started without `--host`/`--client`, opens the start screen when the code has one (else the old
     dialog). Apps installed from 0.3.0-0.5.x packages keep their shell: the code replaces their two
     shortcuts with the entry at the start of either face (`host/appsync.js` `unifyShortcuts`; only the
@@ -1458,8 +1470,8 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
     policies (constrained language), a virus scanner holding files, a PC with the app in Program Files.
 - **Plain names.** No file or folder the package holds or the app makes has a space or anything but
   ASCII in its name (the user's rule, 2026-11-14: a path with Korean or a space fails on some systems
-  and with some tools): `MyRemote.exe`, `README.txt` (Korean inside, with a byte order mark on
-  Windows), Start menu `MyRemote\MyRemote.lnk` (0.3.0-0.5.x: `MyRemote-Host.lnk`, `MyRemote-Client.lnk`), the profile of a start
+  and with some tools): `Pangmote.exe`, `README.txt` (Korean inside, with a byte order mark on
+  Windows), Start menu `Pangmote\Pangmote.lnk` (0.6.0-0.9.x: `MyRemote\MyRemote.lnk`; 0.3.0-0.5.x: `MyRemote-Host.lnk`, `MyRemote-Client.lnk`), the profile of a start
   that only asks or makes shortcuts at `<data folder>/../launcher` (Electron's default would be a
   folder named after the product). 0.3.0-0.4.0 had `My Remote.exe`, a Korean read-me name, Korean
   shortcut names and `%APPDATA%\My Remote`; making the new shortcuts removes the old ones.
@@ -1477,7 +1489,77 @@ above, the real code as a package passing the self-test through the shell (Windo
 native capturer; Linux 32 with the X11 one), the two shortcuts into a test folder. Not verified: a real
 update from a real feed (there is none yet), an update while a real session is connected, the dialog
 that asks host or client and the shortcuts in the real Start menu, the client app's update dialogs,
-`my-remote.sh` from an app menu entry, Ubuntu 24.04 as a package, anything on macOS.
+`pangmote.sh` from an app menu entry, Ubuntu 24.04 as a package, anything on macOS.
+
+## The name: Pangmote (My Remote up to 0.9.x)
+
+Renamed on 2026-11-24 at the user's request ("모든 github, 코드 자산, 릴리즈 자산 ... 프로젝트 이름과 관련된
+모든것"), from 0.10.0 on. The GitHub repository is `GiUKim/pangmote` (renamed from `GiUKim/my-remote`; GitHub
+forwards the old address, its git remote, web pages, API and release downloads, for as long as no repository of
+that name is made again under the account; GitHub Pages is not forwarded: the web page moved to
+`giukim.github.io/pangmote/`).
+
+- **What carries the new name:** every text shown (titles, dialogs, tray, notifications, the pages and all 12
+  languages' catalogs, the web page, README, PRIVACY, SECURITY), the program (`Pangmote.exe`, Linux `pangmote` and
+  `pangmote.sh`, its version resource), the packages (`Pangmote-Windows-x64.zip`, `Pangmote-Linux-x64.tar.gz`, a
+  folder `Pangmote`), the bundle file (`pangmote-<version>.bundle`), the loader (`pangmote-client.html`), the Start
+  menu entry (`Pangmote\Pangmote.lnk`), the Linux menu entries (`pangmote.desktop`; a source folder's
+  `pangmote-host.desktop`/`pangmote-client.desktop`), the assist service (`PangmoteAssist`, "Pangmote Assist",
+  `%ProgramFiles%\Pangmote`), the update feed in the shell (`app/update-config.json`), temporary names
+  (`pangmote-in`, `pangmote-drop`, `pangmote-local-*`, launcher logs `pangmote-*.log`), environment variables
+  (`PANGMOTE_*`; the `MY_REMOTE_*` ones are still read: scripts and old launchers set them), the authenticator
+  app's issuer, the X atom of drops, shellops' window class, SignPath's project slug (`pangmote`), the release
+  key's default folder for a new key (`~/.pangmote-release/`; the existing key is found in `~/.my-remote-release/`).
+- **What keeps the old name, for good** (each a promise to code and data already out there):
+  - `app: 'my-remote'` in latest.json, packages.json and the page statement (`core.APP`, `shellswap`, `pagecheck`):
+    every installed shell and client app takes only statements of that id.
+  - The key derivation: salts `my-remote-v1`, `my-remote-device-v1`, `my-remote-code-v1` (`signal.js`, in every
+    loader handed out) and the fingerprints `'my-remote host\n'`, `'my-remote token\n'` (hosts.json, tokens.json).
+  - Profiles and data: `my-remote-host`, `my-remote-client` (`%APPDATA%`, `~/.config`), `my-remote` (the data
+    root `%LOCALAPPDATA%\my-remote\app`, settings.json's folder, the asking start's name). On Linux safeStorage
+    keeps its key in the keyring under the app's name: a new name would leave every key unreadable.
+  - `kr.myremote.host`/`.client` (Windows app ids: taskbar pins, notification settings).
+  - The assist pipes `\\.\pipe\my-remote-assist(-data)`: a host and a service of either name talk.
+  - `host/package.json` and `client/package.json` names (a source folder's profiles), the pages' `mr_*`
+    storage and `__mrBoot`/`mrShell`/`mrHome`/`mrStart`, the servers' work folder `~/my-remote-dev` (the scope
+    the user set there), the old release notes and titles of 0.9.x and before.
+- **How installed apps cross over** (checked by `test-shellswap.js`, `test-appsync.js`, and see below):
+  - A shell of 0.4.2-0.9.x keeps fetching `GiUKim/my-remote/...` (forwarded) and is offered 0.10.0 as usual.
+  - Code before 0.10.0 never stages a package of the new name: packages.json is format 2 from 0.10.0, which its
+    shell swap takes for no list (it would have fetched 120 MB every 6 h and thrown it away: its `stage()`
+    wants MyRemote.exe, and its script would start MyRemote.exe after the swap). Checked against 0.9.7's
+    `shellswap.js`: it reads packages.json and its signature and stops there.
+  - Code from 0.10.0 on a shell of the old name stages the new package and swaps (the program to start is read
+    from the staged folder: `programIn`, `hostFace(platform, next)`); the folder keeps its place and name.
+  - After that swap: the Start menu entry is made anew for Pangmote.exe (`unifyShortcuts` finds it naming another
+    program), the person's shortcuts to that folder's MyRemote.exe on the desktop, in Startup and pinned to the
+    taskbar or Start start Pangmote.exe (`appsync.retarget`, once per program, marker `shortcuts-retargeted.json`
+    in the face's profile), and on Linux the folder keeps a `my-remote.sh` that starts `pangmote.sh`
+    (`FORWARD_SH`, written at staging: the vdesk script on the Linux PC starts `./my-remote.sh --host`).
+    Windows Firewall may ask once more for the new program's path (its rule is per path); WebRTC's own outgoing
+    checks still get through meanwhile.
+  - The assist service: a host of 0.10.0 uses a `MyRemoteAssist` installed before (same pipes and protocol); its
+    card says "업데이트 필요" (another program), and the update (UAC, at the PC) installs `PangmoteAssist` and only
+    then stops and deletes `MyRemoteAssist` and its folder, before starting the new one (both would want the
+    pipes). `winassist.exe uninstall` removes either.
+- Verified 2026-11-24 before 0.10.0: the plain-Node tests (`test-shellswap.js` 15 with the real PowerShell
+  script and, on the Linux PC, sh: a folder of the old name swapped to a package of the new name and up; a
+  package of the old name still swaps; format 2 taken, a format to come not; my-remote.sh passes its arguments
+  on), `test-appsync.js` (10, both systems), the static checks with both native binaries rebuilt, the self-test
+  with `--client-app-check` (89 lines), `test-app.js --packaged` (19: Pangmote.exe, its version resource, the
+  Pangmote.lnk entry). End to end, with a throwaway signing key and a feed on 127.0.0.1 (scratchpad
+  `e2e-win/run.js`, `e2e-linux/remote.js`): the published 0.9.7 package (MyRemote.exe / my-remote.sh) with the
+  new code installed, as a local trial host with `--shell-swap`, read the format-2 list, fetched the new package,
+  quit, was swapped and came back as Pangmote.exe (this PC, 11 s) and through pangmote.sh (the Linux PC on a
+  display of its own, 11 s; the folder kept a my-remote.sh that starts pangmote.sh; the old launcher's
+  `MY_REMOTE_NO_SANDBOX=1` taken by the new one). In the test VM: 0.9.7's `MyRemoteAssist` running, the new
+  `winassist.exe install` removed it and its folder and started `PangmoteAssist` ("Pangmote Assist",
+  `%ProgramFiles%\Pangmote`); through it the real lock screen was seen, clicked and unlocked with the typed
+  password (`run-lock-test.ps1`, protocol 1 on the kept pipes); with both names installed, `uninstall` removed
+  both; the new `host/assist.js` said "running, not current" for the old service (the card's "업데이트 필요")
+  and "current" after the install. Not tried: the forwarding of GitHub's old address for the real feed (checked
+  once the repository is renamed), shortcuts in a real Start menu, desktop and taskbar (retarget ran on stand-ins
+  only), the firewall's prompt for the new program on a real host.
 
 ## CI, gates and checks (what a change must pass)
 
@@ -1490,7 +1572,7 @@ Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하�
   `--input-check --clip-check --client-app-check` under Xvfb, `test-app.js --packaged`) and the `performance
   gate` on both (`release/bench-gate.js --profile=ci`). `codeql.yml` scans the JavaScript; `dependabot.yml`
   proposes Electron/koffi/action updates as pull requests that CI then tests. `sign.yml` (by hand only) has
-  SignPath sign `MyRemote.exe` (see "Code signing" under the installed app); without the secret it only builds.
+  SignPath sign `Pangmote.exe` (see "Code signing" under the installed app); without the secret it only builds.
 - **The release gate:** `release/build.js` refuses to build from a commit whose CI has not passed on GitHub
   (every check run finished successfully, each CI job among them; asked anonymously, the repository is
   public). `--skip-ci` overrides it and says so; `--allow-dirty` try-out builds skip it.
@@ -1568,18 +1650,18 @@ Run from `host/` with Electron's env var cleared.
 | `electron . --selftest --input-check` | Linux (X11) only (`inputcheck.js`): the pointer read back after an XTest move, whether the engine's video has the pointer in it (INFO), all 133 keys of the table, five buttons and the wheel into a test window, window-or-desktop under the pointer, text and a file dragged out of a second program it starts, and the client app's drop placement. INJECTS INPUT: on a virtual display only, or with the user's agreement |
 | `electron . --selftest --client-app-check` | Same, plus at the end the client app (`client/main.js`, a process of its own, with a profile of its own) on a loader that talks to the test's relay only, and then once more through its list of PCs (`--list`: the test's key added and opened as a PC, the loader given the key by the app); passes when its measurements say it shows the host's picture. Opens a window for about 20 s |
 | `xvfb-run -a -s "-screen 0 1920x1080x24" <electron> . --selftest --input-check --clip-check --client-app-check` | How the Linux side was verified on a server (Ubuntu 22.04, Xvfb). Add `--no-sandbox` where Chromium's sandbox cannot run (see Gotchas) |
-| `./setup.sh [--skip-selftest] [--hold]`, `./start-host.sh`, `./start-client.sh`, `./local-test.sh` | Linux counterparts of `setup.ps1` and the `.bat` files (shared code in `host/linux-launch.sh`); the launchers set the folder up on their first start (`ensure_setup`). Extra arguments go to Electron, e.g. `./start-host.sh --selftest`. `MY_REMOTE_NODE_DIST` points the Node download elsewhere (tests) |
+| `./setup.sh [--skip-selftest] [--hold]`, `./start-host.sh`, `./start-client.sh`, `./local-test.sh` | Linux counterparts of `setup.ps1` and the `.bat` files (shared code in `host/linux-launch.sh`); the launchers set the folder up on their first start (`ensure_setup`). Extra arguments go to Electron, e.g. `./start-host.sh --selftest`. `PANGMOTE_NODE_DIST` (or `MY_REMOTE_NODE_DIST`) points the Node download elsewhere (tests) |
 | `npm run bench -- --net=direct,home,narrow,wifi --try=old,base` | Measures delay and smoothness on this PC for the given link conditions and settings, prints a table (see "Performance"). `--picture-test=quality` measures picture quality instead (a window opening, a window being dragged, scrolling); `--snapshot` saves what the client showed next to what was drawn. About 45 s per run. Shows a test picture on one display and a small window on another for that time; they never take focus and no input is injected, but tell the user before a long series |
 | `npm run bench -- --remote=user@host --net=direct --try=base` | The same bench with the client page on another machine, reached over ssh: a real second machine and a real network instead of one PC. That machine needs `~/my-remote-dev/electron/` (an unpacked Electron release for its platform) and `xvfb-run`; signaling goes through an ssh tunnel, only the WebRTC traffic crosses the network directly. Add `--capture-probe` to split the delay into its parts. This sends the picture of one of this PC's displays to that machine, so the user must have agreed |
 | `node release/install-local.js [--dry]` | Puts the release in `dist/release` into this PC's installed app as its updater would (the signature checked, then `core.installVersion` and `activate`): the app runs it from its next start, on trial. For a PC whose app cannot reach a feed, and for trying a release before it is published. It changes the person's installed app, so only when they asked for that version there |
-| `node release/ci-checks.js [--staged]` | The static checks CI and the pre-commit hook run: syntax of every JS file and of the built pages' scripts, JSON, `my-remote-client.html` up to date, ASCII names, native records, the leak scan. Seconds, no Electron |
+| `node release/ci-checks.js [--staged]` | The static checks CI and the pre-commit hook run: syntax of every JS file and of the built pages' scripts, JSON, `pangmote-client.html` up to date, ASCII names, native records, the leak scan. Seconds, no Electron |
 | `node release/ci-native.js` | Rebuilds the committed binaries from `native/` (needs `x86_64-w64-mingw32-g++`: CI's Ubuntu 22.04, or the build server) and compares them byte for byte with `host/bin` |
 | `node release/bench-gate.js --profile=dev\|ci` | Runs the bench and fails when a figure leaves `release/bench-thresholds.json` (dev: a development PC; ci: CI machines). About a minute; shows the bench's test picture meanwhile |
 | `node release/test-assist.js` | The host's side of the Windows assist service (`host/assist.js`) against a fake service and helper on test pipes: protocol and version, the pipe-server session checks, input routing per state and its encoding, pictures in pieces, Ctrl+Alt+Del, reconnecting, installing refused during a remote session, the first-start offer. Windows only (skips elsewhere); no input reaches the PC (the sink is recorded, never installed) and nothing runs elevated (`T.elevate`). A few seconds |
 | `host\bin\winassist.exe install`, `uninstall`, `status`, `grab <file.bmp>`, `grabmon <prefix>` | The assist service itself: install/uninstall need an elevated prompt (the host window's card does this through UAC). `grab` writes the current input desktop to a BMP (a secure one only when run as LocalSystem); `grabmon` every monitor as the helper sends them (`<prefix>-<n>.bmp`, rectangles printed). Both are pictures of the person's screen: delete them after looking |
 | `node release/test-signed-exe.js` | The signed-exe check: byte rules everywhere, Windows' Authenticode verdict on node.exe's own signature (taken off and put back, one byte changed). Seconds |
-| `node release/package.js --exe-only=<folder>` | Only `MyRemote.exe` as a package holds it, unsigned (what `sign.yml` uploads to SignPath). Windows |
-| `node release/package.js [--signed-exe=<file>] [--require-signed]` | The package with the signed program from `dist/signed/<Electron>/MyRemote.exe` (or the file given), checked first; `--require-signed` refuses to make an unsigned Windows package |
+| `node release/package.js --exe-only=<folder>` | Only `Pangmote.exe` as a package holds it, unsigned (what `sign.yml` uploads to SignPath). Windows |
+| `node release/package.js [--signed-exe=<file>] [--require-signed]` | The package with the signed program from `dist/signed/<Electron>/Pangmote.exe` (or the file given), checked first; `--require-signed` refuses to make an unsigned Windows package |
 | `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept, device tokens (kept, the key let go only for the token that worked, a key given again replaces the token). A second |
 | `node release/test-i18n.js` | The translations (every text of the code in every language, no Korean left, holes, tags, plural forms, French spacing, a quoted button name read as that button), the translator, the PC's language setting. Seconds, no Electron |
 | `node release/downloads.js [--json]` | How much the app is used, from GitHub's own download counters (public API, no counting in the app): per release the package downloads (new installs), the bundle downloads (updates taken) and `latest.json` fetches per day, which / 4 is a rough count of apps running at once (every app looks every 6 h) |
@@ -1596,16 +1678,16 @@ Run from `host/` with Electron's env var cleared.
 | `node release/test-update.js` | The update logic (`app/core.js`, `app/updater.js`) in plain Node with made-up releases and feeds: signatures, file names, downgrades, the trial and going back, ordinary and required updates. A few seconds |
 | `node release/test-app.js [--packaged]` | The app's shell in real Electron against a feed on this machine (made-up versions; nothing leaves the PC, the real host is not started). `--packaged` also builds this folder's code as the real package (test key, temporary folder) and runs its self-test through the shell: about 4 minutes. On Linux under `xvfb-run`; `MR_TEST_ELECTRON_ARGS=--no-sandbox` where the sandbox cannot run |
 | `node release/build.js [--critical]` | Builds a release from the checked-out commit into `dist/release` (`latest.json`, its signature, the bundle, and `bundle/` for packaging). Signs with the key outside the repository |
-| `node release/package.js` | The installable app for this platform from `dist/release`, into `dist/pack` (the folder `MyRemote` and `MyRemote-Windows-x64.zip` or `MyRemote-Linux-x64.tar.gz`, about 120-140 MB) |
+| `node release/package.js` | The installable app for this platform from `dist/release`, into `dist/pack` (the folder `Pangmote` and `Pangmote-Windows-x64.zip` or `Pangmote-Linux-x64.tar.gz`, about 120-140 MB) |
 | `<electron> release/make-icon.js` | Draws `app/icon.png` and `app/icon.ico` from `host/icon.svg` |
 | `npm run localtest` | Local trial: host window plus view-only client in the default browser |
 | `npm start` | The real host (connects to the signaling server). User-initiated only |
-| `npm run build-client` | Regenerates `../my-remote-client.html` (the loader) from `loader.template.html` and `signal.js` |
-| `npx @electron/packager . MyRemoteHost --platform=win32 --arch=x64 --out=../dist --overwrite --no-asar` | Optional standalone exe folder (about 300 MB, not committed) |
+| `npm run build-client` | Regenerates `../pangmote-client.html` (the loader) from `loader.template.html` and `signal.js` |
+| `npx @electron/packager . PangmoteHost --platform=win32 --arch=x64 --out=../dist --overwrite --no-asar` | Optional standalone exe folder (about 300 MB, not committed) |
 
 `host/client.template.html` is served by the running host, so changes to it reach clients once the host
 is restarted; nothing needs rebuilding. After changing `host/loader.template.html` or `host/signal.js`,
-run `npm run build-client` and commit the regenerated `my-remote-client.html` (and remember that users
+run `npm run build-client` and commit the regenerated `pangmote-client.html` (and remember that users
 must then be given the new file). Run `npm run selftest` after either.
 
 ## Layout
@@ -1615,7 +1697,7 @@ must then be given the new file). Run `npm run selftest` after either.
 | `README.md`, `docs/img/*.svg` | The page people see first: download buttons, three steps, features and shortcuts as pictures and short tables; everything longer is folded into `<details>` under "자세히". Keep the top short; put new explanations into the folded part. The pictures are hand-written SVG (each with its own dark panel, so they read on a light and a dark page) |
 | `setup.ps1` | One-shot host setup and self-test |
 | `start-host.bat`, `local-test.bat` | Launchers for the real host and the local trial |
-| `my-remote-client.html` | Built loader: the one file a client PC keeps (generated, committed for convenience) |
+| `pangmote-client.html` | Built loader: the one file a client PC keeps (generated, committed for convenience; `my-remote-client.html` up to 0.9.x, and copies of that name keep working) |
 | `start-client.bat` | Launcher for the client app (uses the Electron installed under `host/node_modules`) |
 | `setup.sh`, `start-host.sh`, `start-client.sh`, `local-test.sh` | The same for Linux (bash, executable in git, LF line endings) |
 | `host/linux-launch.sh` | Sourced by those: Electron's path, the first-start setup (`ensure_setup`), X11 session, library and sandbox checks, errors also as a dialog (`fail`: zenity or notify-send, when there is no terminal), starting Electron in the background |
@@ -1624,17 +1706,17 @@ must then be given the new file). Run `npm run selftest` after either.
 | `client/launcher.html`, `client/launcher-preload.js` | The installed app's start screen (two big buttons: this PC shared as the host, another PC reached as the client), the client app's first window with `--launcher`; its bridge `window.mrStart` |
 | `host/watchdog.js`, `release/test-watchdog.js` | Starts the host again when it ended without quitting (a crash); its test, plain Node |
 | `host/shellswap.js`, `release/test-shellswap.js` | The installed app's shell replaced by a newer package: the signed list, the decision, staging next to the folder, the swap script, the check that the new shell is up. Its test, plain Node (see "The shell replaced by a newer package") |
-| `host/appsync.js`, `release/test-appsync.js` | The two faces kept one app: a running face follows a version the other installed; the one "MyRemote" entry in place of older packages' two shortcuts. Its test, plain Node |
+| `host/appsync.js`, `release/test-appsync.js` | The two faces kept one app: a running face follows a version the other installed; the one "Pangmote" entry in place of older packages' shortcuts ("MyRemote", and the two of 0.3.0-0.5.x); `retarget`: the person's shortcuts to `MyRemote.exe` after a swap to the new name. Its test, plain Node |
 | `release/test-hosts.js` | The store's test, plain Node |
 | `host/devices.js`, `host/accesslog.js`, `release/test-devices.js` | The host's device tokens (`devices.json`: client apps that connect without the key, blocked or removed one by one) and its access log (`access.log`, 90 days); their test, plain Node. See "Devices" |
 | `release/install-local.js` | A built release into this PC's installed app, the updater's way without a feed |
 | `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: the list of PCs and, for each PC, a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js`: Win32 or X11, and `host/files.js`). Exposes `window.mrShell` (`fileAbort`, `pointerOwn`, `clipPoll` and `clipWrite` from 2026-11-13 on), and from 2026-11-13 on marks a minimized or hidden window's document (`data-mr-hidden`, event `mrshown`): its windows run with `backgroundThrottling` off, so `visibilityState` never says hidden there, and the page (`unseen()`) stops asking the host for what such a window shows. `main.js --loader=<file>` shows another loader with a profile of its own (self-test, local trial on Linux). These files are not updated through the loader: the page must feature-detect what an installed app offers |
 | `app/boot.js`, `app/core.js`, `app/updater.js`, `app/guard.js` | The installed app's shell: picks host or client and the code bundle to run, verifies it, keeps a new version on trial and goes back when it does not come up; finds and installs updates. See "The installed app, releases and updates" |
 | `app/update-config.json`, `app/package.json` | Where updates are fetched from and the public keys that may sign them; the shell's generation (`base`) |
-| `app/my-remote.sh`, `app/icon.png`, `app/icon.ico` | The installed app's launcher on Linux; its icons (drawn by `release/make-icon.js`) |
+| `app/pangmote.sh`, `app/icon.png`, `app/icon.ico` | The installed app's launcher on Linux; its icons (drawn by `release/make-icon.js`) |
 | `release/build.js`, `release/package.js`, `release/keygen.js` | Make a release (bundle, signed manifest), the installable package for this platform, the signing key pair |
-| `release/signed-exe.js`, `release/test-signed-exe.js` | The check of a signed `MyRemote.exe` before a package takes it (same program plus a signature; Windows' own verdict: valid, timestamped, SignPath Foundation), and its test (made-up signature tables on a committed DLL; on Windows node.exe's real signature) |
-| `.github/workflows/sign.yml`, `release/signpath/artifact-configuration.xml` | Has SignPath sign `MyRemote.exe` (by hand, once per Electron version, approved in SignPath by the user); the artifact configuration to keep in the SignPath project |
+| `release/signed-exe.js`, `release/test-signed-exe.js` | The check of a signed `Pangmote.exe` before a package takes it (same program plus a signature; Windows' own verdict: valid, timestamped, SignPath Foundation), and its test (made-up signature tables on a committed DLL; on Windows node.exe's real signature) |
+| `.github/workflows/sign.yml`, `release/signpath/artifact-configuration.xml` | Has SignPath sign `Pangmote.exe` (by hand, once per Electron version, approved in SignPath by the user); the artifact configuration to keep in the SignPath project |
 | `LICENSE`, `PRIVACY.md` | MIT; what the program sends where (required by the code signing policy; keep it true) |
 | `release/test-update.js`, `release/test-app.js` | Tests of the shell: the logic in plain Node, and end to end in Electron |
 | `release/policy.json`, `release/notes/<version>.json` | The oldest version still allowed (set by a critical release); what changed, shown with an update |
@@ -1643,7 +1725,7 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/host.html`, `host/host.js` | Host UI and the WebRTC side: capture, encoding control, data-channel routing |
 | `native/capture.cpp` | The native screen capturer (DXGI Desktop Duplication) |
 | `host/bin/capture.dll`, `capture.dll.json` | That capturer built by `native/build.js` (stripped, no time stamp: the same source and compiler give the same file), and the record of the source hash, DLL hash, compiler and command. Committed. The host loads it when it is there; without it the engine's capturer is used |
-| `native/winassist.cpp`, `host/bin/winassist.exe` (+ `.json`) | The Windows assist service and its in-session LocalSystem helper: the lock screen's pictures and the typed password (see "Lock screen / UAC"). Committed like the DLLs; installed into `%ProgramFiles%\MyRemote` by the host window's card |
+| `native/winassist.cpp`, `host/bin/winassist.exe` (+ `.json`) | The Windows assist service and its in-session LocalSystem helper: the lock screen's pictures and the typed password (see "Lock screen / UAC"). Committed like the DLLs; installed into `%ProgramFiles%\Pangmote` by the host window's card (as `PangmoteAssist`; it removes a `MyRemoteAssist` of 0.9.x) |
 | `host/assist.js` | The host's side of that service (main process): installed/current/running, install and remove (elevated), and during a session the overlapped pipe client with its server-session checks, the input sink while locked, frames to the page |
 | `native/shellops.cpp`, `host/bin/shellops.dll` (+ `.json`) | `so_drop`: drops files onto whatever is under the pointer as a real drag-and-drop (see Gotchas). Committed like `capture.dll` |
 | `host/cycle.js`, `release/test-cycle.js` | Whether a hello comes back on itself (`self`: this PC's own client app; `loop`: the client app of a PC this PC's client app controls), from the hello's `from`, this start's id and the client app's `live.json`; its test, plain Node. See "Connections that come back on themselves" |
@@ -1662,7 +1744,7 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/signal.js` | Shared by host and client: key derivation, encrypted signaling channel |
 | `host/i18n.js`, `host/i18n/*.json`, `host/settings.js` | The languages: the translator, the markup relabeller, the fonts per script, the flag picker (one file for the main processes, the host window, and inlined into the page and the loader); the catalogs; the PC's one setting (see `docs/i18n.md`) |
 | `release/i18n-sources.js`, `release/test-i18n.js` | The Korean texts read from the code (`--missing` lists what a catalog lacks); the test of the catalogs and the translator |
-| `docs/index.html`, `docs/site.json`, `docs/i18n.js` | The web page on GitHub Pages (`https://giukim.github.io/my-remote/`, served from `docs/` on main): the download for the visitor's system, three steps, features, a scam warning, support and business-use links, in the 12 languages (`?lang=` in the address picks one). Its catalog is `docs/site.json` (the `site` surface of `release/i18n-sources.js`, checked by `test-i18n.js`); `docs/i18n.js` is a copy of `host/i18n.js` that `npm run build-client` writes and `ci-checks.js` keeps equal |
+| `docs/index.html`, `docs/site.json`, `docs/i18n.js` | The web page on GitHub Pages (`https://giukim.github.io/pangmote/`, served from `docs/` on main): the download for the visitor's system, three steps, features, a scam warning, support and business-use links, in the 12 languages (`?lang=` in the address picks one). Its catalog is `docs/site.json` (the `site` surface of `release/i18n-sources.js`, checked by `test-i18n.js`); `docs/i18n.js` is a copy of `host/i18n.js` that `npm run build-client` writes and `ci-checks.js` keeps equal |
 | `.github/FUNDING.yml`, `.github/ISSUE_TEMPLATE/business.yml` | The Sponsor button (GitHub Sponsors, the user's account) and the business-use inquiry form (public): the demand check before any paid tier, chosen 2026-11-20 after the review of going commercial (free for people, paid for business use rather than ads) |
 | `host/loader.template.html` | Loader source: asks for the key, fetches the client page from the host, runs it |
 | `host/client.template.html` | The client page itself. Built in memory at host start and sent to loaders; never shipped as a file |

@@ -132,7 +132,7 @@ async function emptySpot(hwnd) {
 exports.runIn = async ({ check, info, cfg, buildClientHtml }) => {
   const displays = screen.getAllDisplays(), prim = screen.getPrimaryDisplay(), other = displays.find((d) => d.id !== prim.id);
   if (!other) { info('drop-in check skipped: it needs a second display'); return; }
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-dropin-')), src = path.join(base, 'src'), dst = path.join(base, 'dst');
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-dropin-')), src = path.join(base, 'src'), dst = path.join(base, 'dst');
   fs.mkdirSync(path.join(src, 'in-dir', 'deeper'), { recursive: true });
   fs.mkdirSync(path.join(dst, 'sub'), { recursive: true });
   const content = { 'in-a.txt': crypto.randomBytes(30000).toString('hex'), 'in-b.txt': crypto.randomBytes(20000).toString('hex'), x: crypto.randomBytes(9000).toString('hex') };
@@ -160,7 +160,7 @@ exports.runIn = async ({ check, info, cfg, buildClientHtml }) => {
     ShowWindow(hwndT, 9); SetWindowPos(hwndT, -1, p.x + 160, p.y + 140, 960, 640, 0x0040);
     ShowWindow(hwndS, 9); SetWindowPos(hwndS, -1, o.x + 20, o.y + 120, 640, 520, 0x0040);
     const shell = require('../client/shell');
-    const page = path.join(os.tmpdir(), `myremote-dropin-client-${process.pid}.html`);
+    const page = path.join(os.tmpdir(), `pangmote-dropin-client-${process.pid}.html`);
     fs.writeFileSync(page, buildClientHtml());
     cw = new BrowserWindow({ show: false, focusable: false, x: other.bounds.x + 700, y: other.bounds.y + 120, width: 900, height: 600, alwaysOnTop: true, webPreferences: { preload: shell.PRELOAD, backgroundThrottling: false } });
     shell.attach(cw, { trust: true }); // the page loaded as it is (no loader, nothing signed)
@@ -235,7 +235,7 @@ exports.runIn = async ({ check, info, cfg, buildClientHtml }) => {
     if (cw && !cw.isDestroyed()) cw.destroy();
     if (hadHome && at(home.x, home.y)) send({ t: 'mm', ...at(home.x, home.y) });
     for (const h of [hwndT, hwndS]) if (h && IsWindow(h)) { SetWindowPos(h, -2, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); PostMessageW(h, 0x0010, 0, 0); }
-    try { fs.rmSync(path.join(os.tmpdir(), `myremote-dropin-client-${process.pid}.html`), { force: true }); } catch {}
+    try { fs.rmSync(path.join(os.tmpdir(), `pangmote-dropin-client-${process.pid}.html`), { force: true }); } catch {}
     await sleep(800);
     for (let i = 0; i < 20; i++) { try { fs.rmSync(base, { recursive: true, force: true }); break; } catch { await sleep(250); } }
   }
@@ -246,7 +246,7 @@ exports.run = async ({ check, info, dragOut, closeDragFiles, cfg, buildClientHtm
   const { keepTextClipboard, restoreClipboard } = require('./selftest');
   const keep = await keepTextClipboard(['text/plain', 'text/html', 'text/rtf']);
   if (!keep) { info('drag-out check skipped: the clipboard holds more than text'); return; }
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-dragtest-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-dragtest-'));
   const content = {};
   for (const n of ['drag-test-a.txt', 'drag-test-b.txt', 'drag-test-c.txt']) fs.writeFileSync(path.join(dir, n), (content[n] = crypto.randomBytes(48000).toString('hex')));
   const rects = screen.getAllDisplays().map((d) => screen.dipToScreenRect(null, d.bounds));
@@ -313,7 +313,7 @@ exports.run = async ({ check, info, dragOut, closeDragFiles, cfg, buildClientHtm
     // ---- B and C: through a client window running the real page in the client app's shell ----
     if (!cfg || !buildClientHtml) return;
     const shell = require('../client/shell');
-    const page = path.join(os.tmpdir(), `myremote-dragtest-client-${process.pid}.html`);
+    const page = path.join(os.tmpdir(), `pangmote-dragtest-client-${process.pid}.html`);
     fs.writeFileSync(page, buildClientHtml());
     // On another display than the Explorer window when there is one, and never taking the focus:
     // on one PC, a client window that loses the focus to the clicked Explorer window would let go of
@@ -376,7 +376,7 @@ exports.run = async ({ check, info, dragOut, closeDragFiles, cfg, buildClientHtm
     if (hwnd && IsWindow(hwnd)) { SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); PostMessageW(hwnd, 0x0010, 0, 0); } // not topmost, then WM_CLOSE
     await restoreClipboard(keep);
     if (closeDragFiles) closeDragFiles(null);
-    try { fs.rmSync(path.join(os.tmpdir(), `myremote-dragtest-client-${process.pid}.html`), { force: true }); } catch {}
+    try { fs.rmSync(path.join(os.tmpdir(), `pangmote-dragtest-client-${process.pid}.html`), { force: true }); } catch {}
     for (let i = 0; i < 20; i++) { try { fs.rmSync(dir, { recursive: true, force: true }); break; } catch { await sleep(250); } }
   }
 };

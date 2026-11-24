@@ -14,7 +14,7 @@ const cycle = require('./cycle'); // connections that come back on themselves (s
 // The language of the user interface (host/i18n.js, 2026-11-20): this PC's choice, kept with the client app's in
 // host/settings.js, else the system's. The page reads it (lang-sync), sets it (lang-set) and hears of a change
 // the client app made (lang-changed). The automated runs show Korean, which their checks read, unless
-// MY_REMOTE_LANG names another.
+// PANGMOTE_LANG (MY_REMOTE_LANG, its name before the program was renamed) names another.
 const I18N = require('./i18n');
 const settings = require('./settings');
 const HOST_STRINGS = (() => { try { return require('./i18n/host.json'); } catch { return {}; } })();
@@ -343,7 +343,7 @@ let clipFiles = null; // { seq, paths }
 // Files the client sent (its paste, or a drop nothing took, which putDone puts on this clipboard) are
 // not announced back: it has them already, and fetching them would replace its own clipboard with
 // copies of them from a staging folder.
-const fromClient = (p) => { const r = path.relative(inbox(), p); return !!r && !r.startsWith('..') && !path.isAbsolute(r); };
+const fromClient = (p) => [inbox(), oldInbox()].some((dir) => { const r = path.relative(dir, p); return !!r && !r.startsWith('..') && !path.isAbsolute(r); });
 async function clipFilesNow(seq) {
   const paths = await timedAsync('clip-files', () => input.clipboardFiles());
   if (paths.length && paths.every(fromClient)) { clipFiles = null; return { own: true }; }
@@ -368,7 +368,8 @@ async function clipGet(seq) {
 // Local trials never drop or paste, except the opt-in --dropin-check.
 const fileNames = require('./files');
 const PUT_MAX_BYTES = 2 * 1024 * 1024 * 1024, PUT_MAX_FILES = 5000;
-const inbox = () => path.join(os.tmpdir(), 'my-remote-in');
+const inbox = () => path.join(os.tmpdir(), 'pangmote-in');
+const oldInbox = () => path.join(os.tmpdir(), 'my-remote-in'); // up to 0.9.x (My Remote): swept like the new one
 const puts = new Map();    // gid -> { dir, files, bytes }
 const putOpen = new Map(); // fid -> { gid, fh, left }
 let shellops; // undefined: not looked for yet; null: not there
@@ -386,6 +387,8 @@ function shellOps() {
 }
 function putBegin() {
   fileNames.sweep(inbox(), 24 * 3600e3);
+  fileNames.sweep(oldInbox(), 24 * 3600e3);
+  try { fs.rmdirSync(oldInbox()); } catch {} // only when nothing is left in it
   const gid = crypto.randomBytes(8).toString('hex'), dir = path.join(inbox(), gid);
   fs.mkdirSync(dir, { recursive: true });
   puts.set(gid, { dir, files: 0, bytes: 0 });
@@ -527,7 +530,7 @@ let cfgBackup = ''; // that copy
 if (ISOLATED) {
   // Fully local: private profile dir, local relay, no STUN. Nothing leaves this PC.
   // The profile is removed once this run has ended (profile-cleanup.js).
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-local-'));
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-local-'));
   app.setPath('userData', profile);
   require('./profile-cleanup').watch(profile);
   app.commandLine.appendSwitch('disable-features', ['WebRtcHideLocalIpsWithMdns', ...((benchCfg && benchCfg.disableFeatures) || [])].join(','));
@@ -536,12 +539,12 @@ if (ISOLATED) {
   // The pages' own language too (navigator.languages: the client page in a test window has no app to ask, and
   // follows the browser's), so that a run on a PC in another language reads the Korean its checks expect, as this
   // process does (systemLang). Found on GitHub's runners (English): the self-test's page started in English.
-  app.commandLine.appendSwitch('lang', I18N.normalize(process.env.MY_REMOTE_LANG) || 'ko');
+  app.commandLine.appendSwitch('lang', I18N.normalize(settings.testLang()) || 'ko');
 }
 const cfgPath = () => path.join(app.getPath('userData'), 'config.json');
 const langFile = () => langStore || (langStore = settings.create(settings.fileFor(app, ISOLATED ? app.getPath('userData') : '')));
 function systemLang() {
-  if (process.env.MY_REMOTE_LANG) return I18N.normalize(process.env.MY_REMOTE_LANG) || 'en';
+  if (settings.testLang()) return I18N.normalize(settings.testLang()) || 'en';
   if (ISOLATED) return 'ko';
   let prefs = [];
   try { prefs = app.getPreferredSystemLanguages(); } catch {}
@@ -741,7 +744,7 @@ async function saveConfig(key) {
 async function askForKey() {
   for (;;) {
     const { response } = await dialog.showMessageBox({
-      type: 'error', title: 'My Remote Host', noLink: true, buttons: [t('다시 시도'), t('새 키 발급'), t('종료')], defaultId: 0, cancelId: 2,
+      type: 'error', title: 'Pangmote Host', noLink: true, buttons: [t('다시 시도'), t('새 키 발급'), t('종료')], defaultId: 0, cancelId: 2,
       message: t('접속 키를 불러오지 못했습니다'),
       detail: `${cfgIssue}\n\n${cfgPath()}${cfgBackup ? '\n' + t('원래 파일의 사본: {0}', path.basename(cfgBackup)) : ''}\n\n` +
         t("원인을 고쳤으면 '다시 시도'를 누르세요. '새 키 발급'은 새 접속 키를 만들어 저장합니다. 기존 키로는 더 이상 접속할 수 없으므로 새 키를 클라이언트에 다시 알려 주어야 합니다."),
@@ -812,6 +815,7 @@ function pageSig(sha) {
       // loader (two test machines controlling each other): --trust-page-key=<page-key.txt>.
       try { fs.writeFileSync(path.join(app.getPath('userData'), 'page-key.txt'), testPageKeyPub()); } catch {}
     }
+    // app: the id releases sign with, the program's old name (see app/core.js); every client app checks it.
     const statement = JSON.stringify({ format: 1, app: 'my-remote', kind: 'page', version: 'test', server: cfg.server, sha256: sha }) + '\n';
     return { statement, sig: crypto.sign(null, Buffer.from(statement, 'utf8'), testPageKey.privateKey).toString('base64') };
   }
@@ -875,7 +879,7 @@ function icon(live) {
 }
 function setTray(live) {
   trayLive = live;
-  if (tray) { tray.setImage(icon(live)); tray.setToolTip('My Remote Host — ' + (live ? t('원격 접속 중') : t('대기 중'))); }
+  if (tray) { tray.setImage(icon(live)); tray.setToolTip('Pangmote Host — ' + (live ? t('원격 접속 중') : t('대기 중'))); }
 }
 function showWindow() { if (win) { win.show(); win.focus(); } }
 // 키 복사 puts the key on the clipboard. A minute later it is taken off again if it is still there, so
@@ -916,7 +920,7 @@ function restart(why = 'restart') { quitAs('restart', why); quitting = true; app
 // version came up (ok()), or it goes back to the one before. Run from a source folder there is no
 // shell: the version is package.json's and updates come by git.
 const APP = global.__mrApp || null;
-// One app on Windows: the host takes the id of the one "MyRemote" entry, as the client app does (see
+// One app on Windows: the host takes the id of the one "Pangmote" entry, as the client app does (see
 // appsync.APP_ID): its window sits with the client app's under that entry, and its notice of a remote
 // session has an entry to be shown by. Before any window; the shell set the host's own id.
 if (APP && process.platform === 'win32') { app.setAppUserModelId(appsync.APP_ID); console.log('[host] app id ' + appsync.APP_ID); }
@@ -940,10 +944,10 @@ function openStartScreen() {
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   const o = { env, detached: true, stdio: 'ignore' };
-  const sh = path.join(path.dirname(process.execPath), 'my-remote.sh');
+  const sh = appsync.launcherOf(process.execPath); // pangmote.sh (my-remote.sh in a folder of a package before 0.10.0)
   try {
     if (!APP) spawn(process.execPath, [path.join(__dirname, '..', 'client'), '--launcher'], o).unref(); // a source folder: Electron given the client folder
-    else if (process.platform === 'linux' && fs.existsSync(sh)) spawn(sh, ['--client', '--launcher'], o).unref();
+    else if (process.platform === 'linux' && sh) spawn(sh, ['--client', '--launcher'], o).unref();
     else spawn(process.execPath, ['--client', '--launcher', ...process.argv.filter((a) => a === '--no-sandbox')], o).unref();
   } catch (e) { console.error('[host] start screen: ' + e.message); return false; }
   if (win && !win.isDestroyed()) win.hide();
@@ -953,18 +957,23 @@ function openStartScreen() {
 // whenever another start reaches this running host. The first-start dialog of those packages' shells (their
 // exe started without --host/--client) makes the two again when its box is ticked, its default, and then
 // starts a face that only brings this one forward (seen 2026-11-16: three shortcuts after such a start).
+// The program by its new name (0.10.0) in a folder of an older package's place: the entry made before and the
+// person's shortcuts to MyRemote.exe start Pangmote.exe now (appsync.retarget).
 function oneEntry() {
   if (ISOLATED || !APP) return;
   try {
-    const r = appsync.unifyShortcuts({ appData: app.getPath('appData'), dataHome: process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'),
-      execPath: process.execPath, iconDir: path.dirname(require.main.filename), writeLink: (f, op, o) => shell.writeShortcutLink(f, op, o) });
+    const o = { appData: app.getPath('appData'), dataHome: process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'),
+      execPath: process.execPath, iconDir: path.dirname(require.main.filename), writeLink: (f, op, x) => shell.writeShortcutLink(f, op, x), readLink: (f) => shell.readShortcutLink(f) };
+    const r = appsync.unifyShortcuts(o);
     if (r.made.length) console.log('[host] shortcuts: one entry ' + r.made.join(', '));
+    const moved = appsync.retarget({ ...o, desktop: app.getPath('desktop'), mark: path.join(app.getPath('userData'), 'shortcuts-retargeted.json') });
+    if (moved.length) console.log('[host] shortcuts to MyRemote.exe now start ' + path.basename(process.execPath) + ': ' + moved.join(', '));
   } catch (e) { console.error('[host] shortcuts', e.message); }
 }
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 560, height: 680, title: 'My Remote Host', autoHideMenuBar: true, show: !SELFTEST && !BENCH, icon: icon(false),
+    width: 560, height: 680, title: 'Pangmote Host', autoHideMenuBar: true, show: !SELFTEST && !BENCH, icon: icon(false),
     // sandbox off: the preload script loads the native capturer (it still runs apart from the page's own scripts).
     webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false, sandbox: false },
   });
@@ -1073,7 +1082,7 @@ function shellSwapIfFits() {
   if (!shellCtx || sessionLive || quitting || shellBeginning) return;
   const next = shellswap.readNext(shellCtx.root, shellCtx.appDir);
   if (!next || clientAppRunning() || shellswap.heldRecently(shellCtx.root)) return;
-  const face = shellswap.hostFace();
+  const face = shellswap.hostFace(process.platform, next); // the staged shell's program (Pangmote.exe; MyRemote.exe before 0.10.0)
   if (SHELL_SWAP_TRIAL) face.args = ['--host', '--localtest', '--no-client', '--shell-swap'];
   shellBeginning = true;
   // Quits only once the script runs (begin resolves). A session that began meanwhile keeps the host: the
@@ -1096,7 +1105,7 @@ async function askUpdate() {
   try {
     const pack = a.kind === 'package', notes = notesIn(a.notes).map((x) => '· ' + x).join('\n');
     const r = await dialog.showMessageBox(win, {
-      type: 'question', title: 'My Remote Host', noLink: true, defaultId: 0, cancelId: 1,
+      type: 'question', title: 'Pangmote Host', noLink: true, defaultId: 0, cancelId: 1,
       buttons: [pack ? t('내려받기 페이지 열기') : t('지금 업데이트'), t('나중에')],
       message: pack ? t('새 버전 {0}이 있습니다', a.version) : t('새 버전 {0}이 있습니다. 지금 업데이트할까요?', a.version),
       detail: [pack ? t('이 버전은 새 설치 파일이 필요합니다. 내려받아 다시 설치해 주세요(접속 키와 설정은 그대로 남습니다).') : '', notes,
@@ -1116,7 +1125,7 @@ function offerAssist() {
     remote: () => sessionLive,
     notify: send,
     ask: async () => (await dialog.showMessageBox(win, {
-      type: 'question', title: 'My Remote Host', noLink: true, defaultId: 0, cancelId: 1,
+      type: 'question', title: 'Pangmote Host', noLink: true, defaultId: 0, cancelId: 1,
       message: t('잠금 화면에서도 원격 조종을 켤까요? (권장)'),
       detail: t('켜 두면 이 PC가 잠겨 있을 때도 다른 PC에서 잠금 화면을 보고 비밀번호를 입력해 잠금을 풀 수 있습니다. Chrome 원격 데스크톱과 같은 방식이고, 비밀번호는 그대로 필요합니다.') + '\n\n' +
         t('"켜기"를 누르면 Windows가 관리자 승인(UAC)을 한 번 묻습니다. 나중에 이 창의 "잠금 화면에서도 원격 조종"에서 켜거나 끌 수 있습니다.'),
@@ -1142,7 +1151,7 @@ function trayMenu() {
 }
 function createTray() {
   tray = new Tray(icon(false));
-  tray.setToolTip('My Remote Host — ' + t('대기 중'));
+  tray.setToolTip('Pangmote Host — ' + t('대기 중'));
   tray.setContextMenu(trayMenu());
   tray.on('click', showWindow);
 }
@@ -1318,7 +1327,7 @@ else {
       if (!live) setTimeout(followNewer, 3000); // a version the client app installed meanwhile: now (the client may reconnect first)
       if (live && shellLook) shellLook.abort(); // a new shell is fetched another time, not over the session's bandwidth
       if (!live) setTimeout(shellSwapIfFits, 60e3); // a new shell staged: swapped once the client has not reconnected for a minute
-      if (live && !SELFTEST && !BENCH && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: t('원격 접속이 시작되었습니다.') }).show();
+      if (live && !SELFTEST && !BENCH && Notification.isSupported()) new Notification({ title: 'Pangmote Host', body: t('원격 접속이 시작되었습니다.') }).show();
       // The assist service, when installed: the lock screen for the session's client. Not in the
       // automated runs (the self-test and the bench must not depend on what this PC has installed).
       if (assist.supported && !SELFTEST && !BENCH) {
@@ -1452,7 +1461,7 @@ else {
       if (!win || win.isDestroyed()) return;
       showWindow();
       win.flashFrame(true);
-      if (!ISOLATED && Notification.isSupported()) new Notification({ title: 'My Remote Host', body: t('새 기기가 접속을 요청했습니다: {0}. 호스트 창에서 허용하거나 거부하세요.', String(name || '').slice(0, 60)) }).show();
+      if (!ISOLATED && Notification.isSupported()) new Notification({ title: 'Pangmote Host', body: t('새 기기가 접속을 요청했습니다: {0}. 호스트 창에서 허용하거나 거부하세요.', String(name || '').slice(0, 60)) }).show();
     });
     ipcMain.handle('gate-set', async (_e, on) => {
       if (!on && remoteNow()) return { ok: false, why: 'remote', ...gateInfo() };
@@ -1533,7 +1542,7 @@ else {
     });
     ipcMain.handle('export-client', async () => {
       if (ISOLATED) return null;
-      const r = await dialog.showSaveDialog(win, { defaultPath: 'my-remote-client.html', filters: [{ name: 'HTML', extensions: ['html'] }] });
+      const r = await dialog.showSaveDialog(win, { defaultPath: 'pangmote-client.html', filters: [{ name: 'HTML', extensions: ['html'] }] });
       if (r.canceled || !r.filePath) return null;
       fs.writeFileSync(r.filePath, buildLoaderHtml());
       return r.filePath;
@@ -1545,7 +1554,7 @@ else {
     // settings until it is fixed, and says so. (Without a usable key it asked before starting.)
     if (cfgIssue) {
       dialog.showMessageBox({
-        type: 'warning', title: 'My Remote Host', noLink: true, message: t('설정 파일을 읽지 못해 기본 설정으로 실행합니다'),
+        type: 'warning', title: 'Pangmote Host', noLink: true, message: t('설정 파일을 읽지 못해 기본 설정으로 실행합니다'),
         detail: `${cfgIssue}\n\n${t("접속 키는 파일에서 찾아 그대로 쓰므로 원격 접속은 계속 됩니다. 파일은 바꾸지 않았습니다. 고친 뒤 트레이 메뉴의 '다시 시작'을 누르면 설정이 적용됩니다.")}\n\n${cfgPath()}`,
       }).catch(() => {});
     }
@@ -1573,7 +1582,7 @@ else {
     if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged, pageKey: testPageKeyPub, getClientApp, inputGuardHb: () => startInputGuard.hb || null });
     if (BENCH) require('./bench').run({ cfg, bench: benchCfg, buildClientHtml, app });
     if (LOCALTEST) {
-      const file = path.join(app.getPath('userData'), 'my-remote-localtest.html');
+      const file = path.join(app.getPath('userData'), 'pangmote-localtest.html');
       fs.writeFileSync(file, buildLoaderHtml('k=' + cfg.key + '&auto&ro'));
       // Windows: the default browser (Edge or Chrome). Elsewhere that is often Firefox, which the client
       // page is not made for, so the client app (client/main.js) shows it, with a profile of its own.

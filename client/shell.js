@@ -165,8 +165,8 @@ function personsDrop() {
   return true;
 }
 // Received files wait here until they are placed: this user's own folder (on Linux the temp folder is shared by all users).
-const stageDir = () => (process.platform === 'win32' ? path.join(os.tmpdir(), 'my-remote-drop')
-  : path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'my-remote-drop'));
+const stageDir = (name = 'pangmote-drop') => (process.platform === 'win32' ? path.join(os.tmpdir(), name)
+  : path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), name));
 // Moves a received file or folder into `dir` under a free name; across drives it is copied.
 function moveInto(dir, file) {
   const to = freePath(dir, path.basename(file));
@@ -418,8 +418,11 @@ function setupIpc() {
     if (!o || !o.on) { ghostOff(); return true; }
     return ghostOn(o).catch((err) => { console.error('drag ghost', err); return false; });
   });
-  // Received files that were never placed are thrown away after two days.
+  // Received files that were never placed are thrown away after two days (also in the folder of the program's
+  // old name, my-remote-drop, up to 0.9.x).
   sweep(stageDir(), 2 * 86400000);
+  sweep(stageDir('my-remote-drop'), 2 * 86400000);
+  try { fs.rmdirSync(stageDir('my-remote-drop')); } catch {} // only when nothing is left in it
   // The buttons are read every 25 ms while one of our windows has the focus (a drag out of the
   // picture begins with a press in one, which gives it the focus) or a button is held. Windows only.
   if (process.platform === 'win32') {

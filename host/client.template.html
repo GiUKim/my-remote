@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, interactive-widget=resizes-content">
-<title>My Remote</title>
+<title>Pangmote</title>
 <style>
   html, body { height: 100%; margin: 0; background: #000; color: #e6e8eb; font: 14px/1.5 var(--mr-font); overflow: hidden; user-select: none; }
   input, textarea { user-select: text; }
@@ -202,7 +202,7 @@
   <div style="margin-top:10px"><button id="askCancel" style="background:#343c48" data-i18n>취소</button></div>
 </div></div>
 <div id="panel"><div class="box">
-  <h2 style="margin:0 0 6px">My Remote</h2>
+  <h2 style="margin:0 0 6px">Pangmote</h2>
   <small id="keyHint" data-i18n>호스트 프로그램의 접속 키, 또는 호스트에서 받은 1회용 코드를 입력하세요.</small>
   <input id="key" type="password" placeholder="접속 키 또는 1회용 코드" autocomplete="off" spellcheck="false" data-i18n-placeholder>
   <div style="margin-top:12px"><button id="go" data-i18n>접속</button></div>
@@ -1774,10 +1774,10 @@ async function clientScreens() {
 }
 function openView(sel, scr, screenIdx) {
   const feat = scr ? `popup,left=${scr.availLeft},top=${scr.availTop},width=${scr.availWidth},height=${scr.availHeight}` : 'popup,width=1280,height=720';
-  const w = window.open('', 'myremote_v' + (++winSeq), feat);
+  const w = window.open('', 'pangmote_v' + (++winSeq), feat);
   if (!w) return null;
   const d = w.document;
-  d.title = 'My Remote';
+  d.title = 'Pangmote';
   d.body.textContent = '';
   d.documentElement.lang = LANG; // its fonts (I18N.fonts): a window of its own has none of this page's styles
   I18N.fonts(d);
@@ -3045,7 +3045,7 @@ function buildReport() {
   const c = samples.find((x) => x.conn === b.conn);
   const pk = (b.lost - c.lost) + (b.recv - c.recv);
   const L = [];
-  L.push(tr('My Remote 진단 — {0}', new Date().toLocaleString(LANG)));
+  L.push(tr('Pangmote 진단 — {0}', new Date().toLocaleString(LANG)));
   L.push(tr('구간: 최근 {0}초', Math.round((b.t - a.t) / 1000)));
   L.push(tr('브라우저: {0} · 이 화면 {1}x{2} 배율 {3}', (navigator.userAgent.match(/(Edg|Chrome)\/[\d.]+/g) || ['?']).pop(), screen.width, screen.height, window.devicePixelRatio));
   L.push(tr('창: {0}', liveViews().map((v) => `[${label(v.sel)} ${v.fit} ${v.root.clientWidth}x${v.root.clientHeight}${v.win.document.fullscreenElement ? ' ' + tr('전체화면') : ''}]`).join(' ')));

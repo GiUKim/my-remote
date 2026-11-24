@@ -22,6 +22,9 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
+// The app's id in what a release signs (latest.json here, packages.json and the client page's statement in the
+// code). It is the program's old name (My Remote, up to 0.9.x; Pangmote since 0.10.0) and stays so: every
+// installed app takes only manifests of this id, so a new one would end updates for all of them.
 const APP = 'my-remote';
 const MAX_FILES = 2000, MAX_BYTES = 64 * 1024 * 1024, MAX_MANIFEST = 512 * 1024;
 const TRIAL_STARTS = 2; // a new version gets this many starts to say it is up

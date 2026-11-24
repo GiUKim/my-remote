@@ -2,11 +2,14 @@
 //   node release/package.js [--release=dist/release] [--out=dist/pack] [--no-archive] [--config=<update-config.json>]
 //                           [--signed-exe=<file>] [--require-signed]
 //   node release/package.js --exe-only=<folder>   only the Windows program, unsigned (what sign.yml has signed)
-// -> dist/pack/MyRemote/                       the app: unpack anywhere and start it
-//    dist/pack/MyRemote-Windows-x64.zip        (on Windows), MyRemote-Linux-x64.tar.gz (on Linux)
-//    dist/pack/MyRemote-<OS>-x64.package.json  what release/build.js --sign-packages lists in packages.json
+// -> dist/pack/Pangmote/                       the app: unpack anywhere and start it
+//    dist/pack/Pangmote-Windows-x64.zip        (on Windows), Pangmote-Linux-x64.tar.gz (on Linux)
+//    dist/pack/Pangmote-<OS>-x64.package.json  what release/build.js --sign-packages lists in packages.json
 //                                              (the archive's SHA-256 and the shell it holds: shell.json)
-// The names carry no version: the download links point at "the latest release's MyRemote-Windows-x64.zip"
+// (Up to 0.9.x, when the program was called My Remote: MyRemote/, MyRemote.exe, my-remote, my-remote.sh and
+// MyRemote-<OS>-x64.*. Installed apps of those packages take one of these by the shell swap: see
+// host/shellswap.js.)
+// The names carry no version: the download links point at "the latest release's Pangmote-Windows-x64.zip"
 // (https://github.com/<owner>/<repo>/releases/latest/download/<name>), and the app updates itself, so a
 // version in the folder's name would soon be the wrong one. The version is in the folder's read-me.
 //
@@ -17,8 +20,8 @@
 // Linux on a Linux machine (file modes and links survive there), macOS on a Mac (where it must also be
 // signed to run at all; not done).
 //
-// On Windows MyRemote.exe is the one file SmartScreen judges ("Windows protected your PC" on a first start
-// from a downloaded zip). Signed, it is taken from dist/signed/<Electron version>/MyRemote.exe (or
+// On Windows Pangmote.exe is the one file SmartScreen judges ("Windows protected your PC" on a first start
+// from a downloaded zip). Signed, it is taken from dist/signed/<Electron version>/Pangmote.exe (or
 // --signed-exe): .github/workflows/sign.yml has SignPath sign the program this script makes with
 // --exe-only, and release/signed-exe.js checks that the signed file is exactly that program with a valid,
 // timestamped signature of the SignPath Foundation before it goes in (a file that fails stops the package).
@@ -40,10 +43,11 @@ const signedExe = require('./signed-exe');
 // only the code costs them no download. The shell's own files are hashed with their line ends made plain
 // (a Windows checkout has CRLF), with the config and package.json without the release's version. Raise
 // SHELL_REV when this file changes what a package holds in another way (the exe's resources, what it copies).
-const SHELL_REV = 1;
+// 2: the program's new name (0.10.0: Pangmote.exe, pangmote, pangmote.sh, the exe's version strings).
+const SHELL_REV = 2;
 function shellInfo({ shell, conf, electron, koffi }) {
   const h = crypto.createHash('sha256');
-  for (const f of ['boot.js', 'core.js', 'updater.js', 'guard.js', 'my-remote.sh', 'icon.png', 'icon.ico']) {
+  for (const f of ['boot.js', 'core.js', 'updater.js', 'guard.js', 'pangmote.sh', 'icon.png', 'icon.ico']) {
     const p = path.join(ROOT, 'app', f);
     if (!fs.existsSync(p)) continue;
     let b = fs.readFileSync(p);
@@ -63,7 +67,8 @@ const arg = (name) => { const a = process.argv.find((x) => x.startsWith(`--${nam
 // version resource, rewritten in place. Every value keeps its length in UTF-16 (a shorter one ends early
 // with NULs, which every reader stops at), so nothing in the resource section moves and no outside tool
 // touches the release. Only the .rsrc section is searched. The copyright of Electron stays as it is.
-const BRAND = { FileDescription: 'MyRemote', ProductName: 'MyRemote', CompanyName: 'MyRemote', InternalName: 'MyRemote', OriginalFilename: 'MyRemote.exe' };
+// (Pangmote, like MyRemote before it, is as long as Electron: 8 characters, 12 with .exe.)
+const BRAND = { FileDescription: 'Pangmote', ProductName: 'Pangmote', CompanyName: 'Pangmote', InternalName: 'Pangmote', OriginalFilename: 'Pangmote.exe' };
 function rsrcRange(b) {
   const pe = b.readUInt32LE(0x3c);
   if (b.toString('latin1', pe, pe + 4) !== 'PE\0\0') throw new Error('not a PE file');
@@ -109,7 +114,7 @@ function brandExe(file) {
 
 const ELECTRON_DIST = path.join(ROOT, 'host', 'node_modules', 'electron', 'dist');
 const electronVersion = () => fs.readFileSync(path.join(ELECTRON_DIST, 'version'), 'utf8').trim();
-const signedDefault = () => path.join(ROOT, 'dist', 'signed', electronVersion(), 'MyRemote.exe');
+const signedDefault = () => path.join(ROOT, 'dist', 'signed', electronVersion(), 'Pangmote.exe');
 
 // The Windows program alone, as a package holds it before signing (sign.yml uploads it to be signed).
 // -> { file, electron, sha256 }
@@ -118,7 +123,7 @@ function exeOnly(out) {
   const src = path.join(ELECTRON_DIST, 'electron.exe');
   if (!fs.existsSync(src)) throw new Error('Electron is not installed under host/node_modules (run setup first)');
   fs.mkdirSync(out, { recursive: true });
-  const file = path.join(out, 'MyRemote.exe');
+  const file = path.join(out, 'Pangmote.exe');
   fs.copyFileSync(src, file);
   brandExe(file);
   return { file, electron: electronVersion(), sha256: core.sha256(fs.readFileSync(file)) };
@@ -128,14 +133,14 @@ function exeOnly(out) {
 function takeSigned(exe, { signedFile, requireSigned, say }) {
   const file = signedFile || signedDefault();
   if (!fs.existsSync(file)) {
-    if (requireSigned || signedFile) throw new Error(`no signed MyRemote.exe at ${file} (have .github/workflows/sign.yml sign Electron ${electronVersion()}, then fetch its artifact there)`);
-    say(`MyRemote.exe is NOT signed (no ${path.relative(ROOT, file)}): Windows SmartScreen warns at its first start`);
+    if (requireSigned || signedFile) throw new Error(`no signed Pangmote.exe at ${file} (have .github/workflows/sign.yml sign Electron ${electronVersion()}, then fetch its artifact there)`);
+    say(`Pangmote.exe is NOT signed (no ${path.relative(ROOT, file)}): Windows SmartScreen warns at its first start`);
     return '';
   }
   const r = signedExe.check(file, exe);
   if (!r.ok) throw new Error(`${file} is not this program signed: ${r.why}`);
   fs.copyFileSync(file, exe);
-  say(`MyRemote.exe signed by ${r.signer}`);
+  say(`Pangmote.exe signed by ${r.signer}`);
   return r.signer;
 }
 
@@ -152,7 +157,7 @@ function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(RO
   if (process.platform === 'darwin') throw new Error('macOS packages are not made yet (they must be signed on a Mac)');
 
   const OS = { win32: 'Windows', linux: 'Linux', darwin: 'macOS' }[process.platform] || process.platform;
-  const folder = 'MyRemote', name = `MyRemote-${OS}-${process.arch}`, dir = path.join(out, folder);
+  const folder = 'Pangmote', name = `Pangmote-${OS}-${process.arch}`, dir = path.join(out, folder);
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(out, { recursive: true });
   say(`copying Electron ${fs.readFileSync(path.join(dist, 'version'), 'utf8').trim()} ...`);
@@ -160,11 +165,11 @@ function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(RO
   fs.cpSync(dist, dir, { recursive: true, verbatimSymlinks: true, filter: (src) => !/[\\/]locales[\\/](?!ko\.pak$|en-US\.pak$)[^\\/]+$/.test(src) && !/[\\/]resources[\\/]default_app\.asar$/.test(src) });
   // Names without spaces and in ASCII only, here and for everything else the package holds or the app
   // makes (shortcuts, profile folders): a space or Korean in a path trips some tools and some systems.
-  fs.renameSync(path.join(dir, exe), path.join(dir, win ? 'MyRemote.exe' : 'my-remote'));
+  fs.renameSync(path.join(dir, exe), path.join(dir, win ? 'Pangmote.exe' : 'pangmote'));
   let signed = '';
   if (win) {
-    brandExe(path.join(dir, 'MyRemote.exe'));
-    signed = takeSigned(path.join(dir, 'MyRemote.exe'), { signedFile, requireSigned, say });
+    brandExe(path.join(dir, 'Pangmote.exe'));
+    signed = takeSigned(path.join(dir, 'Pangmote.exe'), { signedFile, requireSigned, say });
   }
 
   const app = path.join(dir, 'resources', 'app');
@@ -182,15 +187,15 @@ function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(RO
   const info = shellInfo({ shell, conf, electron: fs.readFileSync(path.join(dist, 'version'), 'utf8').trim(), koffi: JSON.parse(fs.readFileSync(path.join(koffi, 'package.json'), 'utf8')).version });
   fs.writeFileSync(path.join(app, 'shell.json'), JSON.stringify(info, null, 1) + '\n');
   if (!win) {
-    fs.copyFileSync(path.join(ROOT, 'app', 'my-remote.sh'), path.join(dir, 'my-remote.sh'));
-    fs.chmodSync(path.join(dir, 'my-remote.sh'), 0o755);
+    fs.copyFileSync(path.join(ROOT, 'app', 'pangmote.sh'), path.join(dir, 'pangmote.sh'));
+    fs.chmodSync(path.join(dir, 'pangmote.sh'), 0o755);
   }
   // On Windows the text starts with a byte order mark, so that every Notepad reads its Korean as UTF-8.
   fs.writeFileSync(path.join(dir, 'README.txt'), (win ? '\uFEFF' : '') + [
-    `My Remote ${version}`, '',
-    win ? 'MyRemote.exe를 실행하면 시작 화면에서 "이 PC 공유"(호스트) 또는 "다른 PC에 접속"(클라이언트)을 고릅니다. 시작 메뉴에 MyRemote 바로가기를 만들 수 있습니다.'
-      : './my-remote.sh 를 실행하면 (X11 세션) 시작 화면에서 "이 PC 공유"(호스트) 또는 "다른 PC에 접속"(클라이언트)을 고릅니다. 앱 메뉴에 My Remote를 만들 수 있습니다.',
-    '한글이나 띄어쓰기가 없는 경로에 풀어 두기를 권합니다 (예: ' + (win ? 'C:\\MyRemote' : '~/MyRemote') + ').',
+    `Pangmote ${version}`, '',
+    win ? 'Pangmote.exe를 실행하면 시작 화면에서 "이 PC 공유"(호스트) 또는 "다른 PC에 접속"(클라이언트)을 고릅니다. 시작 메뉴에 Pangmote 바로가기를 만들 수 있습니다.'
+      : './pangmote.sh 를 실행하면 (X11 세션) 시작 화면에서 "이 PC 공유"(호스트) 또는 "다른 PC에 접속"(클라이언트)을 고릅니다. 앱 메뉴에 Pangmote를 만들 수 있습니다.',
+    '한글이나 띄어쓰기가 없는 경로에 풀어 두기를 권합니다 (예: ' + (win ? 'C:\\Pangmote' : '~/Pangmote') + ').',
     '이 폴더는 옮기지 말고 그대로 두세요(바로가기가 이 위치를 가리킵니다). 지우려면 이 폴더와 바로가기를 지우면 됩니다.',
     '새 버전은 앱이 알아서 확인하고 알려 줍니다.', '',
   ].join(win ? '\r\n' : '\n'));
@@ -233,7 +238,7 @@ if (require.main === module) {
   try {
     if (arg('exe-only')) {
       const r = exeOnly(arg('exe-only'));
-      console.log(`MyRemote.exe of Electron ${r.electron}, unsigned: ${r.file}, sha256 ${r.sha256}`);
+      console.log(`Pangmote.exe of Electron ${r.electron}, unsigned: ${r.file}, sha256 ${r.sha256}`);
       return;
     }
     const r = pack({ release: arg('release'), out: arg('out'), config: arg('config'), archive: !process.argv.includes('--no-archive'), signedFile: arg('signed-exe'), requireSigned: process.argv.includes('--require-signed') });

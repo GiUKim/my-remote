@@ -54,7 +54,7 @@ jobs:
         run: node release/ci-run.js node release/test-keylock.js
       - name: The languages (every text translated, holes, tags, plurals, quoted names; the translator; the setting)
         run: node release/ci-run.js node release/test-i18n.js
-      - name: The check of a signed MyRemote.exe before a package takes it (the byte rules)
+      - name: The check of a signed Pangmote.exe before a package takes it (the byte rules)
         run: node release/ci-run.js node release/test-signed-exe.js
 
   native:
@@ -90,7 +90,7 @@ jobs:
           node node_modules/electron/install.js
       - name: Assist service protocol (fake service, no input)
         run: node release/ci-run.js node release/test-assist.js
-      - name: The check of a signed MyRemote.exe (with Windows' own Authenticode verdict, on node.exe's real signature)
+      - name: The check of a signed Pangmote.exe (with Windows' own Authenticode verdict, on node.exe's real signature)
         run: node release/ci-run.js node release/test-signed-exe.js
       - name: The shell replaced by a newer package (the PowerShell swap script on fake folders)
         run: node release/ci-run.js node release/test-shellswap.js

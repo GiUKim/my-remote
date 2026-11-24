@@ -1,4 +1,4 @@
-// Shell operations My Remote needs natively on Windows. Built by native/build.js into
+// Shell operations Pangmote needs natively on Windows. Built by native/build.js into
 // host/bin/shellops.dll and loaded through koffi by the host (and the client app).
 //
 //   int so_drop(const wchar_t *paths, int effects, int timeoutMs)
@@ -154,13 +154,13 @@ HWND catchPress() {
     WNDCLASSW wc{};
     wc.lpfnWndProc = catcherProc;
     wc.hInstance = inst;
-    wc.lpszClassName = L"MyRemoteDropCatcher";
+    wc.lpszClassName = L"PangmoteDropCatcher";
     cls = RegisterClassW(&wc);
     if (!cls) { fail("RegisterClass", HRESULT_FROM_WIN32(GetLastError())); return nullptr; }
   }
   POINT pt{};
   GetCursorPos(&pt);
-  HWND w = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_LAYERED, L"MyRemoteDropCatcher", L"", WS_POPUP,
+  HWND w = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_LAYERED, L"PangmoteDropCatcher", L"", WS_POPUP,
                            pt.x - 4, pt.y - 4, 8, 8, nullptr, nullptr, inst, nullptr);
   if (!w) { fail("CreateWindow", HRESULT_FROM_WIN32(GetLastError())); return nullptr; }
   SetLayeredWindowAttributes(w, 0, 1, LWA_ALPHA);

@@ -1,6 +1,6 @@
 # Privacy policy
 
-My Remote collects no usage data, analytics, crash reports or anything else about you, and this project runs
+Pangmote (called My Remote up to version 0.9.x) collects no usage data, analytics, crash reports or anything else about you, and this project runs
 no server of its own. The program connects to other systems only for what it does:
 
 | What | To where | When | What they see |
@@ -19,15 +19,15 @@ no server of its own. The program connects to other systems only for what it doe
   you click them.
 - **No spell checker:** the program turns off the engine's spell checker, which would otherwise fetch a
   dictionary from Google's servers.
-- A client opened as `my-remote-client.html` in a browser is also subject to that browser's own behaviour.
+- A client opened as `pangmote-client.html` in a browser is also subject to that browser's own behaviour.
 
-This policy covers the program as published here. Questions: [open an issue](https://github.com/GiUKim/my-remote/issues).
+This policy covers the program as published here. Questions: [open an issue](https://github.com/GiUKim/pangmote/issues).
 
 ---
 
 ## 개인정보 처리 방침
 
-My Remote는 사용 기록, 분석 정보, 오류 보고 등 사용자에 대한 어떤 정보도 모으지 않으며, 이 프로젝트가 운영하는
+Pangmote(0.9.x까지의 이름은 My Remote)는 사용 기록, 분석 정보, 오류 보고 등 사용자에 대한 어떤 정보도 모으지 않으며, 이 프로젝트가 운영하는
 서버도 없습니다. 프로그램은 하는 일에 필요한 곳에만 접속합니다.
 
 | 무엇 | 어디로 | 언제 | 그쪽에서 보이는 것 |
@@ -43,6 +43,6 @@ My Remote는 사용 기록, 분석 정보, 오류 보고 등 사용자에 대한
   숫자), 설정. 어디로도 보내지 않습니다.
 - **프로그램 안의 링크**(후원, 문제 신고, 업무용 문의)는 누를 때만 브라우저로 열립니다.
 - **맞춤법 검사 없음:** 엔진의 맞춤법 검사를 꺼서, Google 서버에서 사전을 내려받지 않습니다.
-- 브라우저로 연 `my-remote-client.html`에는 그 브라우저 자체의 동작도 적용됩니다.
+- 브라우저로 연 `pangmote-client.html`에는 그 브라우저 자체의 동작도 적용됩니다.
 
-문의: [이슈 열기](https://github.com/GiUKim/my-remote/issues)
+문의: [이슈 열기](https://github.com/GiUKim/pangmote/issues)

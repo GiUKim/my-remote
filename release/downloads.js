@@ -2,21 +2,21 @@
 // counting in the app, nothing sent by it. node release/downloads.js [--json]
 //
 // What each file's count means (the feed is releases/latest/download/, see app/update-config.json):
-//  - MyRemote-Windows-x64.zip, MyRemote-Linux-x64.tar.gz: someone downloaded the package (README buttons, a shared
+//  - Pangmote-Windows-x64.zip, Pangmote-Linux-x64.tar.gz (MyRemote-* up to 0.9.x): someone downloaded the package (README buttons, a shared
 //    link) = new installs, plus, for a release whose shell is new, the installed apps that swap their shell (0.9.3).
-//  - my-remote-<version>.bundle: installed apps that took this update (about one per PC that updated).
+//  - pangmote-<version>.bundle (my-remote-<version>.bundle up to 0.9.x): installed apps that took this update (about one per PC that updated).
 //  - latest.json: every running app looks every 6 hours and 20 s after it starts (app/updater.js), host and client
 //    app each: so (fetches per day) / 4 is a rough count of apps running at once - high when apps are started often,
 //    low when PCs are off for part of the day. Counted toward whichever release was the latest at the time.
 // This PC's own checks count too (release/feed-check.js after publishing fetches every file once).
 'use strict';
-const REPO = 'GiUKim/my-remote';
+const REPO = 'GiUKim/pangmote';
 const DAY = 86400e3;
 
 async function releases() {
   const out = [];
   for (let page = 1; page <= 10; page++) {
-    const r = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=100&page=${page}`, { headers: { 'User-Agent': 'my-remote-downloads', Accept: 'application/vnd.github+json' } });
+    const r = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=100&page=${page}`, { headers: { 'User-Agent': 'pangmote-downloads', Accept: 'application/vnd.github+json' } });
     if (!r.ok) throw new Error(`GitHub API ${r.status}: ${(await r.text()).slice(0, 200)}`);
     const list = await r.json();
     out.push(...list);

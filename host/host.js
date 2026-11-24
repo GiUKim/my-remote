@@ -1267,8 +1267,8 @@ function showOneTime() {
     } else {
       const s = Math.max(0, Math.round((o.until - Date.now()) / 1000));
       $('otState').textContent = t('— {0} 남음', `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
-      $('otText').textContent = o.auto ? t('이 코드를 도와줄 사람에게 알려 주세요. 그 사람이 My Remote 클라이언트의 접속 키 칸에 이 코드를 넣으면 허용 카드 없이 바로 연결됩니다.')
-        : t('이 코드를 도와줄 사람에게 알려 주세요. 그 사람이 My Remote 클라이언트의 접속 키 칸에 이 코드를 넣으면 이 창에 허용 카드가 뜹니다.');
+      $('otText').textContent = o.auto ? t('이 코드를 도와줄 사람에게 알려 주세요. 그 사람이 Pangmote 클라이언트의 접속 키 칸에 이 코드를 넣으면 허용 카드 없이 바로 연결됩니다.')
+        : t('이 코드를 도와줄 사람에게 알려 주세요. 그 사람이 Pangmote 클라이언트의 접속 키 칸에 이 코드를 넣으면 이 창에 허용 카드가 뜹니다.');
     }
   };
   tick();
@@ -1439,7 +1439,7 @@ function showUpdate(u) {
   if (!u) return;
   lastUpdate = u;
   $('ver').textContent = 'v' + u.version + (u.installed ? '' : ' · ' + t('소스 폴더에서 실행 중'));
-  document.title = 'My Remote Host v' + u.version; // the window's title too
+  document.title = 'Pangmote Host v' + u.version; // the window's title too
   // "업데이트 확인": the installed app with a feed (from a source folder updates come by git).
   $('updCheck').style.display = u.installed && u.state && u.state !== 'off' && u.state !== 'none' ? '' : 'none';
   $('updCheck').disabled = ['checking', 'downloading', 'ready'].includes(u.state);

@@ -70,7 +70,7 @@ const newSecret = () => base32(crypto.randomBytes(20));
 // The address an authenticator app scans (Google's otpauth:// form, which they all read). The label (the
 // computer's name) is cut so that the address fits a QR code (host/qr.js: 213 bytes; a long Korean name
 // takes 9 bytes a letter once escaped).
-function uri({ secret, label, issuer = 'MyRemote' }) {
+function uri({ secret, label, issuer = 'Pangmote' }) {
   const enc = (s) => encodeURIComponent(String(s));
   let name = Array.from(String(label || 'PC'));
   while (name.length > 1 && enc(name.join('')).length > 60) name = name.slice(0, -1);

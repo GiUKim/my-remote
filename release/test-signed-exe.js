@@ -1,4 +1,4 @@
-// The check of a signed MyRemote.exe (release/signed-exe.js) before a package takes it: the same program with
+// The check of a signed Pangmote.exe (release/signed-exe.js) before a package takes it: the same program with
 // only a signature appended, a valid and timestamped Authenticode signature, the expected signer. Plain Node.
 // The byte rules run everywhere on a committed DLL with a made-up signature table; on Windows the whole check
 // also runs on this Node's own node.exe, whose builds carry a real embedded signature (the OpenJS
@@ -51,7 +51,7 @@ function fakeSign(b, { pad = 0, tail = 0, padByte = 0 } = {}) {
 
   if (process.platform !== 'win32') info('the Authenticode part runs on Windows only (Get-AuthenticodeSignature)');
   else {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'myremote-signcheck-'));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-signcheck-'));
     try {
       const real = fs.readFileSync(process.execPath), L = se.peLayout(real), v = se.authenticode(process.execPath);
       if (!L.certAt || v.status !== 'Valid' || !v.timestamped) info(`this node.exe carries no valid, timestamped embedded signature (${v.status}): the real-signature checks are skipped`);

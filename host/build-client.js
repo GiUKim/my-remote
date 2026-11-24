@@ -6,7 +6,7 @@
 //   buildLoader()  the small file a client PC keeps. It asks for the key, fetches
 //                  the full page from the host and runs it.
 //
-//   node build-client.js [signaling-server-url]   -> ../my-remote-client.html (the loader)
+//   node build-client.js [signaling-server-url]   -> ../pangmote-client.html (the loader)
 // Neither output ever contains an access key.
 const fs = require('fs');
 const path = require('path');
@@ -43,7 +43,7 @@ const DEFAULT_SERVER = 'https://ntfy.sh';
 module.exports = { build, buildLoader, fillText, DEFAULT_SERVER };
 
 if (require.main === module) {
-  const out = path.join(__dirname, '..', 'my-remote-client.html');
+  const out = path.join(__dirname, '..', 'pangmote-client.html');
   fs.writeFileSync(out, buildLoader(process.argv[2] || 'https://ntfy.sh'));
   console.log('wrote', out);
   // The web page on GitHub Pages (docs/index.html) uses the app's own translator and flag picker: a copy, which
