@@ -23,6 +23,14 @@ let langStore = null, LANG = 'ko', t = I18N.translator('ko'), trayLive = false;
 // every offer (a client app keeps it in its live.json while it controls this PC). Random, so it says nothing.
 const INSTANCE = crypto.randomBytes(12).toString('base64url');
 
+// No spell checker, and so no dictionary fetched from Google's servers: Chromium downloads the Hunspell
+// dictionary of the interface's language into the profile (Dictionaries/ko-3-0.bdic, 11 MB) when a session is
+// set up, text field or not, which the privacy policy (PRIVACY.md) does not name. Only emptying the session's
+// languages stops it (measured, Electron 45: turning the checker off or webPreferences.spellcheck did not);
+// every field here is a key, a code or a name anyway. Registered before the default session exists (app/boot.js
+// loads this file before 'ready'), so every session gets it.
+app.on('session-created', (ses) => { try { ses.setSpellCheckerLanguages([]); ses.setSpellCheckerEnabled(false); } catch {} });
+
 // The native capturer waits for each monitor's next image on a worker thread of the host page's
 // process; the default of four threads would be used up by three monitors. (Inherited by that process.)
 if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = '12';

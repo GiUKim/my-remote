@@ -99,6 +99,14 @@ the client app instead).
   or wherever `--key` / `MY_REMOTE_RELEASE_KEY` points). Whoever has it can send code to every installed
   app. `release/build.js` signs with it and `release/keygen.js` makes it; nothing else touches it, and
   it stays on the machine that makes releases. The tests make keys of their own.
+- **Code signing goes through SignPath only** (the user's choice, 2026-11-24: SignPath Foundation's free
+  certificate for open source, MIT licence; README "Code signing policy", `PRIVACY.md`). Never read, print or
+  set the SignPath API token (the repository secret `SIGNPATH_API_TOKEN`), never ask the user to paste it, and
+  never approve a signing request: approving in SignPath is the user's step (they are the Approver the policy
+  names). A signed `MyRemote.exe` goes into a package only through `release/package.js`, which checks it
+  (`release/signed-exe.js`); never sign anything with a certificate or tool of your own, and keep the policy
+  page true: what it says about who builds, reviews and approves, and `PRIVACY.md` about every connection the
+  program makes (a new one needs a line there before it ships).
 - **Publish a release only when the user asks for one.** Since 2026-11-16 (the user's decision, from
   v0.5.2 on) the agent publishes it, which was the user's step before: CI green on the commit
   (`release/build.js` checks), `release/build.js`, the packages (`release/package.js` on Windows; the
@@ -1111,6 +1119,14 @@ the client app instead).
   key), arrows, Home/End, PgUp/PgDn, Del, F5. Without the person's own codec choice a phone asks for
   H.264 unless `MediaCapabilities` says it decodes AV1 power-efficiently. Not tried on a real phone;
   how a phone gets the loader file (no file:// on iPhone) is not settled.
+- **Chromium fetched a spell-check dictionary by itself** (found 2026-11-24 while writing `PRIVACY.md`): every
+  profile had `Dictionaries/ko-3-0.bdic` (11 MB, from Google's servers), the host's and the client app's alike.
+  Measured with Electron 45.3.4 on Windows in fresh profiles: it is fetched when a session is set up, with a text
+  field or without; `setSpellCheckerEnabled(false)` and `webPreferences.spellcheck: false` do not stop it,
+  `setSpellCheckerDictionaryDownloadURL` only sends it elsewhere, `setSpellCheckerLanguages([])` in the app's
+  `session-created` stops it. `host/main.js` and `client/main.js` do that at their top (app/boot.js requires them
+  before 'ready', so the default session is among them); the self-test fails when its throwaway profile has a
+  dictionary at the end. Linux (Hunspell there too) was not measured separately; macOS uses its own checker.
 - **Electron's main-process `clipboard` is promise-based since Electron 44**: `readText`, `writeText`,
   `read`, `write` (an array of `ClipboardItem`) and `has` return promises; `availableFormats`,
   `readBuffer`, `writeBuffer`, `readHTML` and `readRTF` are gone; formats without a MIME name go as
@@ -1299,8 +1315,26 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
   anything else, so an app installed over a source folder's use keeps the key.
 - **Packages** (`release/package.js`) are made on the platform they are for, from
   `host/node_modules/electron/dist` (nothing else is downloaded): a folder to unpack and run
-  (`MyRemote.exe`, `./my-remote.sh`), zipped as `MyRemote-Windows-x64.zip` / `MyRemote-Linux-x64.tar.gz` holding a folder `MyRemote` (on Windows `MyRemote.exe`'s version resource is rewritten in place to say MyRemote instead of "Electron" by "GitHub, Inc.", which the firewall's prompt, Task Manager and a notification without a shortcut showed: `brandExe` in `release/package.js`, same-length UTF-16 values, no outside tool (installing one was refused by the permission check); the exe's icon is still Electron's, the shortcuts carry ours; `test-app.js --packaged` checks the names Windows reads): no version in the names, so the README's download buttons (`.../releases/latest/download/<name>`) always fetch the newest and a self-updating folder is not named after an old version. No installer, no code signing: Windows SmartScreen warns
-  at the first start. macOS is not built (an unsigned app does not run there). Every file in a package
+  (`MyRemote.exe`, `./my-remote.sh`), zipped as `MyRemote-Windows-x64.zip` / `MyRemote-Linux-x64.tar.gz` holding a folder `MyRemote` (on Windows `MyRemote.exe`'s version resource is rewritten in place to say MyRemote instead of "Electron" by "GitHub, Inc.", which the firewall's prompt, Task Manager and a notification without a shortcut showed: `brandExe` in `release/package.js`, same-length UTF-16 values, no outside tool (installing one was refused by the permission check); the exe's icon is still Electron's, the shortcuts carry ours; `test-app.js --packaged` checks the names Windows reads): no version in the names, so the README's download buttons (`.../releases/latest/download/<name>`) always fetch the newest and a self-updating folder is not named after an old version. No installer. Up to
+  0.9.7 no code signing: Windows SmartScreen warns at the first start ("Windows의 PC 보호", 추가 정보 -> 실행).
+  **Code signing** (prepared 2026-11-24, SignPath's approval of the project pending): SmartScreen judges only the
+  program started, `MyRemote.exe`, and Electron's program branded the same way is byte for byte the same in every
+  release on the same Electron (0.9.5-0.9.7: one hash). So it is signed once per Electron version:
+  `.github/workflows/sign.yml` (by hand) builds it on a GitHub-hosted runner (`release/package.js --exe-only`),
+  SignPath signs it after the user approves (`release/signpath/artifact-configuration.xml` is the project's
+  artifact configuration there), the workflow checks the result and keeps it as the artifact
+  `MyRemote-exe-signed-<Electron>`, and `release/package.js` takes it from `dist/signed/<Electron>/MyRemote.exe`
+  only when `release/signed-exe.js` finds it to be this very program with only a signature appended (the PE
+  checksum and certificate-table entry aside, at most 7 zero bytes of alignment, the table at the end) and Windows'
+  own verdict (`Get-AuthenticodeSignature`) Valid, timestamped and by the SignPath Foundation; else the package
+  stops. The shell's identity leaves the exe's bytes out on purpose: signing makes no installed app fetch a
+  package (an app's own downloads carry no mark of the web, so SmartScreen never sees them). Reputation still
+  has to grow with downloads (EV certificates lost their head start in 2024); it now grows on the certificate
+  too, across Electron versions. Not signed yet: `winassist.exe` and the DLLs (inside the signed bundle, checked
+  by their records and by CI byte for byte; signing them would need those checks to read past a signature).
+  The SignPath Foundation's terms that matter here: OSI licence for everything (MIT), no proprietary parts, the
+  policy on the home and download pages, MFA on GitHub and SignPath, every signing approved by hand, the
+  build on GitHub-hosted runners, a privacy policy that names what the program sends (`PRIVACY.md`). macOS is not built (an unsigned app does not run there). Every file in a package
   is dated when it was made (Electron's own files come dated 1980-01-01 and Windows keeps a copied file's
   date: the unpacked folder showed 1980, the user saw it on 2026-11-16; `test-app.js --packaged` checks).
 - **One app, a start screen with two big buttons** (the user's wish, 2026-11-16: "호스트와 클라이언트를
@@ -1450,12 +1484,13 @@ that asks host or client and the shortcuts in the real Start menu, the client ap
 Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하는 벤치마크, 버그를 잡는 CI/CD"):
 
 - **`.github/workflows/ci.yml`** on every push to `main`, every pull request, by hand and weekly:
-  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-devices.js`, `test-qr.js`, `test-totp.js`, `test-pagecheck.js`, `test-appsync.js`, `test-shellswap.js` with sh, `test-watchdog.js`, `test-cycle.js`, `test-keylock.js`, `test-i18n.js`), `native` (`release/ci-native.js`:
+  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-devices.js`, `test-qr.js`, `test-totp.js`, `test-pagecheck.js`, `test-appsync.js`, `test-shellswap.js` with sh, `test-watchdog.js`, `test-cycle.js`, `test-keylock.js`, `test-i18n.js`, `test-signed-exe.js`), `native` (`release/ci-native.js`:
   every committed binary rebuilt from `native/` with Ubuntu 22.04's mingw-w64 and compared byte for byte),
-  `Windows` (`test-assist.js`, `test-shellswap.js` with PowerShell, `test-watchdog.js`, the self-test with `--client-app-check` (from 2026-11-16: device tokens, and safeStorage's key that only a normal quit writes, are Windows matters), `test-app.js --packaged`), `Linux X11` (the self-test with
+  `Windows` (`test-assist.js`, `test-signed-exe.js` with Windows' Authenticode verdict, `test-shellswap.js` with PowerShell, `test-watchdog.js`, the self-test with `--client-app-check` (from 2026-11-16: device tokens, and safeStorage's key that only a normal quit writes, are Windows matters), `test-app.js --packaged`), `Linux X11` (the self-test with
   `--input-check --clip-check --client-app-check` under Xvfb, `test-app.js --packaged`) and the `performance
   gate` on both (`release/bench-gate.js --profile=ci`). `codeql.yml` scans the JavaScript; `dependabot.yml`
-  proposes Electron/koffi/action updates as pull requests that CI then tests.
+  proposes Electron/koffi/action updates as pull requests that CI then tests. `sign.yml` (by hand only) has
+  SignPath sign `MyRemote.exe` (see "Code signing" under the installed app); without the secret it only builds.
 - **The release gate:** `release/build.js` refuses to build from a commit whose CI has not passed on GitHub
   (every check run finished successfully, each CI job among them; asked anonymously, the repository is
   public). `--skip-ci` overrides it and says so; `--allow-dirty` try-out builds skip it.
@@ -1542,6 +1577,9 @@ Run from `host/` with Electron's env var cleared.
 | `node release/bench-gate.js --profile=dev\|ci` | Runs the bench and fails when a figure leaves `release/bench-thresholds.json` (dev: a development PC; ci: CI machines). About a minute; shows the bench's test picture meanwhile |
 | `node release/test-assist.js` | The host's side of the Windows assist service (`host/assist.js`) against a fake service and helper on test pipes: protocol and version, the pipe-server session checks, input routing per state and its encoding, pictures in pieces, Ctrl+Alt+Del, reconnecting, installing refused during a remote session, the first-start offer. Windows only (skips elsewhere); no input reaches the PC (the sink is recorded, never installed) and nothing runs elevated (`T.elevate`). A few seconds |
 | `host\bin\winassist.exe install`, `uninstall`, `status`, `grab <file.bmp>`, `grabmon <prefix>` | The assist service itself: install/uninstall need an elevated prompt (the host window's card does this through UAC). `grab` writes the current input desktop to a BMP (a secure one only when run as LocalSystem); `grabmon` every monitor as the helper sends them (`<prefix>-<n>.bmp`, rectangles printed). Both are pictures of the person's screen: delete them after looking |
+| `node release/test-signed-exe.js` | The signed-exe check: byte rules everywhere, Windows' Authenticode verdict on node.exe's own signature (taken off and put back, one byte changed). Seconds |
+| `node release/package.js --exe-only=<folder>` | Only `MyRemote.exe` as a package holds it, unsigned (what `sign.yml` uploads to SignPath). Windows |
+| `node release/package.js [--signed-exe=<file>] [--require-signed]` | The package with the signed program from `dist/signed/<Electron>/MyRemote.exe` (or the file given), checked first; `--require-signed` refuses to make an unsigned Windows package |
 | `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept, device tokens (kept, the key let go only for the token that worked, a key given again replaces the token). A second |
 | `node release/test-i18n.js` | The translations (every text of the code in every language, no Korean left, holes, tags, plural forms, French spacing, a quoted button name read as that button), the translator, the PC's language setting. Seconds, no Electron |
 | `node release/downloads.js [--json]` | How much the app is used, from GitHub's own download counters (public API, no counting in the app): per release the package downloads (new installs), the bundle downloads (updates taken) and `latest.json` fetches per day, which / 4 is a rough count of apps running at once (every app looks every 6 h) |
@@ -1595,6 +1633,9 @@ must then be given the new file). Run `npm run selftest` after either.
 | `app/update-config.json`, `app/package.json` | Where updates are fetched from and the public keys that may sign them; the shell's generation (`base`) |
 | `app/my-remote.sh`, `app/icon.png`, `app/icon.ico` | The installed app's launcher on Linux; its icons (drawn by `release/make-icon.js`) |
 | `release/build.js`, `release/package.js`, `release/keygen.js` | Make a release (bundle, signed manifest), the installable package for this platform, the signing key pair |
+| `release/signed-exe.js`, `release/test-signed-exe.js` | The check of a signed `MyRemote.exe` before a package takes it (same program plus a signature; Windows' own verdict: valid, timestamped, SignPath Foundation), and its test (made-up signature tables on a committed DLL; on Windows node.exe's real signature) |
+| `.github/workflows/sign.yml`, `release/signpath/artifact-configuration.xml` | Has SignPath sign `MyRemote.exe` (by hand, once per Electron version, approved in SignPath by the user); the artifact configuration to keep in the SignPath project |
+| `LICENSE`, `PRIVACY.md` | MIT; what the program sends where (required by the code signing policy; keep it true) |
 | `release/test-update.js`, `release/test-app.js` | Tests of the shell: the logic in plain Node, and end to end in Electron |
 | `release/policy.json`, `release/notes/<version>.json` | The oldest version still allowed (set by a critical release); what changed, shown with an update |
 | `host/main.js` | Electron main: config and key storage, monitor enumeration, tray, IPC, isolated modes |

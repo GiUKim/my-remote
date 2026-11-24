@@ -1,0 +1,85 @@
+# Has SignPath sign the Windows program (MyRemote.exe) that the packages hold: Authenticode with the SignPath
+# Foundation's certificate (free code signing for open source; README "Code signing policy"), so that Windows
+# SmartScreen knows who published it. Run it by hand (Actions -> "Sign the Windows program" -> Run workflow, or
+# `gh workflow run sign.yml`) when Electron changed: the program is Electron's with its name rewritten
+# (release/package.js --exe-only), the same bytes for every release on the same Electron. A request waits for
+# an approver in SignPath (who gets an e-mail); the signed program is then checked to be exactly this program
+# with a valid, timestamped signature of the SignPath Foundation (release/signed-exe.js) and kept as the
+# artifact MyRemote-exe-signed-<Electron version>, which release/package.js takes from
+# dist/signed/<Electron version>/MyRemote.exe. Until the repository has the secret SIGNPATH_API_TOKEN (and the
+# variable SIGNPATH_ORGANIZATION_ID), the job makes the unsigned program only and says so.
+name: Sign the Windows program
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: sign
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read # SignPath's connector reads this run and fetches the artifact with the job's token
+
+jobs:
+  sign:
+    name: MyRemote.exe signed through SignPath
+    runs-on: windows-2022 # GitHub-hosted: SignPath signs an open-source build only when every job that led to it ran on one
+    timeout-minutes: 200
+    env:
+      HAVE_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: host/package-lock.json
+      - name: Install (npm ci, then Electron itself)
+        working-directory: host
+        run: |
+          npm ci
+          node node_modules/electron/install.js
+      - name: The program as a package holds it, unsigned
+        id: exe
+        shell: pwsh
+        run: |
+          node release/package.js --exe-only=out/unsigned
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          "electron=$((Get-Content host/node_modules/electron/dist/version -Raw).Trim())" >> $env:GITHUB_OUTPUT
+      - name: Keep the unsigned program (what SignPath signs)
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: MyRemote-exe-unsigned-${{ steps.exe.outputs.electron }}
+          path: out/unsigned/MyRemote.exe
+          if-no-files-found: error
+          retention-days: 7
+      - name: Not signed (SignPath is not set up for this repository yet)
+        if: env.HAVE_SIGNPATH != 'true'
+        run: echo "::warning::No SIGNPATH_API_TOKEN secret or SIGNPATH_ORGANIZATION_ID variable, so the program was made but not signed (README, Code signing policy)"
+      - name: Signed by SignPath (waits for an approver there)
+        if: env.HAVE_SIGNPATH == 'true'
+        uses: signpath/github-action-submit-signing-request@a2c5b60d9c75f073142b653c354b632eedce097b # v3.2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'my-remote' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 10800 # three hours for someone to approve it
+          output-artifact-directory: out/signed
+          parameters: |
+            version: ${{ toJSON(steps.exe.outputs.electron) }}
+      - name: The signed program is this program, validly signed by the SignPath Foundation
+        if: env.HAVE_SIGNPATH == 'true'
+        run: node release/signed-exe.js out/signed/MyRemote.exe out/unsigned/MyRemote.exe
+      - name: Keep the signed program (release/package.js takes it from dist/signed/<Electron version>)
+        if: env.HAVE_SIGNPATH == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: MyRemote-exe-signed-${{ steps.exe.outputs.electron }}
+          path: out/signed/MyRemote.exe
+          if-no-files-found: error
+          retention-days: 90

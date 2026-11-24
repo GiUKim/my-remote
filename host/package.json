@@ -3,6 +3,7 @@
   "version": "0.9.7",
   "description": "Personal P2P remote desktop host (WebRTC, multi-monitor)",
   "main": "main.js",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "start": "electron .",

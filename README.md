@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <sub>🌐 <a href="https://giukim.github.io/my-remote/">소개 페이지 (12개 언어)</a> &nbsp;·&nbsp; 💙 <a href="https://github.com/sponsors/GiUKim">후원</a> &nbsp;·&nbsp; 🏢 <a href="https://github.com/GiUKim/my-remote/issues/new?template=business.yml">업무용 사용 문의</a></sub>
+  <sub>🌐 <a href="https://giukim.github.io/my-remote/">소개 페이지 (12개 언어)</a> &nbsp;·&nbsp; 💙 <a href="https://github.com/sponsors/GiUKim">후원</a> &nbsp;·&nbsp; 🏢 <a href="https://github.com/GiUKim/my-remote/issues/new?template=business.yml">업무용 사용 문의</a> &nbsp;·&nbsp; 🔏 <a href="#code-signing-policy">Code signing policy</a> &nbsp;·&nbsp; 📜 <a href="LICENSE">MIT</a></sub>
 </p>
 
 ### 🐧 Ubuntu는 터미널로도 설치할 수 있습니다
@@ -191,6 +191,22 @@ sudo chown root:root ~/MyRemote/chrome-sandbox && sudo chmod 4755 ~/MyRemote/chr
 
 - **My Remote는 무료입니다.** 쓸모가 있었다면 [GitHub Sponsors](https://github.com/sponsors/GiUKim)로 후원해 주세요.
 - **회사에서 쓰시나요?** [업무용 사용 문의](https://github.com/GiUKim/my-remote/issues/new?template=business.yml)로 규모와 필요한 기능을 알려 주세요. 회사망 안에서의 연결(중계 서버), 여러 PC의 기기 일괄 관리 같은 업무용 기능을 준비하는 데 반영합니다.
+
+## 📜 라이선스 · 개인정보 · 코드 서명
+
+- **라이선스:** [MIT](LICENSE). 누구나 쓰고, 고치고, 다시 배포할 수 있습니다.
+- **개인정보:** 사용 기록이나 개인정보를 모으지 않습니다. 어디에 무엇을 보내는지는 [PRIVACY.md](PRIVACY.md)에 있습니다.
+- **코드 서명:** Windows용 실행 파일은 아래 정책에 따라 SignPath Foundation 인증서로 서명합니다(첫 서명 릴리스 전까지는 서명이 없습니다).
+
+### Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+- Committers and reviewers: [GiUKim](https://github.com/GiUKim)
+- Approvers: [GiUKim](https://github.com/GiUKim)
+- Privacy policy: [PRIVACY.md](PRIVACY.md)
+
+The Windows program of the release packages (`MyRemote.exe` in `MyRemote-Windows-x64.zip`) is built from this repository by its GitHub Actions workflow [sign.yml](.github/workflows/sign.yml) on GitHub-hosted runners and is signed through SignPath only after an approver has confirmed the request. Releases before the first one signed this way carry an unsigned `MyRemote.exe`. Updates that the installed app fetches are checked separately against the project's own release signature.
 
 ## 📚 자세히
 
@@ -837,6 +853,7 @@ node native/build.js 사용자@리눅스PC주소
 3. `node release/build.js`를 실행합니다. 커밋된 내용으로 `dist/release`에 위 세 파일을 만듭니다.
    - 반드시 설치돼야 하는 수정이면 `--critical`을 붙입니다. 그 버전보다 낮은 앱은 묻지 않고 업데이트합니다. 이때 바뀌는 `release/policy.json`도 커밋하세요(이후 릴리스가 계속 그 버전 미만을 강제합니다).
 4. 설치 묶음을 만듭니다. 운영체제마다 그 운영체제에서 `node release/package.js`를 실행합니다(`dist/pack`에 `MyRemote-Windows-x64.zip` 또는 `MyRemote-Linux-x64.tar.gz`, 그리고 그 묶음의 기록 `<이름>.package.json`). 파일 이름에 버전이 없어서, 릴리스에 올리면 이 문서 맨 위의 내려받기 단추가 항상 최신 묶음을 가리킵니다.
+   - **Windows 실행 파일 서명**(위 "Code signing policy"): `MyRemote.exe`는 Electron이 같으면 릴리스마다 같은 파일이라, Electron이 바뀌었을 때만 서명을 새로 받습니다. GitHub의 Actions에서 "Sign the Windows program"을 실행하고(`gh workflow run sign.yml`), SignPath에서 승인한 뒤, 결과물을 `gh run download <실행 번호> -n MyRemote-exe-signed-<Electron 버전> -D dist/signed/<Electron 버전>`으로 받습니다. `package.js`는 `dist/signed/<Electron 버전>/MyRemote.exe`가 이 프로그램에 유효한 SignPath Foundation 서명만 더한 파일인지 확인한 뒤 넣고(아니면 멈춤), 없으면 서명 없이 만들며 그렇다고 알립니다. `--require-signed`를 붙이면 서명 없는 묶음은 만들지 않습니다.
 5. 두 묶음과 그 기록을 한 폴더에 모은 뒤 `node release/build.js --sign-packages=<폴더>`를 실행합니다. 묶음마다 해시를 다시 계산해 `packages.json`(묶음의 SHA-256과 그 안의 바탕 식별값)과 그 서명 `packages.json.sig`를 만듭니다. 설치된 앱은 이 목록으로 앱 바탕을 스스로 바꿉니다(위 "앱 바탕 교체").
 6. 이 저장소의 GitHub 릴리스를 태그 `v<버전>`으로 만들고, `dist/release`의 세 파일, 설치 묶음 두 개, `packages.json`과 `packages.json.sig`를 첨부해 게시합니다. Pre-release로 두면 '최신'으로 치지 않아 내려받기 단추와 업데이트가 그 릴리스를 보지 않습니다. GitHub CLI로는 `gh release create v<버전> <파일 7개> --title "My Remote <버전>" --notes-file <바뀐 점> --latest` 한 줄이면 됩니다.
 

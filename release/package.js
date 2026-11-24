@@ -1,5 +1,7 @@
 // Makes the installable app for the platform this runs on, from a release built by release/build.js:
 //   node release/package.js [--release=dist/release] [--out=dist/pack] [--no-archive] [--config=<update-config.json>]
+//                           [--signed-exe=<file>] [--require-signed]
+//   node release/package.js --exe-only=<folder>   only the Windows program, unsigned (what sign.yml has signed)
 // -> dist/pack/MyRemote/                       the app: unpack anywhere and start it
 //    dist/pack/MyRemote-Windows-x64.zip        (on Windows), MyRemote-Linux-x64.tar.gz (on Linux)
 //    dist/pack/MyRemote-<OS>-x64.package.json  what release/build.js --sign-packages lists in packages.json
@@ -14,6 +16,16 @@
 // release's code as the built-in bundle. So a package is made on the platform it is for: Windows here,
 // Linux on a Linux machine (file modes and links survive there), macOS on a Mac (where it must also be
 // signed to run at all; not done).
+//
+// On Windows MyRemote.exe is the one file SmartScreen judges ("Windows protected your PC" on a first start
+// from a downloaded zip). Signed, it is taken from dist/signed/<Electron version>/MyRemote.exe (or
+// --signed-exe): .github/workflows/sign.yml has SignPath sign the program this script makes with
+// --exe-only, and release/signed-exe.js checks that the signed file is exactly that program with a valid,
+// timestamped signature of the SignPath Foundation before it goes in (a file that fails stops the package).
+// Without one the package is made unsigned and says so; --require-signed makes that an error. The signed
+// program is the same program, so the shell's identity (shell.json) does not change with it: installed apps
+// do not fetch a package for a signature (an app's own downloads carry no mark of the web, so SmartScreen
+// never looks at them).
 'use strict';
 const crypto = require('crypto');
 const fs = require('fs');
@@ -21,6 +33,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const core = require('../app/core');
 const shellswap = require('../host/shellswap');
+const signedExe = require('./signed-exe');
 
 // What the package's shell is (host/shellswap.js, release/build.js --sign-packages): installed apps replace
 // their shell only by a newer release's package whose shell differs from theirs, so a release that changed
@@ -94,7 +107,39 @@ function brandExe(file) {
   fs.writeFileSync(file, b);
 }
 
-function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(ROOT, 'dist', 'pack'), archive = true, config, quiet = false } = {}) {
+const ELECTRON_DIST = path.join(ROOT, 'host', 'node_modules', 'electron', 'dist');
+const electronVersion = () => fs.readFileSync(path.join(ELECTRON_DIST, 'version'), 'utf8').trim();
+const signedDefault = () => path.join(ROOT, 'dist', 'signed', electronVersion(), 'MyRemote.exe');
+
+// The Windows program alone, as a package holds it before signing (sign.yml uploads it to be signed).
+// -> { file, electron, sha256 }
+function exeOnly(out) {
+  if (process.platform !== 'win32') throw new Error('the Windows program is made on Windows (Electron for Windows is installed there)');
+  const src = path.join(ELECTRON_DIST, 'electron.exe');
+  if (!fs.existsSync(src)) throw new Error('Electron is not installed under host/node_modules (run setup first)');
+  fs.mkdirSync(out, { recursive: true });
+  const file = path.join(out, 'MyRemote.exe');
+  fs.copyFileSync(src, file);
+  brandExe(file);
+  return { file, electron: electronVersion(), sha256: core.sha256(fs.readFileSync(file)) };
+}
+
+// Puts the signed program in place of the unsigned one just made at `exe`, when there is one. -> the signer, or ''
+function takeSigned(exe, { signedFile, requireSigned, say }) {
+  const file = signedFile || signedDefault();
+  if (!fs.existsSync(file)) {
+    if (requireSigned || signedFile) throw new Error(`no signed MyRemote.exe at ${file} (have .github/workflows/sign.yml sign Electron ${electronVersion()}, then fetch its artifact there)`);
+    say(`MyRemote.exe is NOT signed (no ${path.relative(ROOT, file)}): Windows SmartScreen warns at its first start`);
+    return '';
+  }
+  const r = signedExe.check(file, exe);
+  if (!r.ok) throw new Error(`${file} is not this program signed: ${r.why}`);
+  fs.copyFileSync(file, exe);
+  say(`MyRemote.exe signed by ${r.signer}`);
+  return r.signer;
+}
+
+function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(ROOT, 'dist', 'pack'), archive = true, config, quiet = false, signedFile, requireSigned = false } = {}) {
   const say = (s) => { if (!quiet) console.log(s); };
   const confFile = config || path.join(ROOT, 'app', 'update-config.json'), conf = JSON.parse(fs.readFileSync(confFile, 'utf8'));
   const bundle = path.join(release, 'bundle'), check = core.verifyFolder(bundle, conf.keys);
@@ -116,7 +161,11 @@ function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(RO
   // Names without spaces and in ASCII only, here and for everything else the package holds or the app
   // makes (shortcuts, profile folders): a space or Korean in a path trips some tools and some systems.
   fs.renameSync(path.join(dir, exe), path.join(dir, win ? 'MyRemote.exe' : 'my-remote'));
-  if (win) brandExe(path.join(dir, 'MyRemote.exe'));
+  let signed = '';
+  if (win) {
+    brandExe(path.join(dir, 'MyRemote.exe'));
+    signed = takeSigned(path.join(dir, 'MyRemote.exe'), { signedFile, requireSigned, say });
+  }
 
   const app = path.join(dir, 'resources', 'app');
   fs.mkdirSync(app, { recursive: true });
@@ -175,18 +224,23 @@ function pack({ release = path.join(ROOT, 'dist', 'release'), out = path.join(RO
   let record = '';
   if (file) {
     record = path.join(out, name + '.package.json');
-    fs.writeFileSync(record, JSON.stringify({ platform: shellswap.platformKey(), file: path.basename(file), sha256, size: fs.statSync(file).size, version, shell: info }, null, 1) + '\n');
+    fs.writeFileSync(record, JSON.stringify({ platform: shellswap.platformKey(), file: path.basename(file), sha256, size: fs.statSync(file).size, version, shell: info, ...(win ? { signed } : {}) }, null, 1) + '\n');
   }
-  return { dir, file, version, name, sha256, shell: info, record };
+  return { dir, file, version, name, sha256, shell: info, record, signed };
 }
 
 if (require.main === module) {
   try {
-    const r = pack({ release: arg('release'), out: arg('out'), config: arg('config'), archive: !process.argv.includes('--no-archive') });
+    if (arg('exe-only')) {
+      const r = exeOnly(arg('exe-only'));
+      console.log(`MyRemote.exe of Electron ${r.electron}, unsigned: ${r.file}, sha256 ${r.sha256}`);
+      return;
+    }
+    const r = pack({ release: arg('release'), out: arg('out'), config: arg('config'), archive: !process.argv.includes('--no-archive'), signedFile: arg('signed-exe'), requireSigned: process.argv.includes('--require-signed') });
     console.log(`${r.name} ${r.version}: ${r.dir}`);
     if (r.file) console.log(`${path.basename(r.file)}: ${(fs.statSync(r.file).size / 1024 / 1024).toFixed(0)} MB, sha256 ${r.sha256}`);
     console.log(`shell ${shellswap.identityOf(r.shell)}${r.record ? '; record ' + path.basename(r.record) + ' (for release/build.js --sign-packages)' : ''}`);
   } catch (e) { console.error('packaging failed: ' + e.message); process.exit(1); }
 }
 
-module.exports = { pack, brandExe, shellInfo, SHELL_REV };
+module.exports = { pack, brandExe, exeOnly, shellInfo, SHELL_REV };

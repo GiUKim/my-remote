@@ -3,5 +3,6 @@
   "version": "0.1.0",
   "description": "My Remote client app (one-click multi-monitor layout)",
   "main": "main.js",
+  "license": "MIT",
   "private": true
 }

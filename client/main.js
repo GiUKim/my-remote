@@ -13,6 +13,10 @@ const Hosts = require('./hosts');
 const appsync = require('../host/appsync');
 const shellswap = require('../host/shellswap');
 
+// No spell checker, and no dictionary fetched from Google's servers for it (see host/main.js; every PC's
+// window has a session of its own, and each gets this when it is made).
+app.on('session-created', (ses) => { try { ses.setSpellCheckerLanguages([]); ses.setSpellCheckerEnabled(false); } catch {} });
+
 const argOf = (name) => (process.argv.find((a) => a.startsWith(name)) || '').slice(name.length);
 // --loader=<file>: no list; one window on that loader file, with a profile of its own in a folder next
 // to it, so the app's own profile (and the keys kept there) is left alone. The host's self-test

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What SignPath signs for this project: paste it as the project's artifact configuration in SignPath.
+     The artifact is the zip GitHub makes of what .github/workflows/sign.yml uploads: MyRemote.exe alone, as
+     release/package.js makes it (Electron's program with its version resource saying MyRemote; the version
+     stays Electron's, which is the version of the shell the packages hold, and sign.yml passes it as
+     `version`). The restrictions make SignPath refuse anything else under that name. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="MyRemote.exe" product-name="MyRemote" product-version="${version}" file-version="${version}" company-name="MyRemote" original-filename="MyRemote.exe">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

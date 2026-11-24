@@ -2037,6 +2037,17 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         }
       }
     }
+
+    // No spell checker, and so no dictionary fetched for it from Google's servers (PRIVACY.md; main.js,
+    // session-created). Minutes into the run, Chromium would have put the language's Hunspell dictionary into
+    // this throwaway profile (it did before, with or without a text field).
+    {
+      const { app, session } = require('electron');
+      const dicts = (() => { try { return fs.readdirSync(path.join(app.getPath('userData'), 'Dictionaries')).filter((f) => /\.bdic$/i.test(f)); } catch { return []; } })();
+      const langs = session.defaultSession.getSpellCheckerLanguages();
+      check('no spell-check dictionary is fetched (the engine\'s spell checker has no language in any session)', dicts.length === 0 && langs.length === 0,
+        `languages ${JSON.stringify(langs)}; dictionaries in the profile: ${dicts.join(', ') || 'none'}`);
+    }
   } catch (e) {
     console.log('[selftest] aborted:', e.message);
     results.push(false);
