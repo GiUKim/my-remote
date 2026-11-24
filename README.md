@@ -21,10 +21,6 @@
   <sub>🌐 <a href="https://giukim.github.io/pangmote/">소개 페이지 (12개 언어)</a> &nbsp;·&nbsp; 💙 <a href="https://github.com/sponsors/GiUKim">후원</a> &nbsp;·&nbsp; 🏢 <a href="https://github.com/GiUKim/pangmote/issues/new?template=business.yml">업무용 사용 문의</a> &nbsp;·&nbsp; 🔏 <a href="#code-signing-policy">Code signing policy</a> &nbsp;·&nbsp; 📜 <a href="LICENSE">MIT</a></sub>
 </p>
 
-<p align="center">
-  <sub>0.9.x까지의 이름은 <b>My Remote</b>였습니다. 이미 설치한 앱은 평소처럼 업데이트하면 Pangmote가 되고, 접속 키·PC 목록·설정은 그대로입니다.</sub>
-</p>
-
 ### 🐧 Ubuntu는 터미널로도 설치할 수 있습니다
 
 위 **Linux용 내려받기**와 같은 파일(데스크톱 앱)을 받아 `~/MyRemote`에 풉니다. 블록 오른쪽 위의 복사 단추로 복사해 터미널에 붙여 넣으세요.
