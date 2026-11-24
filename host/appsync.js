@@ -106,17 +106,22 @@ function entryProgram(platform, file, readLink) {
   } catch { return ''; }
 }
 // Makes the entry where the older shortcuts are (or, with `create`, where there are none: the start
-// screen's "바로가기 만들기") and removes the older ones; makes it anew where it starts another program than
-// this one (a package of the new name took the place of one of the old: the entry made before still named
-// MyRemote.exe or my-remote.sh). execPath: the app's program; iconDir: the shell's folder; writeLink, readLink:
-// Electron's shell.writeShortcutLink, shell.readShortcutLink (Windows). -> { made: [files], removed: [files] }
+// screen's "바로가기 만들기") and removes the older ones; makes it anew where it starts a program that is gone or
+// this folder's program by its old name (a package of the new name took the place of one of the old: the entry
+// made before still names MyRemote.exe, or my-remote.sh, which then only starts pangmote.sh). An entry of another
+// folder's program that is there stays (a second copy of the app does not take it over). execPath: the app's
+// program; iconDir: the shell's folder; writeLink, readLink: Electron's shell.writeShortcutLink,
+// shell.readShortcutLink (Windows). -> { made: [files], removed: [files] }
 function unifyShortcuts({ platform = process.platform, appData, dataHome, execPath, iconDir, writeLink, readLink, create = false }) {
   const made = [], removed = [], p = places({ platform, appData, dataHome });
   if (!p) return { made, removed };
   const had = p.older.filter((f) => appsOwn(platform, f));
   const P = path.posix, launcher = platform === 'win32' ? '' : (launcherOf(execPath, platform) || P.join(P.dirname(execPath), 'pangmote.sh')); // the paths inside are the Linux program's
   const now = platform === 'win32' ? execPath : launcher;
-  const stale = fs.existsSync(p.entry) && (platform !== 'win32' || readLink) && !sameFile(entryProgram(platform, p.entry, readLink), now);
+  const target = fs.existsSync(p.entry) && (platform !== 'win32' || readLink) ? entryProgram(platform, p.entry, readLink) : '';
+  const X = platform === 'win32' ? path.win32 : P;
+  const oldHere = (t) => sameFile(X.dirname(t), X.dirname(now)) && /^(myremote\.exe|my-remote\.sh)$/i.test(X.basename(t));
+  const stale = !!target && !sameFile(target, now) && (!fs.existsSync(target) || oldHere(target));
   if (!had.length && !create && !stale) return { made, removed }; // already one entry, or the person never wanted shortcuts
   fs.mkdirSync(p.dir, { recursive: true });
   if (platform === 'win32') {

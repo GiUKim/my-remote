@@ -1361,7 +1361,8 @@ Windows and Linux: one program with two faces (`--host`, `--client`). Read `app/
     second start only brings a running host forward) and the client app ends with it.
   - One entry, "Pangmote" (Windows `Start menu\Programs\Pangmote\Pangmote.lnk`, Linux
     `pangmote.desktop`; up to 0.9.x "MyRemote", `MyRemote\MyRemote.lnk`, `my-remote.desktop`, which the code
-    replaces, and makes anew when it starts another program than the running one), runs `--client --launcher`. The shell makes it (`makeShortcuts`, `--shortcuts`)
+    replaces, and makes anew when the program it starts is gone or is this folder's by its old name; another
+    copy's entry whose program is there stays), runs `--client --launcher`. The shell makes it (`makeShortcuts`, `--shortcuts`)
     and, started without `--host`/`--client`, opens the start screen when the code has one (else the old
     dialog). Apps installed from 0.3.0-0.5.x packages keep their shell: the code replaces their two
     shortcuts with the entry at the start of either face (`host/appsync.js` `unifyShortcuts`; only the
@@ -1531,8 +1532,8 @@ that name is made again under the account; GitHub Pages is not forwarded: the we
     `shellswap.js`: it reads packages.json and its signature and stops there.
   - Code from 0.10.0 on a shell of the old name stages the new package and swaps (the program to start is read
     from the staged folder: `programIn`, `hostFace(platform, next)`); the folder keeps its place and name.
-  - After that swap: the Start menu entry is made anew for Pangmote.exe (`unifyShortcuts` finds it naming another
-    program), the person's shortcuts to that folder's MyRemote.exe on the desktop, in Startup and pinned to the
+  - After that swap: the Start menu entry is made anew for Pangmote.exe (`unifyShortcuts` finds it naming a program
+    that is gone, or this folder's my-remote.sh), the person's shortcuts to that folder's MyRemote.exe on the desktop, in Startup and pinned to the
     taskbar or Start start Pangmote.exe (`appsync.retarget`, once per program, marker `shortcuts-retargeted.json`
     in the face's profile), and on Linux the folder keeps a `my-remote.sh` that starts `pangmote.sh`
     (`FORWARD_SH`, written at staging: the vdesk script on the Linux PC starts `./my-remote.sh --host`).

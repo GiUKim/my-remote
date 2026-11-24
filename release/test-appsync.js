@@ -113,6 +113,18 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mr-appsync-'));
       after.made.length === 1 && readLink(path.join(programs, 'Pangmote', 'Pangmote.lnk')).target === swapped.execPath && then.made.length === 0
         && readLink(path.join(programs, 'Pangmote', 'Pangmote.lnk')).args === '--client --launcher' && readLink(path.join(programs, 'Pangmote', 'Pangmote.lnk')).appUserModelId === appsync.APP_ID,
       JSON.stringify({ after: after.made.length, then: then.made.length }));
+    // A second copy of the app in another folder does not take the entry over while the program it names is there.
+    const other = path.join(tmp, 'other-copy', 'Pangmote.exe');
+    fs.mkdirSync(path.dirname(other), { recursive: true });
+    fs.writeFileSync(other, 'a program');
+    const entryFile = path.join(programs, 'Pangmote', 'Pangmote.lnk');
+    writeLink(entryFile, 'update', { target: other });
+    const kept = appsync.unifyShortcuts(swapped), keptTarget = readLink(entryFile).target;
+    fs.rmSync(other);
+    const gone = appsync.unifyShortcuts(swapped);
+    ok('Windows: an entry naming another copy\'s program that is there stays; one naming a program that is gone is made anew',
+      kept.made.length === 0 && keptTarget === other && gone.made.length === 1 && readLink(entryFile).target === swapped.execPath,
+      JSON.stringify({ kept: kept.made.length, keptTarget, gone: gone.made.length }));
     fs.mkdirSync(path.join(programs, 'MyRemote'), { recursive: true });
     // The taskbar and Windows' notifications go by the id a Start-menu shortcut carries: the entry, whether
     // the code makes it or the shell (app/boot.js makeShortcuts, --shortcuts), carries the one id both faces
