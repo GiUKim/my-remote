@@ -1505,7 +1505,11 @@ Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하�
   job ran again (`gh run rerun --failed`). Not seen on the Linux PCs. Likewise "sends only as many pixels as are
   shown" (2026-11-20, commit a3e6b74: received 1920x1080 for 1280 expected within its 15 s; passed on the re-run).
   All three wait for the host to change what it sends: the runner is slow then, not the code wrong, as far as
-  seen. `gh` is not on the Windows PC's PATH: it is under `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.cli_*`.
+  seen. Another kind (2026-11-24, commit 37c746d, the 0.9.7 release): a real encoder stall on the runner (the
+  host's "인코더가 4초째 받지 않습니다", the stall check's INFO "1 real one(s) earlier in this run") renewed the
+  session in the middle of "drag out: the host pointer waits ...", whose later parts (`ctrlCrossedAtOnce` on)
+  then failed; passed on the re-run. Read the job's log (`gh run view <run> --job <id> --log`, the owner's login)
+  for a `[host]` renewal line next to a failed check before suspecting the code. `gh` is not on the Windows PC's PATH: it is under `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.cli_*`.
 
 ## Commands
 
