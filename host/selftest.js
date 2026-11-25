@@ -1335,10 +1335,11 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         await sleep(3000);
         const gone = !(await box()).shown;
         // Under the host's text cursor (Windows), and a note without a command.
-        // The cursor's place: the middle of what this window shows of its first monitor.
+        // The cursor's place: near the left of what this window shows of its first monitor, half way down (so that the
+        // note, kept inside the window, need not move aside: CI's 1024x768 screen makes this window narrower).
         const at = await js(`(() => { const p = mainView.panes[0]; if (!p) return { none: true };
           const v = p.video.getBoundingClientRect(), R = mainView.root.getBoundingClientRect();
-          const px = (Math.max(v.left, R.left) + Math.min(v.right, R.right)) / 2, py = (Math.max(v.top, R.top) + Math.min(v.bottom, R.bottom)) / 2;
+          const px = Math.max(v.left, R.left) + 48, py = (Math.max(v.top, R.top) + Math.min(v.bottom, R.bottom)) / 2;
           imeNote({ os: 'windows', why: 'inactive', im: '', fix: '', at: { d: p.idx, x: (px - v.left) / v.width, y: (py - v.top) / v.height } });
           const n = mainView.imeEl, r = n.el.getBoundingClientRect();
           const o = { row: n.row.style.display, dx: Math.round(r.left - (px - 16)), dy: Math.round(r.top - (py + 8)), at: window.__rd.ime.at, head: n.head.textContent };
