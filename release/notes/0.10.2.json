@@ -1,0 +1,12 @@
+{
+  "ko": [
+    "Linux 호스트에서 한/영·한자 키가 실제로 한글 전환이 되도록 고쳤습니다. 한국어 입력 소스를 쓰는 GNOME(Ubuntu 22.04 등)에서는 한/영 키가 오른쪽 Alt에 있어서, 0.10.1에서는 키가 전달돼도 아무 일도 일어나지 않았습니다",
+    "이제 호스트 PC의 키 배치에서 한/영(한자) 키를 찾아 누릅니다. 그런 키가 없는 배치에서도 동작합니다",
+    "Linux 호스트를 이 버전으로 업데이트해야 적용됩니다"
+  ],
+  "en": [
+    "The Hangul/English and Hanja keys now switch input on a Linux host. With GNOME's Korean input source (Ubuntu 22.04 and others) the Hangul key sits on Right Alt, and in 0.10.1 the key arrived but did nothing",
+    "The host now presses the key where its own layout has it, and it works on layouts without such a key too",
+    "Update the Linux host to this version"
+  ]
+}
