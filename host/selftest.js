@@ -96,7 +96,7 @@ async function restoreClipboard(rec) {
 module.exports.keepTextClipboard = keepTextClipboard; // also for dragcheck.js
 module.exports.restoreClipboard = restoreClipboard;
 
-exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged, pageKey, getClientApp, inputGuardHb }) => {
+exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged, pageKey, getClientApp, inputGuardHb, koreanKeyCame }) => {
   const results = [];
   const check = (name, ok, detail) => { results.push(!!ok); console.log(`[selftest] ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  - ' + detail : ''}`); };
   const info = (text) => console.log(`[selftest] INFO  ${text}`);
@@ -1315,6 +1315,39 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
           && same(kr.more, ['kd:Lang2:HanjaMode', 'ku:Lang2:HanjaMode', 'kd:Lang1:HangulMode', 'ku:Lang1:HangulMode'])
           && same(krHost, ['Lang1', 'Lang1-up', 'AltRight', 'AltRight-up']),
         `release only ${kr.upOnly} | Right Alt as Hangul ${kr.both} | Hanja, Process ${kr.more} | host ${krHost}`);
+      // When a Korean key cannot work on the host (host/imecheck.js; this run's host is a made-up Linux without
+      // ibus-hangul), the host tells the client, which says why and what fixes it: at the window's top in the middle
+      // without a text cursor, under the cursor's place with one; it stays while the pointer is on it and goes after.
+      // (No key is injected for it: the host's own path after a Korean key is called.)
+      if (koreanKeyCame) {
+        await js('window.__rd.ime = null; 1');
+        koreanKeyCame();
+        let got = null;
+        for (let i = 0; i < 40 && !got; i++) { await sleep(100); got = await js('window.__rd.ime'); }
+        const box = () => js(`(() => { const n = mainView.imeEl; if (!n) return null; const r = n.el.getBoundingClientRect(), R = mainView.root.getBoundingClientRect();
+          return { shown: n.el.style.display !== 'none', head: n.head.textContent, cmd: n.cmd.value, row: n.row.style.display, top: Math.round(r.top - R.top), mid: Math.round(r.left + r.width / 2 - (R.left + R.width / 2)), left: Math.round(r.left - R.left), w: Math.round(r.width) }; })()`);
+        const top = await box();
+        // Hovered it stays past its time; left, it goes after a moment.
+        await js(`(() => { const n = mainView.imeEl; n.later(60); n.el.dispatchEvent(new MouseEvent('mouseenter')); return 1; })()`);
+        await sleep(300);
+        const hovered = (await box()).shown;
+        await js(`(() => { mainView.imeEl.el.dispatchEvent(new MouseEvent('mouseleave')); return 1; })()`);
+        await sleep(3000);
+        const gone = !(await box()).shown;
+        // Under the host's text cursor (Windows), and a note without a command.
+        // The cursor's place: the middle of what this window shows of its first monitor.
+        const at = await js(`(() => { const p = mainView.panes[0]; if (!p) return { none: true };
+          const v = p.video.getBoundingClientRect(), R = mainView.root.getBoundingClientRect();
+          const px = (Math.max(v.left, R.left) + Math.min(v.right, R.right)) / 2, py = (Math.max(v.top, R.top) + Math.min(v.bottom, R.bottom)) / 2;
+          imeNote({ os: 'windows', why: 'inactive', im: '', fix: '', at: { d: p.idx, x: (px - v.left) / v.width, y: (py - v.top) / v.height } });
+          const n = mainView.imeEl, r = n.el.getBoundingClientRect();
+          const o = { row: n.row.style.display, dx: Math.round(r.left - (px - 16)), dy: Math.round(r.top - (py + 8)), at: window.__rd.ime.at, head: n.head.textContent };
+          n.hide(); return o; })()`);
+        check('a Korean key that cannot work on the host is explained where the person types: why, and the command that fixes it (at the top without a text cursor, under it with one); it stays while hovered',
+          !!got && got.why === 'missing' && got.fix === 'sudo apt install ibus-hangul' && top && top.shown && /Linux/.test(top.head) && top.cmd === 'sudo apt install ibus-hangul' && top.row === 'flex'
+            && top.top === 28 && Math.abs(top.mid) <= 1 && hovered && gone && at.row === 'none' && at.at === true && /Windows/.test(at.head) && Math.abs(at.dx) <= 1 && Math.abs(at.dy) <= 1,
+          `message ${JSON.stringify(got)} | note ${JSON.stringify(top)} | hovered ${hovered}, gone after ${gone} | at the cursor ${JSON.stringify(at)}`);
+      }
       // Keyboard Lock without stuck modifier keys (client/keylock.js; release/test-keylock.js has its rules): a lock
       // taken while Ctrl, Alt or the Windows key was held left that key pressed for the whole client PC (2026-11-17).
       // This page runs as in a browser: it puts the wrapper in itself, once.

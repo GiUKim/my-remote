@@ -1740,6 +1740,13 @@ $('otpCancel').onclick = () => otpForm(false);
     log(t('같은 키나 클릭이 사람보다 빠르게 계속 들어와 입력을 {0}초 멈췄습니다 (이 PC를 이 PC에서 보거나, 두 PC가 서로를 조종하고 있지 않은지 확인하세요)', sec));
     if (session) txTo(session, { t: 'storm', ms: Number(o.ms) || 0 });
   });
+  // A Korean key (한/영, 한자) cannot work here, and what fixes it (host/imecheck.js): the client says so where the person
+  // types (`at`: the text cursor's monitor and place, when the system knows it).
+  api.onIme((o) => {
+    if (!session) return;
+    const at = o.at && Number.isInteger(o.at.d) ? { d: o.at.d, x: +o.at.x || 0, y: +o.at.y || 0 } : null;
+    txTo(session, { t: 'ime', os: String(o.os || ''), why: String(o.why || ''), im: String(o.im || ''), fix: String(o.fix || '').slice(0, 200), at });
+  });
   api.onHostLock((on) => {
     screenGone.lockFrom = 'event';
     if (screenGone.lock === on) return;

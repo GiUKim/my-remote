@@ -519,8 +519,38 @@ function processRunning(exe) {
   });
 }
 
+// ---- the Korean keys (한/영, 한자): what makes them do something here ------------------------------
+// They act in the Korean input method of the program in front: a Korean keyboard (input locale 0x0412) must be among this
+// session's, and be the one chosen for that program (host/imecheck.js). Asked only when one of them comes from the client.
+const GetKeyboardLayoutList = user32.func('GetKeyboardLayoutList', 'int', ['int', 'void *']);
+const GetKeyboardLayout = user32.func('GetKeyboardLayout', 'uintptr_t', ['uint32']);
+const GetForegroundWindow = user32.func('GetForegroundWindow', 'uintptr_t', []);
+const ClientToScreen = user32.func('ClientToScreen', 'bool', ['uintptr_t', koffi.inout(koffi.pointer(POINT))]);
+const korean = (hkl) => Number(BigInt.asUintN(16, BigInt(hkl || 0))) === 0x0412; // an HKL's low word is its language
+function koreanKeyboard() {
+  try {
+    const n = Math.min(GetKeyboardLayoutList(0, null), 64);
+    const buf = Buffer.alloc(8 * Math.max(n, 1)), got = n > 0 ? GetKeyboardLayoutList(n, buf) : 0;
+    let any = false;
+    for (let i = 0; i < got && !any; i++) any = korean(buf.readBigUInt64LE(i * 8));
+    const fg = GetForegroundWindow();
+    return { any, active: !!fg && korean(GetKeyboardLayout(GetWindowThreadProcessId(fg, null))) };
+  } catch { return undefined; }
+}
+// The text cursor (caret) of the program in front, its bottom left on the desktop (physical pixels), or null: where the
+// client shows its note about these keys. Programs that draw their own cursor without a system caret have none here.
+function caretAt() {
+  try {
+    const gi = { cbSize: koffi.sizeof(GUITHREADINFO), flags: 0, hwndActive: 0, hwndFocus: 0, hwndCapture: 0, hwndMenuOwner: 0, hwndMoveSize: 0, hwndCaret: 0, rcCaret: { left: 0, top: 0, right: 0, bottom: 0 } };
+    if (!GetGUIThreadInfo(0, gi) || !gi.hwndCaret) return null;
+    const pt = { x: gi.rcCaret.left, y: gi.rcCaret.bottom };
+    return ClientToScreen(gi.hwndCaret, pt) ? { x: pt.x, y: pt.y } : null;
+  } catch { return null; }
+}
+
 module.exports = {
   viewOnlyReason: () => '',
+  koreanKeyboard, caretAt,
   hidesCursors: true,
   virtualDesktop, move, button, wheel, keyOf, sendKey, typeText, maskKey, setSink, clipboardPrivate,
   cursorState, cursorBitmap, hideCursors, restoreCursors, dragFullWindows, displayColor,

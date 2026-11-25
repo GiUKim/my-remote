@@ -52,6 +52,8 @@ jobs:
         run: node release/ci-run.js node release/test-cycle.js
       - name: Keyboard Lock without stuck modifier keys (the wrapper, the page's copy, no bare lock)
         run: node release/ci-run.js node release/test-keylock.js
+      - name: Whether the Korean keys can work on a host (Linux input methods, Windows' Korean keyboard)
+        run: node release/ci-run.js node release/test-imecheck.js
       - name: The languages (every text translated, holes, tags, plurals, quoted names; the translator; the setting)
         run: node release/ci-run.js node release/test-i18n.js
       - name: The check of a signed Pangmote.exe before a package takes it (the byte rules)

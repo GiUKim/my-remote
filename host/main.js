@@ -11,6 +11,7 @@ const Devices = require('./devices'); // client apps with a token of their own i
 const AccessLog = require('./accesslog'); // what came to this host, kept on this PC (see accesslog.js)
 const totp = require('./totp'); // an authenticator app's codes, for those who turn them on (see totp.js)
 const cycle = require('./cycle'); // connections that come back on themselves (see cycle.js)
+const imecheck = require('./imecheck'); // whether the Korean keys can do anything here (see imecheck.js)
 // The language of the user interface (host/i18n.js, 2026-11-20): this PC's choice, kept with the client app's in
 // host/settings.js, else the system's. The page reads it (lang-sync), sets it (lang-set) and hears of a change
 // the client app made (lang-changed). The automated runs show Korean, which their checks read, unless
@@ -482,7 +483,24 @@ function injectInput(text) {
     const ms = input.stormPause();
     console.log(`[host] input stopped for ${ms / 1000} s: the same key or click came again and again, faster than a person types or clicks (a connection that comes back on itself?)`);
     if (win && !win.isDestroyed()) win.webContents.send('input-storm', { ms });
-  }
+  } else if (r === 'korean') koreanKeyCame();
+}
+// A Korean key (한/영, 한자) went in: whether it can do anything here is looked at now (host/imecheck.js, after the key,
+// never before it), and when not, the client is told why and what fixes it, next to where the person types (the text
+// cursor of the program in front where the system knows it: Windows), at most every 1.5 s. The self-test's look sees a
+// made-up Linux without a Korean input method (PANGMOTE_IMECHECK=real: this PC's, for a harness on a test display).
+// The self-test asks a made-up Linux (and no text cursor of this PC's), whatever this PC has.
+const IME_MADE_UP = SELFTEST && process.env.PANGMOTE_IMECHECK !== 'real';
+const imeStatus = imecheck.create(IME_MADE_UP ? { platform: 'linux', io: imecheck.madeUp() } : {});
+let imeToldAt = 0;
+function koreanKeyCame() {
+  imeStatus().then((s) => {
+    if (s.ok || !win || win.isDestroyed() || Date.now() - imeToldAt < 1500) return;
+    imeToldAt = Date.now();
+    const c = IME_MADE_UP ? null : input.caretAt();
+    win.webContents.send('ime', { os: s.os, why: s.why, im: s.im, fix: s.fix, at: c ? input.whereIs(c.x, c.y) : null });
+    console.log(`[host] the Korean key cannot work here: ${s.why}${s.im ? ' (' + s.im + ')' : ''}; the client is told: ${s.fix || '-'}`);
+  }, () => {});
 }
 // The client app's live.json (see cycle.js): which hosts this PC's client app controls right now. A test run
 // (its profile is a throwaway one) reads a file of its own there, which the self-test writes.
@@ -1579,7 +1597,7 @@ else {
       }
     }
     if (SHELL_SWAP_TRIAL) shellSetup(); // the test VM's end-to-end check of the swap (see SHELL_SWAP_TRIAL)
-    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged, pageKey: testPageKeyPub, getClientApp, inputGuardHb: () => startInputGuard.hb || null });
+    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged, pageKey: testPageKeyPub, getClientApp, inputGuardHb: () => startInputGuard.hb || null, koreanKeyCame });
     if (BENCH) require('./bench').run({ cfg, bench: benchCfg, buildClientHtml, app });
     if (LOCALTEST) {
       const file = path.join(app.getPath('userData'), 'pangmote-localtest.html');

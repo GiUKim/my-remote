@@ -74,6 +74,8 @@ contextBridge.exposeInMainWorld('hostApi', {
   cycleCheck: (from) => ipcRenderer.invoke('cycle-check', from),
   // Input stopped because the same key or click came again and again (input.js stormed): { ms }.
   onInputStorm: (fn) => ipcRenderer.on('input-storm', (_e, o) => fn(o || {})),
+  // A Korean key (한/영, 한자) cannot work on this host (host/imecheck.js): { os, why, im, fix, at }.
+  onIme: (fn) => ipcRenderer.on('ime', (_e, o) => fn(o || {})),
   // New devices confirmed here (main.js 'gate'), and the opt-in authenticator app.
   gate: {
     info: () => ipcRenderer.invoke('gate-info'), // { confirmNew, firstFree, otp, recoveryLeft }

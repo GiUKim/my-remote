@@ -487,6 +487,80 @@ function toast(view, text, ms) {
   clearTimeout(view.toastTimer);
   view.toastTimer = setTimeout(() => { view.toastEl.style.display = 'none'; }, ms || 1400);
 }
+
+// ---- a Korean key that cannot work on the host (host/imecheck.js; the user's wish, 2026-11-25) ---------------------
+// The window whose 한/영 or 한자 key it was says why and what fixes it: next to where the person types (the host's text
+// cursor, when its system knows it: Windows), else at the window's top, in the middle. It goes by itself after a while,
+// never while the pointer is on it (its command is to be copied); 복사 puts the command on this PC's clipboard and the
+// host's (the clipboard is shared), for a terminal there. One note per window, made when first needed.
+const IME_MS = 9000, IME_LEAVE_MS = 2500;
+let koreanView = null; // the window whose Korean key went last
+const IME_TEXT = {
+  'linux/missing': [() => tr('호스트 PC(Linux)에 한글 입력기가 없어 한/영 키가 동작하지 않습니다'), () => tr('호스트 PC의 터미널에서 설치한 뒤 입력기 설정에 한국어(Hangul)를 추가하세요:')],
+  'linux/stopped': [(im) => tr('호스트 PC(Linux)의 입력기({0})가 실행되고 있지 않아 한/영 키가 동작하지 않습니다', im), () => tr('호스트 PC의 터미널에서 실행하세요:')],
+  'linux/disabled': [(im) => tr('호스트 PC(Linux)의 입력기({0})에 한국어(Hangul)가 추가되어 있지 않아 한/영 키가 동작하지 않습니다', im), () => tr('호스트 PC에서 입력기 설정을 열어 한국어(Hangul)를 추가하세요:')],
+  'windows/missing': [() => tr('호스트 PC(Windows)에 한국어 키보드가 없어 한/영 키가 동작하지 않습니다'), () => tr('호스트 PC에서 Win+R에 붙여 넣어 언어 설정을 열고 한국어를 추가하세요:')],
+  'windows/inactive': [() => tr('호스트 PC(Windows)에서 지금 쓰는 키보드가 한국어가 아니라 한/영 키가 동작하지 않습니다'), () => tr('호스트 PC에서 Win+Space로 한국어 키보드를 고르세요')],
+};
+function imeEl(view) {
+  if (view.imeEl) return view.imeEl;
+  const doc = view.win.document, el = doc.createElement('div'), mk = (tag, css, parent = el) => { const n = doc.createElement(tag); n.style.cssText = css; parent.appendChild(n); return n; };
+  el.setAttribute('role', 'status');
+  el.style.cssText = 'position:absolute;z-index:6;display:none;box-sizing:border-box;width:max-content;max-width:min(520px,calc(100% - 16px));padding:10px 34px 10px 12px;border-radius:8px;background:rgba(20,23,28,.96);border:1px solid #4a8dff;box-shadow:0 6px 24px rgba(0,0,0,.45);color:#e6e8eb;font:13px/1.45 var(--mr-font);overflow-wrap:anywhere';
+  const x = mk('button', 'position:absolute;top:4px;right:4px;width:24px;height:24px;padding:0;border:0;border-radius:4px;background:none;color:#9aa3af;font:16px/1 sans-serif;cursor:pointer');
+  x.textContent = '×';
+  const head = mk('div', 'font-weight:600'), how = mk('div', 'margin-top:4px;color:#c3ccd8');
+  const row = mk('div', 'display:flex;gap:6px;margin-top:8px');
+  const cmd = mk('input', 'flex:1;min-width:0;padding:5px 8px;border:1px solid #3a4350;border-radius:5px;background:#0e1014;color:#e6e8eb;font:12px ui-monospace,Consolas,monospace', row);
+  cmd.readOnly = true; cmd.spellcheck = false;
+  const copy = mk('button', 'padding:5px 10px;border:0;border-radius:5px;background:#2b6cff;color:#fff;font:12px var(--mr-font);cursor:pointer', row);
+  view.root.appendChild(el);
+  const n = (view.imeEl = { el, head, how, row, cmd, copy, x, timer: 0, over: false });
+  const hide = () => { clearTimeout(n.timer); n.timer = 0; el.style.display = 'none'; const p = view.panes[0]; if (doc.activeElement && el.contains(doc.activeElement) && p) p.video.focus(); };
+  n.hide = hide;
+  n.later = (ms) => { clearTimeout(n.timer); n.timer = setTimeout(hide, ms); };
+  el.addEventListener('mouseenter', () => { n.over = true; clearTimeout(n.timer); n.timer = 0; });
+  el.addEventListener('mouseleave', () => { n.over = false; n.later(IME_LEAVE_MS); });
+  x.addEventListener('click', hide);
+  cmd.addEventListener('focus', () => cmd.select());
+  copy.addEventListener('click', async () => {
+    const s = cmd.value;
+    lastClip = s; pendingClip = null; // ours: not sent again by the clipboard's watch
+    try {
+      if (shell && shell.clipWrite) await shell.clipWrite(s); else await view.win.navigator.clipboard.writeText(s);
+    } catch { cmd.focus(); cmd.select(); try { doc.execCommand('copy'); } catch {} }
+    if (!READONLY) send({ t: 'clip', s }); // and on the host's clipboard: the command is typed there
+    copy.textContent = tr('복사됨');
+    setTimeout(() => { copy.textContent = tr('복사'); }, 1500);
+    const p = view.panes[0]; if (p) p.video.focus(); // the keys go to the host again
+  });
+  return n;
+}
+function imeNote(m) {
+  const t = IME_TEXT[`${m.os}/${m.why}`];
+  if (!t) return;
+  const view = koreanView && !koreanView.win.closed && liveViews().includes(koreanView) ? koreanView : mainView;
+  const n = imeEl(view), el = n.el;
+  n.head.textContent = t[0](m.im || '');
+  n.how.textContent = t[1]();
+  n.row.style.display = m.fix ? 'flex' : 'none';
+  n.cmd.value = m.fix || '';
+  n.copy.textContent = tr('복사'); n.copy.title = tr('이 PC와 호스트의 클립보드에 복사합니다');
+  n.x.title = n.x.ariaLabel = tr('닫기');
+  el.style.display = 'block';
+  // Where: under the host's text cursor when this window shows its monitor, kept inside the window (above the line
+  // when there is no room below); else at the top, in the middle.
+  const R = view.root.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
+  const p = m.at ? view.panes.find((q) => q.idx === m.at.d) : null, r = p && p.video.getBoundingClientRect();
+  const cx = r ? r.left + m.at.x * r.width - R.left : -1, cy = r ? r.top + m.at.y * r.height - R.top : -1;
+  const at = r && cx >= 0 && cx <= R.width && cy >= 0 && cy <= R.height;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const left = at ? clamp(cx - 16, 8, R.width - w - 8) : (R.width - w) / 2;
+  const top = at ? (cy + 8 + h <= R.height - 8 ? cy + 8 : clamp(cy - h - 30, 8, R.height - h - 8)) : 28;
+  el.style.left = Math.round(left) + 'px'; el.style.top = Math.round(top) + 'px';
+  window.__rd.ime = { why: m.why, os: m.os, fix: n.cmd.value, at: !!at, head: n.head.textContent, shown: (window.__rd.ime ? window.__rd.ime.shown : 0) + 1 };
+  if (!n.over) n.later(IME_MS);
+}
 function render(view) {
   for (const p of view.panes) { p.video.srcObject = null; p.video.remove(); } // let go of its player, not only of the element
   view.panes = [];
@@ -1673,6 +1747,7 @@ function attachKeys(view) {
         if (ev.repeat || koreanDown.has(ev.code)) return;
         koreanDown.add(ev.code);
       } else if (koreanDown.delete(ev.code)) return;
+      koreanView = view; // where a note about this key goes (imeNote)
       flushPaste();
       const k = koreanKey(ev);
       send({ t: 'kd', c: ev.code, k }); send({ t: 'ku', c: ev.code, k });
@@ -2665,6 +2740,7 @@ function onHostMessage(data) {
     window.__rd.storms = (window.__rd.storms || 0) + 1;
     for (const v of liveViews()) toast(v, tr('같은 키나 클릭이 사람보다 빠르게 계속 들어가 호스트가 입력을 {0}초 멈췄습니다 · 이 PC를 이 PC에서 보거나 두 PC가 서로를 조종하고 있지 않은지 확인하세요', sec), 10000);
   }
+  else if (m.t === 'ime') imeNote(m); // a Korean key cannot work on the host: why, and what fixes it
   else if (m.t === 'device') gotDevice(m);
   else if (m.t === 'dragdata') gotDragData(m);
   else if (m.t === 'put') gotPut(m);

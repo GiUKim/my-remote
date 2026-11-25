@@ -1123,10 +1123,30 @@ the client app instead).
   swallows the other event, a held key toggles once). The host presses them by meaning (Windows VK_HANGUL/VK_HANJA,
   X11 evdev 122/123 = keycodes 130/131, which the default X map has as `Hangul`/`Hangul_Hanja`: checked on Xvfb).
   On Linux what switches is the host's input method (ibus-hangul, fcitx5-hangul): without one the key arrives and
-  does nothing. The Linux PC (.200) had none on that day (ibus without ibus-hangul, the only input source `xkb us`).
+  does nothing. The Linux PC had none on that day (ibus without ibus-hangul, the only input source `xkb us`).
   The page comes from the host, so a host must run the fixed page for its clients to get this. Checked by the
   self-test with synthetic events (a release alone, Right Alt as 한/영 with a repeat, 한자, `Process`); not with a real
   Korean keyboard, nor ibus-hangul taking an XTest Hangul key.
+  **Why the key does nothing, shown where the person types** (the user's wish, the same day). After a Korean key
+  was injected (`input.handle` says `korean`), main asks `host/imecheck.js` (`koreanKeyCame`; never before, never
+  holding the key back): Linux - a Korean-only input method (nabi, kime) of this user running is enough; else a
+  framework running (`/proc/*/comm`, this user's only: a login screen's ibus does not count) with its Korean engine
+  installed (a file with "hangul" in its folders) and enabled (ibus: GNOME's input sources or ibus' preload engines
+  through `gsettings`, unknown = enabled; fcitx/fcitx5: its profile) is fine, and the answers otherwise are
+  `disabled` (fix: GNOME's keyboard settings or the framework's settings program), `missing` (its package with the
+  distribution's package manager: `sudo apt install ibus-hangul`, dnf, zypper, pacman), `stopped` (installed, not
+  running: how to start it); Windows - a Korean keyboard among the session's (`GetKeyboardLayoutList`, `missing`:
+  `ms-settings:regionlanguage` for Win+R) and chosen for the program in front (`inactive`). A good answer is kept
+  10 minutes, a bad one 3 s (a key after installing finds it); one look at a time; a failing look says nothing. The
+  host sends `ime` with the host's text cursor where Windows knows it (`caretAt`: `GetGUIThreadInfo`, mapped to a
+  monitor by `whereIs`), at most every 1.5 s. The window whose Korean key it was (`koreanView`) shows the note under
+  that cursor when it shows its monitor (above the line when there is no room), else at its top in the middle; it
+  goes after 9 s, never while the pointer is on it, 2.5 s after the pointer left; 복사 puts the command on this PC's
+  clipboard and, not view-only, the host's (it is typed in a terminal there); the note is the page's, so its events
+  never reach the picture. Installing is never run for the person: it needs the administrator's password. Checked
+  by `release/test-imecheck.js` (7: every case with made-up systems) and the self-test (a made-up Linux without
+  ibus-hangul, `PANGMOTE_IMECHECK=real` asks this PC instead: the message, the note at the top, kept while hovered,
+  gone after; a Windows note at a text cursor without a command).
 - **Phones and tablets** (`TOUCH`: `(pointer: coarse)`, or `#touch` for tests; `attachTouch`). A
   finger's pointer events are taken before the mouse handling (capture listeners at the target,
   `stopImmediatePropagation`): a tap clicks, a long press (550 ms) clicks the right button, holding
@@ -1583,7 +1603,7 @@ that name is made again under the account; GitHub Pages is not forwarded: the we
 Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하는 벤치마크, 버그를 잡는 CI/CD"):
 
 - **`.github/workflows/ci.yml`** on every push to `main`, every pull request, by hand and weekly:
-  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-devices.js`, `test-qr.js`, `test-totp.js`, `test-pagecheck.js`, `test-appsync.js`, `test-shellswap.js` with sh, `test-watchdog.js`, `test-cycle.js`, `test-keylock.js`, `test-i18n.js`, `test-signed-exe.js`), `native` (`release/ci-native.js`:
+  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-devices.js`, `test-qr.js`, `test-totp.js`, `test-pagecheck.js`, `test-appsync.js`, `test-shellswap.js` with sh, `test-watchdog.js`, `test-cycle.js`, `test-keylock.js`, `test-imecheck.js`, `test-i18n.js`, `test-signed-exe.js`), `native` (`release/ci-native.js`:
   every committed binary rebuilt from `native/` with Ubuntu 22.04's mingw-w64 and compared byte for byte),
   `Windows` (`test-assist.js`, `test-signed-exe.js` with Windows' Authenticode verdict, `test-shellswap.js` with PowerShell, `test-watchdog.js`, the self-test with `--client-app-check` (from 2026-11-16: device tokens, and safeStorage's key that only a normal quit writes, are Windows matters), `test-app.js --packaged`), `Linux X11` (the self-test with
   `--input-check --clip-check --client-app-check` under Xvfb, `test-app.js --packaged`) and the `performance
@@ -1680,6 +1700,7 @@ Run from `host/` with Electron's env var cleared.
 | `node release/package.js --exe-only=<folder>` | Only `Pangmote.exe` as a package holds it, unsigned (what `sign.yml` uploads to SignPath). Windows |
 | `node release/package.js [--signed-exe=<file>] [--require-signed]` | The package with the signed program from `dist/signed/<Electron>/Pangmote.exe` (or the file given), checked first; `--require-signed` refuses to make an unsigned Windows package |
 | `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept, device tokens (kept, the key let go only for the token that worked, a key given again replaces the token). A second |
+| `node release/test-imecheck.js` | Whether the Korean keys can work on a host (`host/imecheck.js`) with made-up systems: Linux input methods running or not (this user's only), their Korean engines installed and enabled, the package managers, a Korean-only input method; Windows' Korean keyboard; the answer kept and asked once. A second |
 | `node release/test-i18n.js` | The translations (every text of the code in every language, no Korean left, holes, tags, plural forms, French spacing, a quoted button name read as that button), the translator, the PC's language setting. Seconds, no Electron |
 | `node release/downloads.js [--json]` | How much the app is used, from GitHub's own download counters (public API, no counting in the app): per release the package downloads (new installs), the bundle downloads (updates taken) and `latest.json` fetches per day, which / 4 is a rough count of apps running at once (every app looks every 6 h) |
 | `node release/i18n-sources.js [surface] [--missing]` | The Korean texts each part of the app shows, read from the code; `--missing` lists the ones a catalog lacks (host, page, client, loader) |
@@ -1752,6 +1773,7 @@ must then be given the new file). Run `npm run selftest` after either.
 | `native/capprobe.cpp` | Bench only: watches a display natively and reports when each bench frame was presented and handed over |
 | `native/build.js` | Sends the sources in `native/` to a Linux machine, builds them there with mingw-w64 and brings the DLLs back: `capture.dll` (and its record) into `host/bin`, the rest into `tools/native` |
 | `host/input.js` | Input injection, platform-neutral half: the client's messages mapped to the desktop, held keys and buttons, the self-test's dry run; picks the platform module and exports one interface |
+| `host/imecheck.js`, `release/test-imecheck.js` | Whether the Korean keys can work on this host (Linux input methods and their Korean engines, Windows' Korean keyboard) and what fixes it; its test with made-up systems (see "The 한/영 and 한자 keys") |
 | `host/platform/win32.js` | Win32 through koffi FFI: `SendInput`, cursor shape and picture, hiding/restoring the system cursors, HDR displays, drag detection, the clipboard's file list, the client app's drop helpers |
 | `host/platform/linux.js` | X11 through koffi FFI: XTest input, XFixes cursor and selection events, the dragged data read from `XdndSelection`, the window under the pointer, the clipboard's file list |
 | `host/platform/x11capture.js` | Native screen capture on X11 for `preload.js` (XDamage + MIT-SHM through koffi, no pointer in the picture): the calls of `capture.dll` in JavaScript |
@@ -1857,6 +1879,7 @@ Data channel `input` (JSON text):
 | client -> host | `clipget` | Fetch the files of `clipfiles` `seq`; refused (`dragdata` `none`, `why:'changed'`) when the clipboard changed since. The answer is a `dragdata` with `clip: true`, the bytes on a `file` channel as for dragging out. The client asks when focus leaves all of its windows (the person went to the client's own programs to paste), at most 512 MB, the app only; the files go onto the client's clipboard |
 | host -> client | `others` | `crd`: a Chrome Remote Desktop session is connected to the host as well (`remoting_desktop.exe` runs); `outline`: the host drags windows as an outline only. Checked every 10 s, sent when it changes; the client shows a warning. Both are checked on Windows only (elsewhere always false). The process list is a Toolhelp snapshot taken on a koffi worker thread (`input.processRunning`; about 67 ms for 479 processes on the test PC, so never on the main thread), not `tasklist` |
 | host -> client | `storm` | (0.9.0) Input stopped for `ms` because the same key or click came again and again, faster than a person (the input guard, `input.js` `stormed`); the client says so in a toast |
+| host -> client | `ime` | (0.10.1) A Korean key (한/영, 한자) just injected cannot work on the host: `os` (`linux`, `windows`), `why` (`missing`, `stopped`, `disabled`, `inactive`), `im` (the input method), `fix` (a command, at most 200 chars, or empty), `at` (`{d, x, y}`: the host's text cursor, monitor and 0..1, or null). At most every 1.5 s; the window of that key shows it (see "The 한/영 and 한자 keys") |
 | client -> host | `pair` | Right after the channel opened, when the hello asked for a token: `install`, the app's own random id (the host replaces the token of an app that pairs again). Here, not in the hello: key holders can read hellos on the relay |
 | host -> client | `device` | Answer to `hello.pair` (after `pair`): `ok`, `id`, `secret` (the device token: 32 bytes, base64url) or `why` (`full`, `nostore`, `unreadable`). Only over this channel, never through the relay |
 | host -> client | `bye` | Deliberate close; the client must not auto-reconnect |

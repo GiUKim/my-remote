@@ -108,6 +108,14 @@ function frameUp(b, t) {
 function record(entry, act) { if (dry) dry.push(entry); else act(); }
 
 function setMonitors(rects) { monitors = rects; }
+// Where a point of the desktop (physical pixels) is on the monitors the client knows: { d, x, y } with x, y 0..1, or null.
+function whereIs(px, py) {
+  for (let d = 0; d < monitors.length; d++) {
+    const r = monitors[d];
+    if (r && px >= r.x && px < r.x + r.width && py >= r.y && py < r.y + r.height) return { d, x: (px - r.x) / r.width, y: (py - r.y) / r.height };
+  }
+  return null;
+}
 
 function move(t) {
   if (dry) { dry.push({ mouse: MF.MOVE | MF.ABS | MF.VDESK, data: 0 }); return; }
@@ -273,7 +281,7 @@ function handle(text) {
       if (dx) wheel(dx, true);
       break;
     }
-    case 'kd': key(String(m.c), String(m.k || ''), false); break;
+    case 'kd': key(String(m.c), String(m.k || ''), false); if (m.k === 'HangulMode' || m.k === 'HanjaMode') return 'korean'; break;
     case 'ku': key(String(m.c), String(m.k || ''), true); break;
     case 'text': { // characters from a phone's keyboard, typed as such (see typeText in platform/*.js)
       const s = String(m.s || '').slice(0, 1000);
@@ -342,7 +350,7 @@ function takeReleased() { const n = released; released = 0; return n; }
 const isDown = (code) => down.has(code);
 
 module.exports = {
-  handle, reset, setMonitors, target, simulate, takeReleased, isDown, MF, buttonUp, tap, stormPause, STORM,
+  handle, reset, setMonitors, whereIs, target, simulate, takeReleased, isDown, MF, buttonUp, tap, stormPause, STORM,
   // From the platform module, or the neutral value. See platform/win32.js and platform/linux.js.
   viewOnlyReason: backend.viewOnlyReason, // '' when input can be injected here, else why not
   hidesCursors: backend.hidesCursors,
@@ -372,4 +380,8 @@ module.exports = {
   setSink: backend.setSink,
   mainThreadId: backend.mainThreadId, // Windows: the thread that injects (host/inputguard.js watches it)
   ownFrame: (px, py) => backend.ownFrame(px, py), // the self-test's real-input check (framecheck.js)
+  // The Korean keys (host/imecheck.js): Windows' Korean keyboard ({ any, active }; undefined elsewhere) and the text
+  // cursor of the program in front (physical pixels; null where it cannot be told, as on X11).
+  koreanKeyboard: backend.koreanKeyboard,
+  caretAt: backend.caretAt || (() => null),
 };
