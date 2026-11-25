@@ -1295,6 +1295,26 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         && same(r.full, ['kd:MetaLeft', 'kd:KeyD', 'ku:KeyD', 'ku:MetaLeft']) && same(r.altSpace, ['kd:AltLeft', 'reset']) && same(r.clip, ['copied here']) && r.sameKept
         && same(masked, ['AltLeft', 'mask', 'AltLeft-up']),
         `window ${r.window} | fullscreen ${r.full} | Alt+Space in a window ${r.altSpace} | clipboard ${JSON.stringify(r.clip)}${r.sameKept ? '' : ', the same text written again'} | reset ${masked}`);
+      // The Korean keys (2026-11-25: 한/영 never reached a Linux host from a Windows client): a dedicated 한/영 key
+      // gives a page only its release on Windows (its scan code F2 is the release of 0x72), which was thrown away as
+      // a release without its press. Each press goes whole (press and release), once, whatever events come.
+      const kr = await js(`(() => {
+        const K = (type, code, key, o = {}) => window.dispatchEvent(new KeyboardEvent(type, { code, key, bubbles: true, cancelable: true, ...o }));
+        const sent = () => window.__rd.trace.filter((m) => m.t === 'kd' || m.t === 'ku').map((m) => m.t + ':' + m.c + ':' + m.k);
+        const out = {};
+        window.__rd.trace = []; K('keyup', 'Lang1', 'HangulMode'); out.upOnly = sent();
+        window.__rd.trace = []; K('keydown', 'AltRight', 'HangulMode'); K('keydown', 'AltRight', 'HangulMode', { repeat: true }); K('keyup', 'AltRight', 'HangulMode'); out.both = sent();
+        window.__rd.trace = []; K('keyup', 'Lang2', 'HanjaMode'); K('keydown', 'Lang1', 'Process'); K('keyup', 'Lang1', 'HangulMode'); out.more = sent();
+        window.__rd.trace = null;
+        return out;
+      })()`);
+      const krHost = input.simulate([{ x: 0, y: 0, width: 1920, height: 1080 }], [{ t: 'kd', c: 'Lang1', k: 'HangulMode' }, { t: 'ku', c: 'Lang1', k: 'HangulMode' },
+        { t: 'kd', c: 'AltRight', k: 'HangulMode' }, { t: 'ku', c: 'AltRight', k: 'HangulMode' }]).log.map((e) => e.key + (e.up ? '-up' : ''));
+      check('the Korean keys (Hangul/English, Hanja) reach the host as a whole press, once: also when only their release comes (a dedicated key on Windows), held, or reported as Process',
+        same(kr.upOnly, ['kd:Lang1:HangulMode', 'ku:Lang1:HangulMode']) && same(kr.both, ['kd:AltRight:HangulMode', 'ku:AltRight:HangulMode'])
+          && same(kr.more, ['kd:Lang2:HanjaMode', 'ku:Lang2:HanjaMode', 'kd:Lang1:HangulMode', 'ku:Lang1:HangulMode'])
+          && same(krHost, ['Lang1', 'Lang1-up', 'AltRight', 'AltRight-up']),
+        `release only ${kr.upOnly} | Right Alt as Hangul ${kr.both} | Hanja, Process ${kr.more} | host ${krHost}`);
       // Keyboard Lock without stuck modifier keys (client/keylock.js; release/test-keylock.js has its rules): a lock
       // taken while Ctrl, Alt or the Windows key was held left that key pressed for the whole client PC (2026-11-17).
       // This page runs as in a browser: it puts the wrapper in itself, once.

@@ -1638,11 +1638,17 @@ const hostKey = (code) => (MAC && code === 'MetaLeft' ? 'ControlLeft' : MAC && c
 const systemKey = (ev) => ev.code === 'PrintScreen' || (!MAC && ((/^Meta/.test(ev.code) || ev.metaKey)
   || (ev.altKey && ['Tab', 'F4', 'Escape', 'Space'].includes(ev.code)) || (ev.ctrlKey && ev.code === 'Escape')));
 const fullscreenNow = (doc) => !!doc.fullscreenElement || !!window.__rd.forceFull; // forceFull: the self-test (a hidden window cannot go fullscreen)
+// The Korean keys by what they mean ('HangulMode', 'HanjaMode'; '' for any other key): by their key, also when it is
+// Right Alt that is 한/영; by Lang1/Lang2 where an input method reported another key ('Process'). Not on a Mac, whose
+// Lang1/Lang2 are the Japanese keyboard's かな and 英数. The host presses them by meaning (platform/*.js keyOf).
+const koreanKey = (ev) => (ev.key === 'HangulMode' || (!MAC && ev.code === 'Lang1') ? 'HangulMode'
+  : ev.key === 'HanjaMode' || (!MAC && ev.code === 'Lang2') ? 'HanjaMode' : '');
 function attachKeys(view) {
   const win = view.win, doc = win.document;
   // (The language button and its list are this page's own controls too: their arrows and Enter stay here.)
   const local = () => { const a = doc.activeElement, tag = a && a.tagName; return !dc || (view.isMain && arr.open) || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || !!(a && a.closest && a.closest('.mrLangBtn, .mrLangList')); };
   const sentDown = new Set(); // keys whose press went to the host: their release goes there too, whatever happens meanwhile
+  const koreanDown = new Set(); // Korean keys whose press came here (and went to the host as a whole key): their release stays here
   // A paste shortcut is held back until the browser's paste event has given us
   // the clipboard text, so the host receives "clipboard, then Ctrl+V" in order.
   const flushPaste = () => {
@@ -1656,6 +1662,22 @@ function attachKeys(view) {
     // A key whose press went to the host has its release sent, also when the focus moved meanwhile to a field of
     // this page (a select of the bar, the fullscreen menu): the host would hold it down otherwise.
     if (local() && !(ev.type === 'keyup' && sentDown.has(ev.code))) return;
+    // The Korean keys (한/영, 한자) toggle, and each press goes to the host whole, once: a press and a release.
+    // A dedicated 한/영 key has no press on Windows (its scan code is F2, the release of 0x72: USB's LANG1 is
+    // translated that way), so a page gets only its keyup, which the rule below (no release without its press)
+    // threw away: the host never had the key (reported 2026-11-25, Windows client to a Linux host). Where Right
+    // Alt is 한/영 both come; then the press is what goes. A key held (repeating) toggles once.
+    if (koreanKey(ev)) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (ev.type === 'keydown') {
+        if (ev.repeat || koreanDown.has(ev.code)) return;
+        koreanDown.add(ev.code);
+      } else if (koreanDown.delete(ev.code)) return;
+      flushPaste();
+      const k = koreanKey(ev);
+      send({ t: 'kd', c: ev.code, k }); send({ t: 'ku', c: ev.code, k });
+      return;
+    }
     // A release whose press did not go to the host stays here too (a shortcut's that stayed here, a key
     // pressed before this window had the focus): the host would get a key-up it never had the press of.
     if (ev.type === 'keyup' && !sentDown.has(ev.code)) return;

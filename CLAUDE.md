@@ -1114,6 +1114,19 @@ the client app instead).
   sends the page's texts on request (`lang`/`strings`), kept per page hash. The picker is a hidden `<select>` shown
   as a button with SVG flags (Windows draws flag emoji as letters; `I18N.picker`); its keys stay in the page
   (`local()`). The 진단 report is English for every language but Korean (`page-report.json`).
+- **The 한/영 and 한자 keys** (reported 2026-11-25: 한/영 never reached a Linux host from a Windows client). A
+  dedicated 한/영 key has no press on Windows: USB's LANG1 is translated to scan code F2 with no break (Microsoft's
+  HID to PS/2 table; 한자, LANG2, is F1), which is the release of 0x72, so a page gets only a keyup (`code` Lang1,
+  `key` HangulMode), and the page's rule "no release without its press" threw it away; where Right Alt is 한/영 both
+  events come. Now `koreanKey` (by `key`, or by Lang1/Lang2 when an input method reported `Process`; not on a Mac,
+  whose Lang1/Lang2 are the JIS かな/英数 keys) sends each press as a whole press and release, once (`koreanDown`
+  swallows the other event, a held key toggles once). The host presses them by meaning (Windows VK_HANGUL/VK_HANJA,
+  X11 evdev 122/123 = keycodes 130/131, which the default X map has as `Hangul`/`Hangul_Hanja`: checked on Xvfb).
+  On Linux what switches is the host's input method (ibus-hangul, fcitx5-hangul): without one the key arrives and
+  does nothing. The Linux PC (.200) had none on that day (ibus without ibus-hangul, the only input source `xkb us`).
+  The page comes from the host, so a host must run the fixed page for its clients to get this. Checked by the
+  self-test with synthetic events (a release alone, Right Alt as 한/영 with a repeat, 한자, `Process`); not with a real
+  Korean keyboard, nor ibus-hangul taking an XTest Hangul key.
 - **Phones and tablets** (`TOUCH`: `(pointer: coarse)`, or `#touch` for tests; `attachTouch`). A
   finger's pointer events are taken before the mouse handling (capture listeners at the target,
   `stopImmediatePropagation`): a tap clicks, a long press (550 ms) clicks the right button, holding
