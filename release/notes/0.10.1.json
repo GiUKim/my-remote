@@ -1,0 +1,12 @@
+{
+  "ko": [
+    "Windows 클라이언트의 한/영 키(전용 키)가 호스트에 전달되지 않던 문제를 고쳤습니다. 한자 키도 같습니다",
+    "한/영 키를 눌렀는데 호스트에서 한글 입력이 안 되는 경우(Linux에 ibus-hangul 같은 한글 입력기가 없거나 꺼져 있을 때, Windows에 한국어 키보드가 없을 때), 입력하는 곳 근처에 이유와 해결 명령(예: sudo apt install ibus-hangul)을 잠깐 보여 줍니다. 마우스를 올려 두면 사라지지 않고, 복사 버튼으로 명령을 복사할 수 있습니다",
+    "클라이언트에서 바뀐 점은 호스트를 이 버전으로 업데이트해야 나타납니다"
+  ],
+  "en": [
+    "The Hangul/English key (a dedicated key) of a Windows client now reaches the host; so does the Hanja key",
+    "When that key cannot switch to Korean on the host (Linux without a Korean input method such as ibus-hangul, or with it turned off; Windows without a Korean keyboard), the client briefly shows why and the command that fixes it (e.g. sudo apt install ibus-hangul) near where you type. It stays while the pointer is on it, and its copy button copies the command",
+    "The client's part of this comes with the host: update the host to this version"
+  ]
+}

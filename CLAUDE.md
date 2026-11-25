@@ -1126,7 +1126,12 @@ the client app instead).
   does nothing. The Linux PC had none on that day (ibus without ibus-hangul, the only input source `xkb us`).
   The page comes from the host, so a host must run the fixed page for its clients to get this. Checked by the
   self-test with synthetic events (a release alone, Right Alt as 한/영 with a repeat, 한자, `Process`); not with a real
-  Korean keyboard, nor ibus-hangul taking an XTest Hangul key.
+  Korean keyboard. End to end on the Linux PC (2026-11-25; Ubuntu 24.04, a display of its own with GNOME Shell 46
+  and ibus 1.5.29, settings of its own; the real host and the real client page, the key as a Windows page gets a
+  dedicated 한/영 key, injected through XTest into a GTK entry in front, then "gksrmf"): without ibus-hangul the
+  entry got "gksrmf" and the client showed `missing` with `sudo apt install ibus-hangul`; with ibus-hangul 1.5.5 and
+  GNOME's source `('ibus', 'hangul')` it got "한글" and no note (without the 한/영 key: "gksrmf"); installed but only
+  `('xkb', 'us')`: "gksrmf" and `disabled` with `gnome-control-center keyboard`. The note went by itself.
   **Why the key does nothing, shown where the person types** (the user's wish, the same day). After a Korean key
   was injected (`input.handle` says `korean`), main asks `host/imecheck.js` (`koreanKeyCame`; never before, never
   holding the key back): Linux - a Korean-only input method (nabi, kime) of this user running is enough; else a
