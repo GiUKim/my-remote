@@ -411,10 +411,54 @@ const EVDEV = {
 function keyOf(code, keyName) {
   const x = open();
   if (!x) return null;
-  // The Korean keys go by what they mean, as on Windows: a Hangul key may arrive as AltRight.
-  const ev = keyName === 'HangulMode' ? 122 : keyName === 'HanjaMode' ? 123 : EVDEV[code];
+  // The Korean keys go by what they mean, as on Windows: a Hangul key may arrive as AltRight. (Their usual keycodes:
+  // what the self-test's dry run records. A real press goes through koreanKey below.)
+  const ev = KOREAN[keyName] ? KOREAN[keyName][1] - 8 : EVDEV[code];
   const kc = ev ? ev + 8 : 0;
   return kc >= x.keycodes[0] && kc <= x.keycodes[1] ? kc : null;
+}
+// The Korean keys by their keysyms (Hangul, Hangul_Hanja): the input methods (ibus-hangul, fcitx5-hangul) go by the
+// keysym, and which keycode holds it depends on the host's layout. The evdev keymap with 'us' has them on 130/131
+// (Lang1/Lang2: Xvfb, GNOME's English source), but a desktop with GNOME's Korean source had the layouts 'kr,us', Hangul
+// on Right Alt (108, "Hangul NoSymbol Hangul") and nothing on 130: the key arrived as NoSymbol and switched nothing
+// (reported 2026-11-25 from Ubuntu 22.04, ibus-hangul 1.5.4). So, pressed and released as one key:
+//  1. 130/131 when they hold it;
+//  2. else a keycode that means that key alone (the host keyboard's own Hangul key: 108 there);
+//  3. else an empty keycode lent to the keysym, as for typed text, pressed TYPE_GAP later (Chromium reads a changed
+//     keyboard map late: pressed at once on Xvfb, a Chromium window got a key with no keysym) and given back after HOLD;
+//  4. else any keycode that holds it.
+// -> null when pressed, or a promise when it is pressed later (input.js then holds later input back).
+// (--input-check reads what was pressed: Chromium's own windows keep the keyboard map they read at start for keys such
+// as these, so the check cannot see a map it changed in the page's `key`.)
+const KOREAN = { HangulMode: [0xff31, 122 + 8], HanjaMode: [0xff34, 123 + 8] };
+let koreanLast = null; // { kc, syms: its keysyms when pressed, how: 'home' | 'only' | 'lent' | 'any', after: ms after lending }
+function koreanKey(keyName) {
+  const x = open(), k = KOREAN[keyName], m = x && k && keymap(x);
+  if (!m) return null;
+  const [sym, home] = k, t0 = Date.now();
+  const tap = (kc, how, syms) => {
+    x.f.XTestFakeKeyEvent(x.dpy, kc, 1, 0); x.f.XTestFakeKeyEvent(x.dpy, kc, 0, 0); x.f.XFlush(x.dpy);
+    koreanLast = { kc, syms, how, after: Date.now() - t0 };
+  };
+  const only = (c) => { const s = m.at(c).filter(Boolean); return s.length > 0 && s.every((v) => v === sym); };
+  let kc = m.at(home).includes(sym) ? home : null, how = 'home';
+  for (let c = m.min; !kc && c <= m.max; c++) if (only(c) && !lent.has(c)) { kc = c; how = 'only'; }
+  if (!kc) for (const [c, l] of lent) if (l.sym === sym) { kc = c; how = 'lent'; l.last = t0; break; } // lent a moment ago
+  if (kc) { tap(kc, how, m.at(kc)); return null; }
+  const free = m.free.find((c) => t0 - (emptied.get(c) || 0) >= SETTLE);
+  if (free) {
+    x.f.XChangeKeyboardMapping(x.dpy, free, 2, [sym, sym], 1);
+    x.f.XSync(x.dpy, 0);
+    lent.set(free, { sym, last: t0 });
+    return sleep(TYPE_GAP).then(() => {
+      const l = lent.get(free);
+      tap(free, 'lent', [sym, sym]);
+      if (l) l.last = Date.now();
+      if (!giveBackTimer) giveBackTimer = setTimeout(giveBack, HOLD);
+    });
+  }
+  for (let c = m.min; c <= m.max; c++) if (m.at(c).includes(sym)) { tap(c, 'any', m.at(c)); break; }
+  return null;
 }
 function sendKey(kc, up) {
   const x = open();
@@ -445,21 +489,23 @@ const emptied = new Map(); // keycode -> when it was emptied again
 let typingChain = Promise.resolve(), giveBackTimer = 0, noFreeSaid = false;
 // The keyboard map as it is now: another program may have replaced it meanwhile (a layout switch loads
 // a whole new one), so what was lent is checked against it, and only keycodes still empty or still
-// holding what was lent to them are used (and given back). Returns the empty ones.
-function emptyKeycodes(x) {
+// holding what was lent to them are used (and given back). -> { min, max, at(keycode) = its keysyms, free: the empty
+// ones that may be lent }, or null.
+function keymap(x) {
   const [min, max] = x.keycodes, n = max - min + 1, per = [0];
   const map = x.f.XGetKeyboardMapping(x.dpy, min, n, per);
+  if (!map) { lent.clear(); return null; }
   const free = [];
-  if (!map) { lent.clear(); return free; }
-  try {
-    const ks = longs(map, n * per[0]), at = (kc) => ks.slice((kc - min) * per[0], (kc - min + 1) * per[0]);
-    for (const [kc, l] of [...lent]) if (at(kc)[0] !== l.sym) lent.delete(kc);
-    for (let kc = max; kc >= min && free.length + lent.size < 48; kc--) { // from the top: the low ones are real keys
-      if (!lent.has(kc) && !at(kc).some(Boolean)) free.push(kc);
-    }
-  } finally { x.f.XFree(map); }
-  return free;
+  let ks;
+  try { ks = longs(map, n * per[0]); } finally { x.f.XFree(map); }
+  const at = (kc) => (kc >= min && kc <= max ? ks.slice((kc - min) * per[0], (kc - min + 1) * per[0]) : []);
+  for (const [kc, l] of [...lent]) if (at(kc)[0] !== l.sym) lent.delete(kc);
+  for (let kc = max; kc >= min && free.length + lent.size < 48; kc--) { // from the top: the low ones are real keys
+    if (!lent.has(kc) && !at(kc).some(Boolean)) free.push(kc);
+  }
+  return { min, max, at, free };
 }
+const emptyKeycodes = (x) => { const m = keymap(x); return m ? m.free : []; };
 function giveBack() {
   clearTimeout(giveBackTimer);
   giveBackTimer = 0;
@@ -680,7 +726,11 @@ function underPointer() {
 
 module.exports = {
   viewOnlyReason, hidesCursors: false, // X11 has no way to swap every program's cursor for a transparent one
-  move, nudge, button, wheel, keyOf, sendKey, typeText, maskKey,
+  move, nudge, button, wheel, keyOf, sendKey, koreanKey, typeText, maskKey,
   cursorState, cursorBitmap, dragging, dragData, dropFiles, lastDropInfo, clipSeq, clipboardFiles, setClipboardFiles, underPointer,
   keyCodes: Object.keys(EVDEV), // for the self-test's --input-check
+  // For --input-check only (a virtual display): a keycode's keysyms, and setting them.
+  keysymsOf: (kc) => { const x = open(), m = x && keymap(x); return m ? m.at(kc) : []; },
+  lastKorean: () => koreanLast,
+  setKeysyms: (kc, syms) => { const x = open(); if (!x || !syms.length) return; x.f.XChangeKeyboardMapping(x.dpy, kc, syms.length, syms, 1); x.f.XSync(x.dpy, 0); },
 };

@@ -50,6 +50,7 @@ const MF = { MOVE: 0x1, LD: 0x2, LU: 0x4, RD: 0x8, RU: 0x10, MD: 0x20, MU: 0x40,
 const BTN = [[MF.LD, MF.LU, 0], [MF.MD, MF.MU, 0], [MF.RD, MF.RU, 0], [MF.XD, MF.XU, 1], [MF.XD, MF.XU, 2]]; // left, middle, right, back, forward
 
 let monitors = []; // physical-pixel rects, index = monitor idx sent to the client
+const KOREAN_KEYS = new Set(['HangulMode', 'HanjaMode']); // 한/영, 한자: by their meaning (see handle)
 const down = new Map(); // code -> the key as it was pressed: released the same way, and all on disconnect
 let buttonsDown = 0; // bit b = BTN[b] is held down here
 let released = 0;    // buttons let go here because the client said it no longer held them (diagnostics)
@@ -281,8 +282,17 @@ function handle(text) {
       if (dx) wheel(dx, true);
       break;
     }
-    case 'kd': key(String(m.c), String(m.k || ''), false); if (m.k === 'HangulMode' || m.k === 'HanjaMode') return 'korean'; break;
-    case 'ku': key(String(m.c), String(m.k || ''), true); break;
+    // The Korean keys come as a press and its release at once (the page sends them whole). Where the platform presses
+    // them by their meaning (X11: the keycode that holds the keysym in the host's layout, see koreanKey in
+    // platform/linux.js), the press is the whole key and the release is nothing more.
+    case 'kd':
+      if (KOREAN_KEYS.has(m.k)) {
+        if (backend.koreanKey && !dry) { const p = backend.koreanKey(m.k); if (p && typeof p.then === 'function') typed(p); } else key(String(m.c), m.k, false);
+        return 'korean';
+      }
+      key(String(m.c), String(m.k || ''), false);
+      break;
+    case 'ku': if (!(KOREAN_KEYS.has(m.k) && backend.koreanKey && !dry)) key(String(m.c), String(m.k || ''), true); break;
     case 'text': { // characters from a phone's keyboard, typed as such (see typeText in platform/*.js)
       const s = String(m.s || '').slice(0, 1000);
       if (!s) break;

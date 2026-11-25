@@ -21,14 +21,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const input = require('./input');
-const { keyCodes } = require('./platform/linux');
+const { keyCodes, keysymsOf, setKeysyms, lastKorean } = require('./platform/linux');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const LOCKS = new Set(['CapsLock', 'NumLock', 'ScrollLock']); // pressed twice, so they end as they were
 
 const TEST_PAGE = `<!doctype html><body style="margin:0;height:100vh;background:#345" tabindex="0"><script>
 window.ev = [];
-for (const t of ['keydown', 'keyup']) addEventListener(t, (e) => { ev.push([t, e.code]); if (!window.typing) e.preventDefault(); }, true);
+for (const t of ['keydown', 'keyup']) addEventListener(t, (e) => { ev.push([t, e.code, e.key]); if (!window.typing) e.preventDefault(); }, true);
 for (const t of ['mousedown', 'mouseup']) addEventListener(t, (e) => ev.push([t, e.button]), true);
 addEventListener('wheel', (e) => ev.push(['wheel', Math.sign(e.deltaX), Math.sign(e.deltaY)]), true);
 for (const t of ['contextmenu', 'auxclick']) addEventListener(t, (e) => e.preventDefault(), true);
@@ -143,6 +143,36 @@ exports.run = async ({ check, info, js, until, dragOut, native }) => {
     const hangul = downs.filter((c) => c === 'Lang1').length === 2;
     check('X11: every key of the table arrives with the code the client sent (XTest, evdev + 8)', !missing.length && hangul && tw.isFocused(),
       `${keyCodes.length - missing.length} of ${keyCodes.length} keys${missing.length ? ', not arriving: ' + missing.join(' ') : ''}; HangulMode arrives as ${hangul ? 'Lang1' : 'something else'}${tw.isFocused() ? '' : '; the test window had no focus'}`);
+    // Layouts with no Hangul on its usual keycode (2026-11-25: GNOME's 'kr,us' had it on Right Alt alone and 130 empty,
+    // and the key arrived as NoSymbol): the host presses the layout's own Hangul key, and where there is none it lends
+    // an empty keycode to the keysym; either way the program in front gets HangulMode, once. 130 and 108 are put back.
+    const had130 = keysymsOf(130), had108 = keysymsOf(108), HANGUL = 0xff31, same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    // What was pressed, as the X server had it then (Chromium's windows keep the map they read at start for such keys,
+    // so the page's `key` cannot show a map changed here: the input methods, which go through GTK, read it anew, as
+    // the end-to-end test with ibus-hangul on GNOME showed); and that one key arrived.
+    const hangulOnce = async () => {
+      await sleep(300);
+      await tjs('window.ev = []; 1');
+      send({ t: 'kd', c: 'AltRight', k: 'HangulMode' }); send({ t: 'ku', c: 'AltRight', k: 'HangulMode' });
+      await sleep(700);
+      const evs = (await tjs('window.ev')).map((e) => `${e[0]}:${e[1] || '-'}`), p = lastKorean();
+      return { downs: evs.filter((s) => s.startsWith('keydown:')), how: p && p.how, kc: p && p.kc, hangul: !!p && p.syms[0] === HANGUL, after: p && p.after };
+    };
+    let onRightAlt = null, lentKey = null;
+    if (had130.length && had108.length) {
+      try {
+        setKeysyms(130, had130.map(() => 0));
+        setKeysyms(108, had108.map((s, i) => (i % 2 ? 0 : HANGUL))); // "Hangul NoSymbol Hangul", as on that host
+        onRightAlt = await hangulOnce();
+        setKeysyms(108, had108);
+        lentKey = await hangulOnce();
+      } finally { setKeysyms(130, had130); setKeysyms(108, had108); }
+    }
+    const back = same(keysymsOf(130), had130) && same(keysymsOf(108), had108);
+    check('X11: the Hangul key is pressed as the layout has it: its own key where 130 has none (Right Alt), else an empty keycode lent to it; one key arrives',
+      !!onRightAlt && onRightAlt.how === 'only' && onRightAlt.kc === 108 && onRightAlt.hangul && same(onRightAlt.downs, ['keydown:AltRight'])
+        && lentKey.how === 'lent' && lentKey.hangul && lentKey.after >= 30 && lentKey.downs.length === 1 && back,
+      onRightAlt === null ? `keycodes 130 ${JSON.stringify(had130)}, 108 ${JSON.stringify(had108)}: not the usual map` : `on Right Alt ${JSON.stringify(onRightAlt)} | none ${JSON.stringify(lentKey)} | put back: ${back}`);
 
     await tjs('window.ev = []; 1');
     for (let b = 0; b < 5; b++) { send({ t: 'md', b, ...at(mid.x, mid.y) }); await sleep(40); send({ t: 'mu', b, ...at(mid.x, mid.y) }); await sleep(80); }

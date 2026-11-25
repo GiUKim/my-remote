@@ -1120,8 +1120,22 @@ the client app instead).
   `key` HangulMode), and the page's rule "no release without its press" threw it away; where Right Alt is 한/영 both
   events come. Now `koreanKey` (by `key`, or by Lang1/Lang2 when an input method reported `Process`; not on a Mac,
   whose Lang1/Lang2 are the JIS かな/英数 keys) sends each press as a whole press and release, once (`koreanDown`
-  swallows the other event, a held key toggles once). The host presses them by meaning (Windows VK_HANGUL/VK_HANJA,
-  X11 evdev 122/123 = keycodes 130/131, which the default X map has as `Hangul`/`Hangul_Hanja`: checked on Xvfb).
+  swallows the other event, a held key toggles once). The host presses them by meaning: Windows VK_HANGUL/VK_HANJA;
+  X11 by the keysym `Hangul`/`Hangul_Hanja` (`koreanKey` in `platform/linux.js`), since which keycode holds it depends
+  on the layout. **0.10.1 pressed keycode 130/131 and did nothing on a real host** (reported the same day: a Windows
+  client app, Right Alt as 한/영, to Ubuntu 22.04 GNOME with ibus-hangul 1.5.4 and only the Hangul source; the host
+  check said ok, so no note). There GNOME's Korean source gives the layouts `kr,us` with `Hangul` on Right Alt (108,
+  "Hangul NoSymbol Hangul") and nothing on 130: `xev` showed keycode 130 as NoSymbol. Xvfb's `us` map (22.04 and
+  24.04 alike) has `Hangul` on 130, which is why every test passed. Now, as one press and release: 130/131 when they
+  hold it; else a keycode that means that key alone (the host keyboard's own 한/영 key, 108 there: no change to the
+  map); else an empty keycode lent to the keysym (as for typed text), pressed 30 ms later and given back after 1 s;
+  else any keycode that holds it. input.js sends the press there and drops the release (the page always sends both;
+  the self-test's dry run still records the usual keycodes). Chromium's own windows keep the map they read at start
+  for such keys (a map changed by a test shows the old keysym in the page's `key`), while GTK and with it ibus read it
+  anew: `--input-check` therefore checks what was pressed and its keysyms at that moment (108 alone; lent 248, 30 ms
+  later) and that one key arrived; the end-to-end test below checks the switch itself. The keyboard of the person's
+  Windows PC, measured with a probe window (Electron 45, real keys): 한/영 is Right Alt (`AltRight`, `HangulMode`,
+  keyCode 21, press and release both), 한자 Right Ctrl (`ControlRight`, `HanjaMode`, 25).
   On Linux what switches is the host's input method (ibus-hangul, fcitx5-hangul): without one the key arrives and
   does nothing. The Linux PC had none on that day (ibus without ibus-hangul, the only input source `xkb us`).
   The page comes from the host, so a host must run the fixed page for its clients to get this. Checked by the
@@ -1131,7 +1145,10 @@ the client app instead).
   dedicated 한/영 key, injected through XTest into a GTK entry in front, then "gksrmf"): without ibus-hangul the
   entry got "gksrmf" and the client showed `missing` with `sudo apt install ibus-hangul`; with ibus-hangul 1.5.5 and
   GNOME's source `('ibus', 'hangul')` it got "한글" and no note (without the 한/영 key: "gksrmf"); installed but only
-  `('xkb', 'us')`: "gksrmf" and `disabled` with `gnome-control-center keyboard`. The note went by itself.
+  `('xkb', 'us')`: "gksrmf" and `disabled` with `gnome-control-center keyboard`. The note went by itself. With the key
+  sent as Right Alt (`AltRight`, `HangulMode`) the same. After the fix, with the Hangul source: the usual map (130)
+  "한글"; the reported host's map acted out with `xmodmap` (130 empty, 108 Hangul) "한글" through 108, where 0.10.1 gave
+  "gksrmf"; no Hangul key at all (130 empty) "한글" through a lent keycode.
   **Why the key does nothing, shown where the person types** (the user's wish, the same day). After a Korean key
   was injected (`input.handle` says `korean`), main asks `host/imecheck.js` (`koreanKeyCame`; never before, never
   holding the key back): Linux - a Korean-only input method (nabi, kime) of this user running is enough; else a
