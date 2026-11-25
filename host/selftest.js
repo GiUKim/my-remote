@@ -1337,17 +1337,30 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         // Under the host's text cursor (Windows), and a note without a command.
         // The cursor's place: near the left of what this window shows of its first monitor, half way down (so that the
         // note, kept inside the window, need not move aside: CI's 1024x768 screen makes this window narrower).
+        // A note whose remedy is a key combination at the host has a button that sends it (Super+Space: in a window this
+        // PC keeps Win+Space for itself); not for a view-only client.
+        const act = await js(`(() => { const ro0 = READONLY; READONLY = false; window.__rd.trace = [];
+          imeNote({ os: 'linux', why: 'notcurrent', im: 'ibus', fix: '', at: null });
+          const n = mainView.imeEl, o = { row: n.row.style.display, cmd: n.cmd.style.display, label: n.act.textContent, shown: n.act.style.display !== 'none' };
+          n.act.click();
+          o.sent = window.__rd.trace.map((m) => m.t + ':' + m.c); o.closed = n.el.style.display === 'none';
+          window.__rd.trace = null; READONLY = true;
+          imeNote({ os: 'linux', why: 'notcurrent', im: 'ibus', fix: '', at: null }); o.viewOnly = n.row.style.display + '/' + n.act.style.display;
+          n.hide(); READONLY = ro0; return o; })()`);
+        const actOk = act.row === 'flex' && act.cmd === 'none' && act.shown && /Super\+Space/.test(act.label) && act.closed
+          && same(act.sent, ['kd:MetaLeft', 'kd:Space', 'ku:Space', 'ku:MetaLeft']) && act.viewOnly === 'none/none';
         const at = await js(`(() => { const p = mainView.panes[0]; if (!p) return { none: true };
           const v = p.video.getBoundingClientRect(), R = mainView.root.getBoundingClientRect();
           const px = Math.max(v.left, R.left) + 48, py = (Math.max(v.top, R.top) + Math.min(v.bottom, R.bottom)) / 2;
+          const ro0 = READONLY; READONLY = true; // a view-only page: no key button (above), no command
           imeNote({ os: 'windows', why: 'inactive', im: '', fix: '', at: { d: p.idx, x: (px - v.left) / v.width, y: (py - v.top) / v.height } });
           const n = mainView.imeEl, r = n.el.getBoundingClientRect();
           const o = { row: n.row.style.display, dx: Math.round(r.left - (px - 16)), dy: Math.round(r.top - (py + 8)), at: window.__rd.ime.at, head: n.head.textContent };
-          n.hide(); return o; })()`);
-        check('a Korean key that cannot work on the host is explained where the person types: why, and the command that fixes it (at the top without a text cursor, under it with one); it stays while hovered',
+          n.hide(); READONLY = ro0; return o; })()`);
+        check('a Korean key that cannot work on the host is explained where the person types: why, and the command that fixes it (at the top without a text cursor, under it with one), or a button that sends the key combination; it stays while hovered',
           !!got && got.why === 'missing' && got.fix === 'sudo apt install ibus-hangul' && top && top.shown && /Linux/.test(top.head) && top.cmd === 'sudo apt install ibus-hangul' && top.row === 'flex'
-            && top.top === 28 && Math.abs(top.mid) <= 1 && hovered && gone && at.row === 'none' && at.at === true && /Windows/.test(at.head) && Math.abs(at.dx) <= 1 && Math.abs(at.dy) <= 1,
-          `message ${JSON.stringify(got)} | note ${JSON.stringify(top)} | hovered ${hovered}, gone after ${gone} | at the cursor ${JSON.stringify(at)}`);
+            && top.top === 28 && Math.abs(top.mid) <= 1 && hovered && gone && at.row === 'none' && at.at === true && /Windows/.test(at.head) && Math.abs(at.dx) <= 1 && Math.abs(at.dy) <= 1 && actOk,
+          `message ${JSON.stringify(got)} | note ${JSON.stringify(top)} | hovered ${hovered}, gone after ${gone} | at the cursor ${JSON.stringify(at)} | key button ${JSON.stringify(act)}`);
       }
       // Keyboard Lock without stuck modifier keys (client/keylock.js; release/test-keylock.js has its rules): a lock
       // taken while Ctrl, Alt or the Windows key was held left that key pressed for the whole client PC (2026-11-17).

@@ -288,7 +288,7 @@ function handle(text) {
     case 'kd':
       if (KOREAN_KEYS.has(m.k)) {
         if (backend.koreanKey && !dry) { const p = backend.koreanKey(m.k); if (p && typeof p.then === 'function') typed(p); } else key(String(m.c), m.k, false);
-        return 'korean';
+        return m.k === 'HangulMode' ? 'korean' : undefined; // main asks whether it can work here (host/imecheck.js)
       }
       key(String(m.c), String(m.k || ''), false);
       break;

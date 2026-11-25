@@ -83,6 +83,38 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   ok('kept: two looks at once are one, a bad answer is asked again after 3 s, a good one kept; a look that fails says ok',
     a === b && !a.ok && c === a && looks === 2 && d.ok && e === d && thrown.ok, JSON.stringify({ looks, d }));
 
+  // ibus with its Korean engine enabled is fine for now, and asked at each key what can change (found on GNOME,
+  // 2026-11-25): the engine in use, and whether ibus-hangul's switch (or on) keys have Hangul.
+  const ibusIo = ({ engine = 'hangul', sw = "'Hangul,Shift+space'", on, runs } = {}) => {
+    const io = linux({ procs: [['ibus-daemon', ME]], engines: IBUS });
+    const answers = { 'ibus engine': engine, 'gsettings get org.gnome.desktop.input-sources sources': "[('xkb', 'us'), ('ibus', 'hangul')]",
+      'gsettings get org.freedesktop.ibus.general preload-engines': '@as []', 'gsettings get org.freedesktop.ibus.engine.hangul switch-keys': sw,
+      'gsettings get org.freedesktop.ibus.engine.hangul on-keys': on };
+    io.run = async (file, args) => { const k = [file, ...args].join(' '); if (runs) runs.push(k); const v = answers[k]; return v === undefined ? null : typeof v === 'function' ? v() : v; };
+    return io;
+  };
+  const live = (o) => ime.create({ platform: 'linux', io: ibusIo(o) })();
+  const plain = await check(ibusIo());
+  const [fine, english, keyless, onKey, emptyKeys, oddKeys, unread, engineUnread] = await Promise.all([live(), live({ engine: 'xkb:us::eng\n' }),
+    live({ sw: "'Shift+space'" }), live({ sw: "'Shift+space'", on: "'Hangul'" }), live({ sw: "''" }), live({ sw: "'Shift+space;rm'" }), live({ sw: undefined }), live({ engine: undefined })]);
+  ok('ibus: the engine in use not the Korean one is notcurrent (Super+Space); switch keys without Hangul is nokey, with the command that adds it and keeps theirs; Hangul among the on keys, or what cannot be read, is fine',
+    same(plain, { ok: true, live: 'ibus' }) && same(fine, { ok: true }) && same(english, { ok: false, os: 'linux', why: 'notcurrent', im: 'ibus', fix: '' })
+      && same(keyless, { ok: false, os: 'linux', why: 'nokey', im: 'ibus', fix: "gsettings set org.freedesktop.ibus.engine.hangul switch-keys 'Shift+space,Hangul'" })
+      && onKey.ok && emptyKeys.fix === "gsettings set org.freedesktop.ibus.engine.hangul switch-keys 'Hangul'" && oddKeys.fix === 'ibus-setup-hangul' && unread.ok && engineUnread.ok,
+    JSON.stringify({ english, keyless, emptyKeys, oddKeys }));
+
+  // The live part is asked again after 2 s (the base answer kept), and once at a time.
+  let lt = 0, engineNow = 'xkb:us::eng';
+  const runs = [];
+  const ls = ime.create({ platform: 'linux', io: ibusIo({ engine: () => engineNow, runs }), now: () => lt });
+  const [l1, l2] = await Promise.all([ls(), ls()]);
+  engineNow = 'hangul'; lt = 1000; const l3 = await ls();
+  lt = 2500; const l4 = await ls();
+  engineNow = 'xkb:us::eng'; lt = 60e3; const l5 = await ls();
+  const engineAsked = runs.filter((r) => r === 'ibus engine').length, procsAsked = runs.filter((r) => r.includes('input-sources')).length;
+  ok('ibus: the engine in use is asked again after 2 s, once at a time; the rest is kept',
+    l1 === l2 && l1.why === 'notcurrent' && l3 === l1 && l4.ok && l5.why === 'notcurrent' && engineAsked === 3 && procsAsked === 1, JSON.stringify({ engineAsked, procsAsked, l4, l5 }));
+
   const made = await check(ime.madeUp());
   ok('the self-test\'s made-up Linux: ibus without its Korean engine, apt', same(made, { ok: false, os: 'linux', why: 'missing', im: 'ibus', fix: 'sudo apt install ibus-hangul' }), JSON.stringify(made));
 

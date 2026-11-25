@@ -499,8 +499,16 @@ const IME_TEXT = {
   'linux/missing': [() => tr('호스트 PC(Linux)에 한글 입력기가 없어 한/영 키가 동작하지 않습니다'), () => tr('호스트 PC의 터미널에서 설치한 뒤 입력기 설정에 한국어(Hangul)를 추가하세요:')],
   'linux/stopped': [(im) => tr('호스트 PC(Linux)의 입력기({0})가 실행되고 있지 않아 한/영 키가 동작하지 않습니다', im), () => tr('호스트 PC의 터미널에서 실행하세요:')],
   'linux/disabled': [(im) => tr('호스트 PC(Linux)의 입력기({0})에 한국어(Hangul)가 추가되어 있지 않아 한/영 키가 동작하지 않습니다', im), () => tr('호스트 PC에서 입력기 설정을 열어 한국어(Hangul)를 추가하세요:')],
+  'linux/notcurrent': [() => tr('호스트 PC(Linux)에서 지금 쓰는 입력 소스가 한국어(Hangul)가 아니라 한/영 키가 동작하지 않습니다'), () => tr('호스트 PC에서 Super+Space로 입력 소스를 한국어(Hangul)로 바꾼 뒤 한/영 키를 누르세요')],
+  'linux/nokey': [() => tr('호스트 PC(Linux)의 한글 입력기(ibus-hangul)에서 한/영 전환 키에 Hangul이 없어 한/영 키가 동작하지 않습니다'), () => tr('호스트 PC의 터미널에서 실행하면 지금 쓰는 전환 키는 그대로 두고 Hangul을 더합니다:')],
   'windows/missing': [() => tr('호스트 PC(Windows)에 한국어 키보드가 없어 한/영 키가 동작하지 않습니다'), () => tr('호스트 PC에서 Win+R에 붙여 넣어 언어 설정을 열고 한국어를 추가하세요:')],
   'windows/inactive': [() => tr('호스트 PC(Windows)에서 지금 쓰는 키보드가 한국어가 아니라 한/영 키가 동작하지 않습니다'), () => tr('호스트 PC에서 Win+Space로 한국어 키보드를 고르세요')],
+};
+// Notes whose remedy is a key combination at the host: a button sends it (in a window this PC keeps Win+Space for
+// itself, so pressing it here would not reach the host). Not for a view-only client.
+const IME_ACT = {
+  'linux/notcurrent': { label: () => tr('Super+Space 보내기'), keys: ['MetaLeft', 'Space'] },
+  'windows/inactive': { label: () => tr('Win+Space 보내기'), keys: ['MetaLeft', 'Space'] },
 };
 function imeEl(view) {
   if (view.imeEl) return view.imeEl;
@@ -514,8 +522,9 @@ function imeEl(view) {
   const cmd = mk('input', 'flex:1;min-width:0;padding:5px 8px;border:1px solid #3a4350;border-radius:5px;background:#0e1014;color:#e6e8eb;font:12px ui-monospace,Consolas,monospace', row);
   cmd.readOnly = true; cmd.spellcheck = false;
   const copy = mk('button', 'padding:5px 10px;border:0;border-radius:5px;background:#2b6cff;color:#fff;font:12px var(--mr-font);cursor:pointer', row);
+  const act = mk('button', 'padding:5px 10px;border:0;border-radius:5px;background:#2b6cff;color:#fff;font:12px var(--mr-font);cursor:pointer', row);
   view.root.appendChild(el);
-  const n = (view.imeEl = { el, head, how, row, cmd, copy, x, timer: 0, over: false });
+  const n = (view.imeEl = { el, head, how, row, cmd, copy, act, keys: null, x, timer: 0, over: false });
   const hide = () => { clearTimeout(n.timer); n.timer = 0; el.style.display = 'none'; const p = view.panes[0]; if (doc.activeElement && el.contains(doc.activeElement) && p) p.video.focus(); };
   n.hide = hide;
   n.later = (ms) => { clearTimeout(n.timer); n.timer = setTimeout(hide, ms); };
@@ -534,6 +543,14 @@ function imeEl(view) {
     setTimeout(() => { copy.textContent = tr('복사'); }, 1500);
     const p = view.panes[0]; if (p) p.video.focus(); // the keys go to the host again
   });
+  // The combination pressed and let go at the host, as keys of the client would be; the note has done its part.
+  act.addEventListener('click', () => {
+    const k = n.keys;
+    if (!k || READONLY) return;
+    for (const c of k) send({ t: 'kd', c, k: c === 'Space' ? ' ' : c.replace(/(Left|Right)$/, '') });
+    for (const c of [...k].reverse()) send({ t: 'ku', c, k: c === 'Space' ? ' ' : c.replace(/(Left|Right)$/, '') });
+    hide();
+  });
   return n;
 }
 function imeNote(m) {
@@ -543,7 +560,12 @@ function imeNote(m) {
   const n = imeEl(view), el = n.el;
   n.head.textContent = t[0](m.im || '');
   n.how.textContent = t[1]();
-  n.row.style.display = m.fix ? 'flex' : 'none';
+  const a = READONLY ? null : IME_ACT[`${m.os}/${m.why}`];
+  n.row.style.display = m.fix || a ? 'flex' : 'none';
+  n.cmd.style.display = n.copy.style.display = m.fix ? '' : 'none';
+  n.act.style.display = a ? '' : 'none';
+  n.act.textContent = a ? a.label() : '';
+  n.keys = a ? a.keys : null;
   n.cmd.value = m.fix || '';
   n.copy.textContent = tr('복사'); n.copy.title = tr('이 PC와 호스트의 클립보드에 복사합니다');
   n.x.title = n.x.ariaLabel = tr('닫기');
@@ -558,7 +580,7 @@ function imeNote(m) {
   const left = at ? clamp(cx - 16, 8, R.width - w - 8) : (R.width - w) / 2;
   const top = at ? (cy + 8 + h <= R.height - 8 ? cy + 8 : clamp(cy - h - 30, 8, R.height - h - 8)) : 28;
   el.style.left = Math.round(left) + 'px'; el.style.top = Math.round(top) + 'px';
-  window.__rd.ime = { why: m.why, os: m.os, fix: n.cmd.value, at: !!at, head: n.head.textContent, shown: (window.__rd.ime ? window.__rd.ime.shown : 0) + 1 };
+  window.__rd.ime = { why: m.why, os: m.os, fix: n.cmd.value, act: n.act.textContent, at: !!at, head: n.head.textContent, shown: (window.__rd.ime ? window.__rd.ime.shown : 0) + 1 };
   if (!n.over) n.later(IME_MS);
 }
 function render(view) {

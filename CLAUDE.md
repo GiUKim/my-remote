@@ -1169,6 +1169,18 @@ the client app instead).
   by `release/test-imecheck.js` (7: every case with made-up systems) and the self-test (a made-up Linux without
   ibus-hangul, `PANGMOTE_IMECHECK=real` asks this PC instead: the message, the note at the top, kept while hovered,
   gone after; a Windows note at a text cursor without a command).
+  **What changes with a key, asked at each 한/영 key** (0.10.3; found on GNOME the same day, each with the key doing
+  nothing and no note, because "ibus with Hangul enabled" was all that was looked at): an ibus answer that is fine
+  has a live part (`ibusLive`, kept 2 s; the rest 10 minutes): the engine in use (`ibus engine`) not the Korean one ->
+  `notcurrent` (GNOME with English and Korean sources and English in use: the key switches only inside the Korean
+  engine); ibus-hangul's `switch-keys` and `on-keys` without `Hangul` -> `nokey`, with `gsettings set ... switch-keys
+  '<theirs>,Hangul'` (only plain key names go into it, else `ibus-setup-hangul`). Only the 한/영 key asks (the texts
+  are about it). A note whose remedy is a key combination at the host has a button that sends it (`IME_ACT`:
+  `Super+Space 보내기` for `notcurrent`, `Win+Space 보내기` for Windows' `inactive`): in a window this PC keeps
+  Win+Space for itself, so the advice alone could not be followed; hidden for a view-only client. End to end on GNOME
+  46 + ibus-hangul (the harness above): English in use -> the note, its button -> the engine `hangul`, then 한/영 ->
+  "한글"; switch keys `Shift+space` -> the note, its command run -> 한/영 -> "한글", no note again. The Windows
+  button was checked only by the self-test (the keys it sends), not on a Windows host.
 - **Phones and tablets** (`TOUCH`: `(pointer: coarse)`, or `#touch` for tests; `attachTouch`). A
   finger's pointer events are taken before the mouse handling (capture listeners at the target,
   `stopImmediatePropagation`): a tap clicks, a long press (550 ms) clicks the right button, holding
@@ -1901,7 +1913,7 @@ Data channel `input` (JSON text):
 | client -> host | `clipget` | Fetch the files of `clipfiles` `seq`; refused (`dragdata` `none`, `why:'changed'`) when the clipboard changed since. The answer is a `dragdata` with `clip: true`, the bytes on a `file` channel as for dragging out. The client asks when focus leaves all of its windows (the person went to the client's own programs to paste), at most 512 MB, the app only; the files go onto the client's clipboard |
 | host -> client | `others` | `crd`: a Chrome Remote Desktop session is connected to the host as well (`remoting_desktop.exe` runs); `outline`: the host drags windows as an outline only. Checked every 10 s, sent when it changes; the client shows a warning. Both are checked on Windows only (elsewhere always false). The process list is a Toolhelp snapshot taken on a koffi worker thread (`input.processRunning`; about 67 ms for 479 processes on the test PC, so never on the main thread), not `tasklist` |
 | host -> client | `storm` | (0.9.0) Input stopped for `ms` because the same key or click came again and again, faster than a person (the input guard, `input.js` `stormed`); the client says so in a toast |
-| host -> client | `ime` | (0.10.1) A Korean key (한/영, 한자) just injected cannot work on the host: `os` (`linux`, `windows`), `why` (`missing`, `stopped`, `disabled`, `inactive`), `im` (the input method), `fix` (a command, at most 200 chars, or empty), `at` (`{d, x, y}`: the host's text cursor, monitor and 0..1, or null). At most every 1.5 s; the window of that key shows it (see "The 한/영 and 한자 keys") |
+| host -> client | `ime` | (0.10.1) The 한/영 key just injected cannot work on the host: `os` (`linux`, `windows`), `why` (`missing`, `stopped`, `disabled`, `inactive`; from 0.10.3 also `notcurrent`, `nokey`), `im` (the input method), `fix` (a command, at most 200 chars, or empty), `at` (`{d, x, y}`: the host's text cursor, monitor and 0..1, or null). At most every 1.5 s; the window of that key shows it (see "The 한/영 and 한자 keys") |
 | client -> host | `pair` | Right after the channel opened, when the hello asked for a token: `install`, the app's own random id (the host replaces the token of an app that pairs again). Here, not in the hello: key holders can read hellos on the relay |
 | host -> client | `device` | Answer to `hello.pair` (after `pair`): `ok`, `id`, `secret` (the device token: 32 bytes, base64url) or `why` (`full`, `nostore`, `unreadable`). Only over this channel, never through the relay |
 | host -> client | `bye` | Deliberate close; the client must not auto-reconnect |

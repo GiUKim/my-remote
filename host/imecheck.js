@@ -8,8 +8,9 @@
 //    engines installed (their files), and whether the engine is among those enabled (ibus: GNOME's input sources or
 //    ibus' preloaded engines, read with gsettings; fcitx: its profile).
 //  - Windows: a Korean keyboard among this session's, and chosen for the program in front (platform/win32.js).
-// -> { ok: true } or { ok: false, os, why: 'missing' | 'stopped' | 'disabled' | 'inactive', im, fix }: `fix` a command
-// to type at the host (installing needs the administrator's password: it is shown, never run).
+// -> { ok: true } or { ok: false, os, why: 'missing' | 'stopped' | 'disabled' | 'notcurrent' | 'nokey' | 'inactive', im,
+// fix }: `fix` a command to type at the host (installing needs the administrator's password: it is shown, never run).
+// Only the 한/영 key asks (the texts are about it; 한자 is used after it).
 // Electron-free; the system is reached through `io`, so release/test-imecheck.js runs every case in plain Node.
 'use strict';
 const fs = require('fs');
@@ -82,7 +83,7 @@ async function linux(io) {
   await Promise.all(names.map(async (n) => { has[n] = await installed(io, FRAMEWORKS[n]); }));
   const ready = on.find((n) => has[n]);
   if (ready) {
-    if ((await enabled(io, ready)) !== false) return { ok: true };
+    if ((await enabled(io, ready)) !== false) return ready === 'ibus' ? { ok: true, live: 'ibus' } : { ok: true };
     const gnome = ready === 'ibus' && (await io.run('gsettings', ['get', 'org.gnome.desktop.input-sources', 'sources'])) != null;
     return { ok: false, os: 'linux', why: 'disabled', im: ready, fix: gnome ? 'gnome-control-center keyboard' : FRAMEWORKS[ready].setup };
   }
@@ -90,6 +91,26 @@ async function linux(io) {
   const off = names.find((n) => has[n]);
   if (off) return { ok: false, os: 'linux', why: 'stopped', im: off, fix: FRAMEWORKS[off].start };
   return { ok: false, os: 'linux', why: 'missing', im: 'ibus', fix: install(io, FRAMEWORKS.ibus.pkg) };
+}
+// What can change at any moment with ibus, asked at every 한/영 key (the rest above is kept): found on GNOME on
+// 2026-11-25, both with the key doing nothing and no note.
+//  - The engine in use is not the Korean one: with English and Korean sources the key switches only inside the Korean
+//    engine, and the sources change with Super+Space (GNOME's and ibus' own default) -> 'notcurrent'.
+//  - ibus-hangul's keys that switch (or turn on) Korean do not have Hangul (someone kept only Shift+Space, or Alt_R)
+//    -> 'nokey', with the command that adds it and keeps theirs.
+// A value that cannot be read says nothing (ok).
+const HANGUL_SCHEMA = 'org.freedesktop.ibus.engine.hangul';
+async function ibusLive(io) {
+  const [engine, sw, on] = await Promise.all([io.run('ibus', ['engine']),
+    io.run('gsettings', ['get', HANGUL_SCHEMA, 'switch-keys']), io.run('gsettings', ['get', HANGUL_SCHEMA, 'on-keys'])]);
+  const now = engine == null ? '' : engine.trim();
+  if (now && !/hangul/i.test(now)) return { ok: false, os: 'linux', why: 'notcurrent', im: 'ibus', fix: '' };
+  const keys = (v) => (v == null ? null : v.trim().replace(/^'(.*)'$/, '$1'));
+  const s = keys(sw), o = keys(on), has = (v) => v != null && v.split(',').some((k) => k.trim() === 'Hangul');
+  if (s == null || has(s) || has(o)) return { ok: true };
+  // The command keeps what is there (only plain key names are put into it; anything else: the settings program).
+  const fix = /^[A-Za-z0-9_+,-]*$/.test(s) ? `gsettings set ${HANGUL_SCHEMA} switch-keys '${s ? s + ',' : ''}Hangul'` : 'ibus-setup-hangul';
+  return { ok: false, os: 'linux', why: 'nokey', im: 'ibus', fix };
 }
 function windows(io) {
   const k = io.koreanKeyboard();
@@ -106,18 +127,24 @@ async function check(platform, io) {
 }
 
 // The answer, kept: a good one for 10 minutes, a bad one for 3 s (so that a key pressed again after installing what was
-// missing finds it at once). One look at a time; a look that fails says nothing (ok).
-function create({ platform = process.platform, io = null, now = Date.now, okMs = 10 * 60e3, badMs = 3e3 } = {}) {
-  let last = null, busy = null;
-  return function status() {
-    const t = now();
-    if (last && t - last.at < (last.r.ok ? okMs : badMs)) return Promise.resolve(last.r);
-    if (!busy) {
-      busy = Promise.resolve().then(() => check(platform, io || (io = realIo()))).catch(() => ({ ok: true }))
-        .then((r) => { last = { r, at: now() }; busy = null; return r; });
-    }
-    return busy;
+// missing finds it at once). One look at a time; a look that fails says nothing (ok). A good answer with a live part
+// (ibus) has that part asked again after liveMs (the engine in use changes with a key).
+function create({ platform = process.platform, io = null, now = Date.now, okMs = 10 * 60e3, badMs = 3e3, liveMs = 2e3 } = {}) {
+  const kept = (good, bad, look) => {
+    let last = null, busy = null;
+    return () => {
+      const t = now();
+      if (last && t - last.at < (last.r.ok ? good : bad)) return Promise.resolve(last.r);
+      if (!busy) {
+        busy = Promise.resolve().then(look).catch(() => ({ ok: true }))
+          .then((r) => { last = { r, at: now() }; busy = null; return r; });
+      }
+      return busy;
+    };
   };
+  const base = kept(okMs, badMs, () => check(platform, io || (io = realIo())));
+  const live = kept(liveMs, liveMs, () => ibusLive(io));
+  return () => base().then((r) => (r.ok && r.live === 'ibus' ? live() : r));
 }
 
 // A made-up Linux for the self-test (whatever the PC it runs on has): ibus runs for this user, no Korean engine, apt.
