@@ -1752,8 +1752,9 @@ function attachTouch(view, pane) {
     timers();
     padRing(view, null);
     if (!cancelled && g.kind === 'pending') {
-      click(0, here()); // a tap (a slow one too) is a click
-      caretAsk(view);
+      const p = here();
+      click(0, p); // a tap (a slow one too) is a click
+      caretAsk(view, p);
     } else if (!cancelled && g.kind === 'armed') click(2, here()); // a long press let go: the right button
     else if (g.kind === 'drag') button(false, 0, g.pad ? view.padAt : g.last);
     else if ((g.kind === 'scroll' || g.kind === 'scroll2') && wheel.raf) { view.win.cancelAnimationFrame(wheel.raf); flushWheel(); }
@@ -1832,9 +1833,10 @@ $('kbdBtn').onclick = () => {
 let autoKbd = TOUCH && store.get('mr_autokbd') !== '0';
 let caretView = null, caretAskedAt = -1e9, kbdAuto = false;
 const CARET_WAIT = 4000;
-function caretAsk(view) {
+function caretAsk(view, p) {
   if (!autoKbd || READONLY) return;
   caretView = view; caretAskedAt = performance.now();
+  view.tapAt = p || null; // where the caret is when the host cannot say (a Linux host's ibus tells no place)
   send({ t: 'caretq' });
 }
 function gotCaret(m) {
@@ -1842,7 +1844,9 @@ function gotCaret(m) {
   const view = caretView;
   if (!view || view.win.closed || performance.now() - caretAskedAt > CARET_WAIT) return;
   if (m.on) {
-    view.caret = Number.isInteger(m.d) && monitors[m.d] ? { d: m.d, x: clamp(+m.x || 0, 0, 1), y: clamp(+m.y || 0, 0, 1), h: clamp(+m.h || 0, 0, 0.5), at: performance.now() } : null;
+    const t = view.tapAt;
+    view.caret = Number.isInteger(m.d) && monitors[m.d] ? { d: m.d, x: clamp(+m.x || 0, 0, 1), y: clamp(+m.y || 0, 0, 1), h: clamp(+m.h || 0, 0, 0.5), at: performance.now() }
+      : t && monitors[t.d] ? { d: t.d, x: t.x, y: t.y, h: 0, at: performance.now() } : null;
     if (document.activeElement !== kbd) { openKbd(); kbdAuto = true; }
     revealCaret(view);
   } else if (kbdAuto && document.activeElement === kbd) kbd.blur();
@@ -1851,6 +1855,8 @@ function openKbd() {
   kbd.value = kbdPrev = KBD_KEEP;
   kbd.focus(); // brings the phone's keyboard up (shortly after a tap: the page still counts as used by the person)
   try { kbd.setSelectionRange(kbd.value.length, kbd.value.length); } catch {}
+  // The Android app (android/): its WebView may keep the keyboard down for a focus that comes a moment after the tap.
+  try { if (window.mrAndroid && window.mrAndroid.showKeyboard) window.mrAndroid.showKeyboard(); } catch {}
 }
 // The caret above the keyboard: on the picture of its monitor, a text smaller than CARET_PX zoomed in (up to 3x, about
 // the caret), then the picture moved so that the caret's line is inside what the keyboard leaves of the window.

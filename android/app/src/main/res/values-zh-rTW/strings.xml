@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="leave_question">要關閉 Pangmote 嗎？與電腦的連線會中斷。</string>
+    <string name="leave">關閉</string>
+    <string name="stay">繼續使用</string>
+</resources>

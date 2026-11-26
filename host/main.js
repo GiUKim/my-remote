@@ -518,8 +518,30 @@ function koreanKeyCame() {
 // reports (app.isAccessibilitySupportEnabled; VS Code takes that for a screen reader), as Windows' touch keyboard does.
 const CARET_CHECK = SELFTEST && process.argv.includes('--caret-check');
 let caretFake = null, caretBusy = false;
+// Linux (X11): no system caret, but the input method knows whether a text field has the keyboard's focus. GTK, Qt,
+// Chromium and Electron programs give ibus an input context of their own and focus it only while one does (a terminal:
+// while it has the focus); otherwise ibus's own "fake" context is the current one, which ibus makes first of all
+// (bus_ibus_impl_init), so its path always ends in _1. ibus tells no caret position: the client then keeps the place it
+// tapped above the keyboard. No ibus (or another input method): null, the client leaves its keyboard as it is.
+let ibusAddr = null;
+const runQuiet = (file, args) => new Promise((res) => {
+  require('child_process').execFile(file, args, { timeout: 1500, windowsHide: true }, (err, out) => res(err ? null : String(out)));
+});
+async function ibusCaret() {
+  if (!ibusAddr) {
+    const a = (await runQuiet('ibus', ['address'])) || '';
+    if (!/^unix:/.test(a.trim())) return null;
+    ibusAddr = a.trim();
+  }
+  const out = await runQuiet('gdbus', ['call', '--address', ibusAddr, '--dest', 'org.freedesktop.IBus', '--object-path', '/org/freedesktop/IBus',
+    '--method', 'org.freedesktop.DBus.Properties.Get', 'org.freedesktop.IBus', 'CurrentInputContext']);
+  const m = /\/InputContext_(\d+)/.exec(out || '');
+  if (!m) { ibusAddr = null; return null; } // ibus restarted (a new address) or is gone: looked for again next time
+  return { on: m[1] !== '1', src: 'ibus' };
+}
 async function caretNow() {
   if (SELFTEST && (!CARET_CHECK || caretFake)) return caretFake;
+  if (process.platform === 'linux') return input.viewOnlyReason() ? null : ibusCaret();
   if (process.platform !== 'win32') return null;
   const sys = input.caretBox();
   if (sys) return { on: true, src: 'sys', ...sys };
@@ -541,6 +563,7 @@ async function caretForClient() {
   if (!c) return null;
   if (!c.on) return { on: false };
   if (c.d !== undefined) return c; // the self-test's made-up answer is in these terms already
+  if (c.x === undefined) return { on: true, src: c.src }; // no place (ibus): the client keeps where it tapped in view
   const at = input.whereIs(c.x, c.y), low = input.whereIs(c.x, c.y + c.h - 1);
   return at ? { on: true, d: at.d, x: at.x, y: at.y, h: low && low.d === at.d ? low.y - at.y : 0, field: !!c.field, src: c.src } : { on: true };
 }

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="leave_question">Закрыть Pangmote? Подключение к ПК будет разорвано.</string>
+    <string name="leave">Закрыть</string>
+    <string name="stay">Остаться</string>
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="leave_question">Pangmote를 닫을까요? PC와의 연결이 끊깁니다.</string>
+    <string name="leave">닫기</string>
+    <string name="stay">계속 쓰기</string>
+</resources>

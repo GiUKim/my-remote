@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace = 'kr.pangmote.app'
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = 'kr.pangmote.app' // permanent on Google Play (the user's choice, 2026-11-26)
+        minSdk = 30                      // Android 11: WindowInsetsController, the IME's insets
+        targetSdk = 36                   // what Google Play asks of new apps from 2026-08-31
+        versionCode = 1
+        versionName = '0.1.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = false // a few classes of our own: nothing to shrink, and no rules to keep in step
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    // The loader (pangmote-client.html at the repository's root, the file browsers keep) goes in as the app's start page,
+    // copied at build time so that there is one loader, never a second copy to keep in step.
+    sourceSets {
+        main {
+            assets.srcDirs += [layout.buildDirectory.dir('web').get().asFile]
+        }
+    }
+}
+
+def copyLoader = tasks.register('copyLoader', Copy) {
+    from(rootProject.file('../pangmote-client.html')) { rename { 'loader.html' } }
+    into(layout.buildDirectory.dir('web/web'))
+}
+tasks.named('preBuild') { dependsOn copyLoader }

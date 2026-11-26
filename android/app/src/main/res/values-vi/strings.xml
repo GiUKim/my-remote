@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="leave_question">Đóng Pangmote? Kết nối với PC sẽ bị ngắt.</string>
+    <string name="leave">Đóng</string>
+    <string name="stay">Tiếp tục dùng</string>
+</resources>

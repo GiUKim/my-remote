@@ -1201,8 +1201,12 @@ the client app instead).
   (`GetGUIThreadInfo`, `input.caretBox`), else UI Automation (`so_caret` in shellops.dll: the focused element, an edit
   or a document whose value can be changed, its caret range or selection or box, on a thread of its own with a 1.5 s
   limit; the few interfaces declared by hand, since mingw-w64 8's header has none, their order checked against
-  mingw-w64's current UIAutomationClient.idl), and answers `caret` `{on, d, x, y, h}` or `{on: false}`; nothing from a
-  Linux host yet. On: the hidden field takes the focus (the phone's keyboard comes up: a focus shortly after a tap still
+  mingw-w64's current UIAutomationClient.idl), and answers `caret` `{on, d, x, y, h}` or `{on: false}`. Linux (X11):
+  ibus (`ibusCaret`: its property `CurrentInputContext` read with `gdbus` on its own bus, `ibus address`): GTK, Qt,
+  Chromium and Electron programs focus an input context of their own only while a text field has the focus, otherwise
+  ibus's own "fake" context is current, which ibus makes first of all (`bus_ibus_impl_init`), so its path ends in `_1`;
+  ibus gives no place, so the page keeps the point it tapped above the keyboard (`view.tapAt`); no ibus: no answer.
+  On: the hidden field takes the focus (the phone's keyboard comes up: a focus shortly after a tap still
   counts as the person's), text smaller than `CARET_PX` is zoomed in about the caret (up to 3x), and the picture is
   moved so that the caret's line stays above the keyboard (`revealCaret`; with the keyboard open the picture keeps the
   size it had without it, `layout`'s `kbOpen`); off: a keyboard that came up by itself goes down, and its zoom with
@@ -1212,7 +1216,9 @@ the client app instead).
   program reports its accessibility support as on (`app.isAccessibilitySupportEnabled`; VS Code with
   `editor.accessibilitySupport: auto` takes that for a screen reader), as with Windows' own touch keyboard. The
   self-test traces the gestures and the keyboard with a made-up host answer; `--caret-check` (a test PC: a window
-  takes the focus) asks a separate Electron program for real. Not tried on a real phone yet. The phone's keyboard types into a hidden textarea (`#kbd`) that always keeps one space so
+  takes the focus) asks a separate Electron program for real: passed in the test VM (Windows, UI Automation, the field
+  found on the second look) and on the Linux PC (a display of its own with an ibus daemon of its own, Electron 45.3.4,
+  found on the first). Not tried on a real phone yet. The phone's keyboard types into a hidden textarea (`#kbd`) that always keeps one space so
   Backspace has something to delete; what changes there goes as `text` (characters, Hangul composition
   included) or Backspace/Enter/Tab keys. The host types `text` with `KEYEVENTF_UNICODE` on Windows; on
   X11 with keycodes lent to the characters' keysyms (see the Linux gotchas). A key row offers Esc, Tab, sticky Ctrl/Alt/Shift/Win (for the next
@@ -1809,6 +1815,7 @@ must then be given the new file). Run `npm run selftest` after either.
 | `host/devices.js`, `host/accesslog.js`, `release/test-devices.js` | The host's device tokens (`devices.json`: client apps that connect without the key, blocked or removed one by one) and its access log (`access.log`, 90 days); their test, plain Node. See "Devices" |
 | `release/install-local.js` | A built release into this PC's installed app, the updater's way without a feed |
 | `client/main.js`, `client/shell.js`, `client/preload.js` | Client app: the list of PCs and, for each PC, a thin Electron window around the loader. `shell.js` places the page's windows on the requested screen, makes them fullscreen without a click per window, grants permissions, and puts things dragged out of the remote picture where they were dropped (it loads `host/input.js`: Win32 or X11, and `host/files.js`). Exposes `window.mrShell` (`fileAbort`, `pointerOwn`, `clipPoll` and `clipWrite` from 2026-11-13 on), and from 2026-11-13 on marks a minimized or hidden window's document (`data-mr-hidden`, event `mrshown`): its windows run with `backgroundThrottling` off, so `visibilityState` never says hidden there, and the page (`unseen()`) stops asking the host for what such a window shows. `main.js --loader=<file>` shows another loader with a profile of its own (self-test, local trial on Linux). These files are not updated through the loader: the page must feature-detect what an installed app offers |
+| `android/` | The Android app (2026-11-26): a thin Java shell (`MainActivity`) around the loader and client page in the system WebView, served from an https origin of its own; no library, not even AndroidX; built with Gradle 9.9 and AGP 9.5 (no wrapper), in CI too (job `android`). Its own README says how to build and try it. A phone controls a PC; a PC never controls the phone (the user's decision) |
 | `app/boot.js`, `app/core.js`, `app/updater.js`, `app/guard.js` | The installed app's shell: picks host or client and the code bundle to run, verifies it, keeps a new version on trial and goes back when it does not come up; finds and installs updates. See "The installed app, releases and updates" |
 | `app/update-config.json`, `app/package.json` | Where updates are fetched from and the public keys that may sign them; the shell's generation (`base`) |
 | `app/pangmote.sh`, `app/icon.png`, `app/icon.ico` | The installed app's launcher on Linux; its icons (drawn by `release/make-icon.js`) |

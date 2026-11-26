@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="leave_question">Tutup Pangmote? Sambungan ke PC akan terputus.</string>
+    <string name="leave">Tutup</string>
+    <string name="stay">Tetap di sini</string>
+</resources>

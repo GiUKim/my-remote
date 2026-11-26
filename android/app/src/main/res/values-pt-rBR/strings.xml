@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="leave_question">Fechar o Pangmote? A conexão com o PC será encerrada.</string>
+    <string name="leave">Fechar</string>
+    <string name="stay">Continuar</string>
+</resources>

@@ -4,6 +4,10 @@ tools/
 
 # Build output
 dist/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
 
 # Never commit runtime config or anything that could hold an access key
 config.json

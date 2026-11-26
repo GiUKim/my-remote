@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">Pangmote</string>
+    <string name="leave_question">Close Pangmote? The connection to the PC ends.</string>
+    <string name="leave">Close</string>
+    <string name="stay">Stay</string>
+</resources>

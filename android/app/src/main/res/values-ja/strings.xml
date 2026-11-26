@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="leave_question">Pangmote を閉じますか? PC との接続が切れます。</string>
+    <string name="leave">閉じる</string>
+    <string name="stay">続ける</string>
+</resources>

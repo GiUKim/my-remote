@@ -1,0 +1,18 @@
+// The Android app (2026-11-26, the user's "big step": a phone controls a PC). A thin shell around the same loader and
+// client page the browsers and the desktop client app run: see android/README.md.
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = 'pangmote-android'
+include ':app'

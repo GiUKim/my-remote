@@ -1,6 +1,6 @@
 # What every change must pass before it is released (release/build.js refuses a commit whose CI has
 # not passed). Jobs: static checks and plain-Node tests; native binaries rebuilt byte for byte; the
-# Windows and Linux self-tests and the packaged app; the performance gate on both.
+# Windows and Linux self-tests and the packaged app; the Android app's build; the performance gate on both.
 name: CI
 
 on:
@@ -72,6 +72,32 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q mingw-w64
       - name: Rebuild host/bin from native/ and compare
         run: node release/ci-run.js node release/ci-native.js
+
+  android:
+    # The Android app (android/, from 2026-11-26): it builds, as a test APK and as the bundle Google Play takes. The
+    # runner image has the Android SDK and Java 21; Gradle comes from its own site, checked against its SHA-256. The
+    # test APK is kept as an artifact for two weeks (a phone can install it from there).
+    name: Android app (builds)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Gradle (its published SHA-256 checked)
+        run: |
+          v=9.9.2
+          curl -sfL -o /tmp/gradle.zip "https://services.gradle.org/distributions/gradle-$v-bin.zip"
+          echo "$(curl -sfL "https://services.gradle.org/distributions/gradle-$v-bin.zip.sha256")  /tmp/gradle.zip" | sha256sum -c -
+          unzip -q /tmp/gradle.zip -d /tmp && mv "/tmp/gradle-$v" /tmp/gradle
+      - name: Build the test APK and the release bundle
+        working-directory: android
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          /tmp/gradle/bin/gradle assembleDebug bundleRelease --no-daemon --console=plain
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pangmote-android-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
 
   windows:
     name: Windows (assist protocol, self-test, packaged app)

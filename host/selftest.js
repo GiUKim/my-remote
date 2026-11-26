@@ -2234,8 +2234,9 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     // program, as a host asks programs it does not own: an Electron program started for it, with a text field that has
     // the focus, which it then leaves. Asked a few times as host.js does (a Chromium program tells only from a moment
     // after the first question); whether the program then reports its accessibility support as on (what VS Code takes
-    // for a screen reader) is said as INFO.
-    if (caretNow && process.platform === 'win32') {
+    // for a screen reader) is said as INFO. Linux (X11): through ibus, which must run on the test's display (a daemon of
+    // its own there); it tells whether a field has the focus, not where.
+    if (caretNow && (process.platform === 'win32' || process.platform === 'linux')) {
       const { app } = require('electron');
       const dir = path.join(app.getPath('userData'), 'caret-check');
       fs.mkdirSync(dir, { recursive: true });
@@ -2264,7 +2265,7 @@ app.whenReady().then(async () => {
       const lines = () => { try { return fs.readFileSync(logf, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
       const waitFor = async (k, secs) => { for (let i = 0; i < secs * 10; i++) { const x = lines().find((o) => o[k] !== undefined); if (x) return x; await sleep(100); } return null; };
       const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
-      const child = require('child_process').spawn(process.execPath, [appJs, '--user-data-dir=' + path.join(dir, 'profile')], { env, stdio: 'ignore' });
+      const child = require('child_process').spawn(process.execPath, [appJs, '--user-data-dir=' + path.join(dir, 'profile'), ...process.argv.filter((a) => a === '--no-sandbox')], { env, stdio: 'ignore' });
       try {
         const ready = await waitFor('ready', 20);
         const looks = async (want) => { let c = null; for (let i = 0; i < 8; i++) { c = await caretNow(); if (c && c.on === want) return { c, tries: i + 1 }; await sleep(400); } return { c, tries: 8 }; };
@@ -2276,8 +2277,8 @@ app.whenReady().then(async () => {
         fs.appendFileSync(logf, JSON.stringify({ quit: true }) + '\n');
         const a11y = await waitFor('a11y', 5);
         const b = ready && ready.bounds, f = field && field.c;
-        const inside = !!(b && f && f.on && f.x >= b.x && f.x < b.x + b.width && f.y >= b.y && f.y < b.y + b.height);
-        check('the text caret of another program is found (an Electron program\'s text field: inside its window), and none once it left the field', inside && none && none.c && none.c.on === false,
+        const inside = !!(b && f && f.on && (f.x === undefined ? process.platform === 'linux' : f.x >= b.x && f.x < b.x + b.width && f.y >= b.y && f.y < b.y + b.height));
+        check('the text caret of another program is found (an Electron program\'s text field: inside its window, or through ibus on Linux), and none once it left the field', inside && none && none.c && none.c.on === false,
           JSON.stringify({ field, none, window: b }));
         info(`the program asked reports its accessibility support as ${a11y ? a11y.a11y : '?'} afterwards (VS Code takes "true" for a screen reader)`);
       } finally { try { child.kill(); } catch {} }
