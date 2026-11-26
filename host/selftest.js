@@ -496,7 +496,8 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
     }
 
     // --dump-phone=<file.png>: pictures of the phone layout (a client window of a phone's size, 915x412
-    // and 412x915, with '#touch'), with the key row open, then exit. No window is shown.
+    // and 412x915, with '#touch'), with the key row open, and half way through two fingers moved sideways
+    // (<file>-landscape-swipe.png, with more than one monitor), then exit. No window is shown.
     const dumpPhone = process.argv.find((a) => a.startsWith('--dump-phone='));
     if (dumpPhone) {
       const out = dumpPhone.split('=')[1];
@@ -508,6 +509,25 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         await pjs(`document.getElementById('keyBtn').click(); [...document.getElementById('keyrow').children].find((b) => b.dataset.code === 'ControlLeft').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true })); 1`);
         await sleep(1500);
         fs.writeFileSync(out.replace(/\.png$/, name + '.png'), (await pw.webContents.capturePage()).toPNG());
+        // Half way through two fingers moved sideways (with more than one monitor): the picture following the fingers
+        // and the monitor that comes named at its side; then given up.
+        const swiping = await pjs(`(async () => {
+          if (monitors.length < 2) return false;
+          document.getElementById('keyBtn').click();
+          document.head.appendChild(document.createElement('style')).textContent = '.swipe { transition: none !important; }'; // a hidden window runs no transitions
+          setTouchMode('pad');
+          const R = mainView.root.getBoundingClientRect(), v = mainView.panes[0].video, wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+          const P = (type, id, fx) => v.dispatchEvent(new PointerEvent(type, { pointerType: 'touch', pointerId: id, isPrimary: id === 61, clientX: R.left + R.width * fx, clientY: R.top + R.height / 2, bubbles: true, cancelable: true }));
+          P('pointerdown', 61, .66); P('pointerdown', 62, .74);
+          for (let i = 1; i <= 6; i++) { await wait(16); const x = .7 - .4 * i / 6; P('pointermove', 61, x - .04); P('pointermove', 62, x + .04); }
+          window.__phoneSwipeEnd = () => { P('pointercancel', 61, .26); P('pointercancel', 62, .34); };
+          return true;
+        })()`);
+        if (swiping) {
+          await sleep(1500); // a hidden window draws late: earlier, the picture was caught half way
+          fs.writeFileSync(out.replace(/\.png$/, name + '-swipe.png'), (await pw.webContents.capturePage()).toPNG());
+          await pjs('window.__phoneSwipeEnd(); 1');
+        }
         pw.destroy();
       }
       console.log('[selftest] INFO  phone pictures written next to ' + out);
@@ -1367,6 +1387,91 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         && !pad.pinch.some((x) => /^m[du]/.test(x)) && pad.zoom > 1.2 && pad.still >= 0 && pad.still < 3 && pad.hidden === 'none';
       check('a phone\'s trackpad: a finger moves the pointer, a tap clicks where it is and asks for a text caret, a long press is the right button or a drag, two fingers scroll, tap the right button and zoom about the pointer',
         padOk, JSON.stringify(pad));
+      // The black margins around the picture count too (2026-11-27, the user's wish): the trackpad moves and clicks from
+      // there; with direct touch a tap or a long press there clicks nothing, and a drag that goes past the picture's edge
+      // goes on along it. Two fingers moved sideways go to the monitor beside (in the host's arrangement: moved left, the
+      // one on the right), in both ways of touch; a slow short move, a cancelled one and one at the last monitor do not,
+      // and none of it reaches the host. With one monitor they still scroll.
+      const edge = await js(`(async () => {
+        if (typeof mainView.sel !== 'number') setSel(mainView, 0);
+        if (mainView.fit !== 'fit') setFit(mainView, 'fit');
+        const sel0 = mainView.sel, ak = autoKbd, ro0 = READONLY; autoKbd = false; READONLY = false; // traced: nothing is sent
+        mainView.zoom = 1; layout(mainView);
+        const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+        const INPUT = new Set(['mm', 'md', 'mu', 'mw']);
+        const out = {};
+        const run = async (name, fn) => {
+          window.__rd.trace = []; await fn(); await wait(80);
+          const got = window.__rd.trace.filter((m) => INPUT.has(m.t));
+          out[name] = got.map((m) => m.t + (m.b != null ? m.b : '') + (m.t === 'mm' && m.h ? 'h' : ''));
+          out[name + 'Last'] = got.length ? got[got.length - 1] : null;
+        };
+        const pic = () => mainView.panes[0].video.getBoundingClientRect();
+        const M = (type, id, x, y) => mainView.root.dispatchEvent(new PointerEvent(type, { pointerType: 'touch', pointerId: id, isPrimary: true, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+        const V = (type, id, fx, fy) => { const r = pic(); mainView.panes[0].video.dispatchEvent(new PointerEvent(type, { pointerType: 'touch', pointerId: id, isPrimary: id % 2 === 1, clientX: r.left + r.width * fx, clientY: r.top + r.height * fy, bubbles: true, cancelable: true })); };
+        const r0 = pic(), mx = r0.left - 30, my = r0.top + r0.height / 2; // beside the picture: the margin
+        setTouchMode('pad');
+        mainView.padAt = { d: mainView.sel, x: 0.5, y: 0.5 }; placePad(mainView);
+        await run('padMove', async () => { M('pointerdown', 41, mx, my); for (let i = 1; i <= 5; i++) { await wait(16); M('pointermove', 41, mx, my + 6 * i); } M('pointerup', 41, mx, my + 30); });
+        out.padY = +mainView.padAt.y.toFixed(3);
+        await run('padTap', async () => { M('pointerdown', 43, mx, my); await wait(40); M('pointerup', 43, mx, my); });
+        setTouchMode('direct');
+        await run('tapMargin', async () => { M('pointerdown', 45, mx, my); await wait(40); M('pointerup', 45, mx, my); });
+        await run('longMargin', async () => { M('pointerdown', 47, mx, my); await wait(560); M('pointerup', 47, mx, my); });
+        await run('dragOut', async () => { V('pointerdown', 49, .1, .5); await wait(560); V('pointermove', 49, .05, .5); await wait(16); M('pointermove', 49, mx, my); await wait(16); M('pointerup', 49, mx, my); });
+        // Two fingers side by side, as a hand holds them, from one fraction of the window's width to another; each step
+        // one finger after the other, as a phone sends them (in between they look spread: that once read as a pinch).
+        // Where a finger is comes from the window, not from the picture: the picture moves with the fingers.
+        out.W = mainView.root.clientWidth; out.picW = Math.round(pic().width);
+        let F = null;
+        const S = (type, id, fx) => mainView.panes[0].video.dispatchEvent(new PointerEvent(type, { pointerType: 'touch', pointerId: id, isPrimary: id % 2 === 1, clientX: F.left + F.width * fx, clientY: F.top + F.height / 2, bubbles: true, cancelable: true }));
+        const swipe = async (from, to, stepMs) => {
+          F = mainView.root.getBoundingClientRect();
+          S('pointerdown', 51, from - .04); S('pointerdown', 52, from + .04);
+          for (let i = 1; i <= 6; i++) { await wait(stepMs || 16); const x = from + (to - from) * i / 6; S('pointermove', 51, x - .04); S('pointermove', 52, x + .04); }
+          S('pointerup', 51, to - .04); S('pointerup', 52, to + .04);
+          await wait(300);
+        };
+        const order = monitors.map((m) => m.idx).sort((a, b) => monitors[a].x - monitors[b].x || monitors[a].y - monitors[b].y);
+        out.order = order;
+        setTouchMode('pad');
+        setSel(mainView, order[0]);
+        await run('left', () => swipe(.8, .3)); out.afterLeft = mainView.sel;
+        await run('short', () => swipe(.5, .45, 45)); out.afterShort = mainView.sel;
+        out.shortBack = mainView.panes[0].video.style.transform;
+        await run('right', () => swipe(.2, .7)); out.afterRight = mainView.sel;
+        await run('end', () => swipe(.2, .7)); out.afterEnd = mainView.sel;
+        if (order.length > 1) {
+          // Half way: the monitor that comes is named at the right edge, blue once far enough; cancelled, all goes back.
+          F = mainView.root.getBoundingClientRect();
+          S('pointerdown', 53, .76); S('pointerdown', 54, .84);
+          for (let i = 1; i <= 6; i++) { await wait(16); const x = .8 - .5 * i / 6; S('pointermove', 53, x - .04); S('pointermove', 54, x + .04); }
+          const el = mainView.swipeEl;
+          out.mid = { text: el && el.textContent, go: !!el && el.classList.contains('go'), shown: el && el.style.display, moved: mainView.panes[0].video.style.transform };
+          S('pointercancel', 53, .26); S('pointercancel', 54, .34);
+          await wait(260);
+          out.cancelled = { sel: mainView.sel, transform: mainView.panes[0].video.style.transform, label: el && el.style.display };
+        }
+        setTouchMode('direct');
+        await run('directLeft', () => swipe(.8, .3)); out.afterDirect = mainView.sel;
+        window.__rd.trace = null; autoKbd = ak; READONLY = ro0;
+        setSel(mainView, sel0);
+        lastView = ''; sendView(true); // what was asked of the host while traced was never sent
+        return out;
+      })()`);
+      const two = edge.order.length > 1;
+      const edgeOk = edge.padMove.length > 0 && edge.padMove.every((x) => x === 'mm') && edge.padY > 0.5 && same(edge.padTap, ['md0', 'mu0'])
+        && same(edge.tapMargin, []) && same(edge.longMargin, []) && edge.dragOut[0] === 'md0' && edge.dragOut.includes('mmh')
+        && edge.dragOut[edge.dragOut.length - 1] === 'mu0' && edge.dragOutLast && edge.dragOutLast.x === 0
+        && (two
+          ? edge.afterLeft === edge.order[1] && edge.afterShort === edge.order[1] && !edge.shortBack && edge.afterRight === edge.order[0]
+            && edge.afterEnd === edge.order[0] && edge.afterDirect === edge.order[1] && ['left', 'short', 'right', 'end', 'directLeft'].every((k) => !edge[k].length)
+            && edge.mid.go && edge.mid.shown === 'block' && /▶/.test(edge.mid.text) && edge.mid.text.includes(String(edge.order[1] + 1)) && /translateX\(-/.test(edge.mid.moved)
+            && edge.cancelled.sel === edge.order[0] && !edge.cancelled.transform && edge.cancelled.label === 'none'
+          : edge.left.includes('mw') && edge.afterLeft === edge.order[0]);
+      check(two ? 'a phone: the black margins move and click like the picture (direct touch clicks nothing there, a drag goes on along the edge), two fingers sideways go to the monitor beside'
+        : 'a phone: the black margins move and click like the picture (direct touch clicks nothing there, a drag goes on along the edge), two fingers sideways scroll with one monitor',
+        edgeOk, JSON.stringify(edge));
       // The keyboard comes up by itself (2026-11-26): the host says a text caret came up after the tap (a made-up answer
       // here: small text near the bottom of the picture): the hidden field takes the focus (the phone's keyboard), the
       // picture is zoomed in about the caret and the caret stays in the window; no caret after the next tap: the

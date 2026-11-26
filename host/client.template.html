@@ -95,6 +95,9 @@
   .padcur { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; display: none; will-change: transform; filter: drop-shadow(0 1px 2px rgba(0,0,0,.6)); }
   .padcur img { display: block; }
   .padring { position: absolute; left: -22px; top: -22px; width: 44px; height: 44px; box-sizing: border-box; border-radius: 50%; border: 3px solid #2b6cff; background: rgba(43,108,255,.15); z-index: 3; pointer-events: none; display: none; }
+  /* two fingers moved sideways: the monitor that comes in, at the side it comes from; blue once letting go brings it (swipeShow) */
+  .swipe { position: absolute; top: 50%; z-index: 4; display: none; padding: 10px 18px; border-radius: 22px; background: rgba(20,23,28,.9); border: 1px solid #3a4350; color: #e6e8eb; font: 600 15px var(--mr-font); white-space: nowrap; pointer-events: none; transform: translateY(-50%); box-shadow: 0 4px 14px rgba(0,0,0,.5); transition: background .12s, border-color .12s; }
+  .swipe.go { background: #2b6cff; border-color: #2b6cff; color: #fff; }
 </style>
 </head>
 <body>
@@ -364,6 +367,7 @@ function makeView(win, root, isMain) {
     else if (!onPicture(ev)) toast(view, tr('파일은 호스트 화면 위에 놓아야 보낼 수 있습니다'), 3000);
   }, true);
   attachKeys(view);
+  attachTouch(view);
   const relayout = () => { layout(view); scheduleView(); if (view.caret && performance.now() - view.caret.at < 1500) revealCaret(view); };
   win.addEventListener('resize', relayout);
   win.document.addEventListener('fullscreenchange', () => {
@@ -599,7 +603,7 @@ function render(view) {
     v.style.cssText = 'position:absolute;display:block;outline:none;background:#000;object-fit:fill;touch-action:none;cursor:' + (carrying() ? 'copy' : cursorCss);
     if (m.stream) v.srcObject = m.stream;
     const pane = { idx: m.idx, video: v };
-    attachTouch(view, pane); // first: a finger's events are taken there and do not reach the mouse handling
+    touchPane(view, v); // first: a finger's events are taken (by the window's root, see attachTouch) and do not reach the mouse handling
     attachPointer(view, pane);
     watchFrames(v);
     view.root.insertBefore(v, view.root.firstChild); // overlays and the toast stay on top
@@ -1525,8 +1529,10 @@ function attachPointer(view, pane) {
 // In both: a long press (LONG_MS, a short vibration and a ring) let go is the right button, and moved on it is the
 // left button held (selecting text, moving a window, dragging a file); two fingers pinched zoom (1x-5x, here: nothing
 // is sent; about the pointer in the trackpad, about the fingers otherwise). In the trackpad two fingers moved together
-// scroll and two fingers tapped are the right button. A tap that puts a text caret on the host brings the phone's
-// keyboard up (caretAsk). Any pointer that is not a finger (a mouse, a pen) goes on to attachPointer as before.
+// scroll and two fingers tapped are the right button. Two fingers moved sideways go to the monitor beside this one
+// (swipeShow; with direct touch while the picture is not zoomed: zoomed, they move it). The black margins around the
+// picture count too (attachTouch). A tap that puts a text caret on the host brings the phone's keyboard up (caretAsk).
+// Any pointer that is not a finger (a mouse, a pen) goes on to attachPointer as before.
 const TAP_MOVE = 10, LONG_MS = 400, TWO_TAP_MS = 250;
 let touchMode = ['pad', 'direct'].includes(store.get('mr_touch')) ? store.get('mr_touch')
   : TOUCH && Math.min(screen.width, screen.height) < 600 ? 'pad' : 'direct';
@@ -1618,16 +1624,35 @@ function setTouchMode(mode, say) {
   for (const v of liveViews()) { if (touchMode === 'pad' && v.panes.length) padStart(v); placePad(v); }
   if (say) toast(mainView, tr(touchMode === 'pad' ? PAD_HINT : DIRECT_HINT), 6000);
 }
-const PAD_HINT = '트랙패드: 한 손가락으로 커서 이동 · 탭은 클릭 · 길게 누르고 떼면 오른쪽 클릭, 길게 누른 채 끌면 드래그 · 두 손가락으로 스크롤과 확대';
-const DIRECT_HINT = '직접 터치: 누른 곳을 클릭 · 길게 누르고 떼면 오른쪽 클릭, 길게 누른 채 끌면 드래그 · 밀면 스크롤 · 두 손가락으로 확대';
+const PAD_HINT = '트랙패드: 한 손가락으로 커서 이동 · 탭은 클릭 · 길게 누르고 떼면 오른쪽 클릭, 길게 누른 채 끌면 드래그 · 두 손가락으로 스크롤과 확대, 옆으로 밀면 옆 모니터';
+const DIRECT_HINT = '직접 터치: 누른 곳을 클릭 · 길게 누르고 떼면 오른쪽 클릭, 길게 누른 채 끌면 드래그 · 밀면 스크롤 · 두 손가락으로 확대, 옆으로 밀면 옆 모니터';
 function paintTouchMode() { const b = $('padBtn'); if (b) b.textContent = tr(touchMode === 'pad' ? '🖱 트랙패드' : '👆 직접 터치'); }
 $('padBtn').onclick = () => setTouchMode(touchMode === 'pad' ? 'direct' : 'pad', true);
 paintTouchMode();
 
-function attachTouch(view, pane) {
-  const v = pane.video, pts = new Map();
-  let g = null; // the gesture under way: { kind: 'pending' | 'armed' | 'move' | 'drag' | 'scroll' | 'two' | 'zoom' | 'scroll2' | 'after', pad, ... }
-  const at = (x, y) => { const q = rel(pane, x, y); return q && { d: q.d, x: clamp(q.x, 0, 1), y: clamp(q.y, 0, 1) }; };
+// Fingers count anywhere in the window's picture area, the black margins around a picture too (the user's wish,
+// 2026-11-27): the trackpad is one touchpad there as on the picture (a gesture may start or go on in the margin), and
+// with direct touch a finger there is at the picture's nearest edge - a drag goes on along it - while a tap or a long
+// press that starts there does nothing (it would click what lies at the edge: the taskbar, say) and a swipe there
+// scrolls where the host's pointer is. The handlers are on the window's root (#stage, which already keeps the browser
+// from panning), and on every picture too: a picture taken away while a finger is on it (a new layout) still hears that
+// finger, whose events no longer reach the root. Elsewhere in the root (the lock screen's cover and bar, a note with
+// buttons) a finger is left alone.
+function attachTouch(view) {
+  const root = view.root, pts = new Map();
+  let g = null; // the gesture under way: { kind: 'pending' | 'armed' | 'move' | 'drag' | 'scroll' | 'two' | 'zoom' | 'scroll2' | 'swipe' | 'after', pad, ... }
+  const ours = (ev) => (ev.target === root && view.panes.length > 0) || view.panes.some((p) => p.video === ev.target);
+  // The picture under a finger, else the nearest one (and whether the finger is on it).
+  const hit = (x, y) => {
+    let best = null, bd = Infinity;
+    for (const p of view.panes) {
+      const r = p.video.getBoundingClientRect();
+      const d = Math.hypot(x < r.left ? r.left - x : x > r.right ? x - r.right : 0, y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0);
+      if (d < bd) { bd = d; best = p; }
+    }
+    return best && { pane: best, on: bd === 0 };
+  };
+  const at = (pane, x, y) => { const q = pane && rel(pane, x, y); return q && { d: q.d, x: clamp(q.x, 0, 1), y: clamp(q.y, 0, 1) }; };
   const take = (ev) => { ev.preventDefault(); ev.stopImmediatePropagation(); };
   const timers = () => { if (g) clearTimeout(g.long); };
   const button = (down, b, p) => {
@@ -1639,8 +1664,10 @@ function attachTouch(view, pane) {
   const click = (b, p) => { button(true, b, p); button(false, b, p); };
   // Where a click of this gesture goes: the trackpad's pointer, or where the finger came down.
   const here = () => (g && g.pad ? view.padAt : g && g.start);
+  // The picture this gesture works on: the one under the trackpad's pointer, else the one the finger came down on.
+  const paneOf = () => (g && g.pad ? view.panes.find((p) => view.padAt && p.idx === view.padAt.d) : g && g.pane) || view.panes[0];
   // Host pixels per finger pixel, so that a swipe scrolls about as far as the finger went over the picture.
-  const hostPerPx = () => { const r = v.getBoundingClientRect(), m = monitors[pane.idx]; return m && r.height ? m.height / r.height : 1; };
+  const hostPerPx = () => { const p = paneOf(), r = p && p.video.getBoundingClientRect(), m = p && monitors[p.idx]; return m && r.height ? m.height / r.height : 1; };
   let wheel = { dx: 0, dy: 0, raf: 0 };
   const flushWheel = () => {
     wheel.raf = 0;
@@ -1660,7 +1687,7 @@ function attachTouch(view, pane) {
   const zoomable = () => !isMulti(view.sel) && view.fit !== '1:1';
   const ringAt = () => {
     if (g.pad) { const p = padXY(view); return p && { x: p.x, y: p.y }; }
-    const R = view.root.getBoundingClientRect(), f = [...pts.values()][0];
+    const R = root.getBoundingClientRect(), f = [...pts.values()][0];
     return f && { x: f.x - R.left, y: f.y - R.top };
   };
   const zoomTo = (z) => {
@@ -1668,18 +1695,69 @@ function attachTouch(view, pane) {
     if (view === mainView) $('zoomBtn').style.display = z > 1 ? 'inline-block' : 'none'; // also on a touch screen that is no phone
     scheduleView(); // larger on screen: the host may send more pixels
   };
-  v.addEventListener('pointerdown', (ev) => {
-    if (ev.pointerType !== 'touch') return;
+  // A zoom from here on, by the fingers' distance against d0: about the trackpad's pointer (it stays put on the screen),
+  // or about the spot of the picture between the fingers (it stays between them, also when they move together: that
+  // moves a zoomed picture).
+  const zoomFrom = (t, pad, d0) => {
+    const z = view.zoom || 1;
+    if (pad) {
+      const p = padXY(view), r = p && p.pane.video.getBoundingClientRect();
+      return p && { kind: 'zoom', pad: true, d0, z0: z, sx: p.x, sy: p.y, u: view.padAt.x, w: view.padAt.y, bw: r.width / z, bh: r.height / z };
+    }
+    const r = view.panes[0].video.getBoundingClientRect(), R = root.getBoundingClientRect();
+    return { kind: 'zoom', d0, z0: z, u: (t.x - r.left) / r.width, w: (t.y - r.top) / r.height, bw: r.width / z, bh: r.height / z, R };
+  };
+  // Two fingers. Their moves of one frame come one after the other, and in between the fingers look spread or closed by
+  // the step of one (a quick swipe of fingers side by side looked like a pinch, and the time between the two like a
+  // flick): they are looked at once both have moved, or when one moves again before the other did (that one stands still).
+  const TWO = new Set(['two', 'scroll2', 'zoom', 'swipe']);
+  let seen = new Set();
+  const twoStep = (now) => {
+    seen.clear();
+    const t = two();
+    if (g.kind === 'two') {
+      const mx = t.x - g.x0, my = t.y - g.y0;
+      // A spread zooms from where the fingers came down with direct touch (as the picture had followed them from there),
+      // from here on with the trackpad.
+      if (Math.abs(t.d - g.d0) > 28 && zoomable()) g = zoomFrom(t, g.pad, g.pad ? t.d : g.d0) || g;
+      else if (Math.hypot(mx, my) > 14) {
+        if (Math.abs(mx) > 1.3 * Math.abs(my) && swipeable(view, g.pad)) g = { kind: 'swipe', x0: g.x0, dx: 0, vx: 0, hist: [] };
+        else if (g.pad) {
+          g.kind = 'scroll2';
+          queueMove(view, view.padAt, 0); // the wheel goes to the window under the pointer
+        } else if ((view.zoom || 1) > 1 && zoomable()) g = zoomFrom(t, false, t.d); // direct touch: two fingers move a zoomed picture
+      }
+    }
+    if (g.kind === 'scroll2') { scrollBy(t.x - g.mx, t.y - g.my); g.mx = t.x; g.my = t.y; }
+    else if (g.kind === 'swipe') {
+      const h = g.hist; // the last 100 ms, for the speed of a flick
+      h.push({ t: now, x: t.x });
+      while (h.length > 2 && now - h[1].t > 100) h.shift();
+      g.vx = now - h[0].t > 8 ? (t.x - h[0].x) / (now - h[0].t) : 0;
+      g.dx = t.x - g.x0;
+      swipeShow(view, g);
+    } else if (g.kind === 'zoom') {
+      const z = clamp(g.z0 * (t.d / g.d0), 1, 5);
+      // The trackpad: the pointer's spot stays put; otherwise the spot that was between the fingers stays between them.
+      view.pan = g.pad ? { x: g.sx - g.u * g.bw * z, y: g.sy - g.w * g.bh * z } : { x: t.x - g.R.left - g.u * g.bw * z, y: t.y - g.R.top - g.w * g.bh * z };
+      zoomTo(z);
+      layout(view);
+    }
+  };
+  const down = (ev) => {
+    if (ev.pointerType !== 'touch' || !ours(ev)) return;
     take(ev);
-    try { v.setPointerCapture(ev.pointerId); } catch {}
+    try { root.setPointerCapture(ev.pointerId); } catch {}
     pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY, x0: ev.clientX, y0: ev.clientY, t: performance.now() });
     if (pts.size === 1 && (!g || g.kind !== 'after')) {
       const pad = padOn(view);
       if (pad) padStart(view);
-      const start = pad ? null : at(ev.clientX, ev.clientY);
-      g = { kind: 'pending', pad, start, last: start };
+      const h = hit(ev.clientX, ev.clientY);
+      // Direct touch in the margin: no spot of the picture is under the finger, so nothing is clicked or held there.
+      const start = pad || !h || !h.on ? null : at(h.pane, ev.clientX, ev.clientY);
+      g = { kind: 'pending', pad, pane: h && h.pane, start, last: start };
       g.long = setTimeout(() => {
-        if (!g || g.kind !== 'pending') return;
+        if (!g || g.kind !== 'pending' || (!g.pad && !g.start)) return;
         g.kind = 'armed'; // let go now: the right button; move on: the left button held
         try { navigator.vibrate && navigator.vibrate(12); } catch {}
         padRing(view, ringAt());
@@ -1688,22 +1766,29 @@ function attachTouch(view, pane) {
       timers();
       padRing(view, null);
       if (g.kind === 'drag') button(false, 0, here());
-      const t = two(), r = v.getBoundingClientRect(), R = view.root.getBoundingClientRect();
-      if (g.pad) {
-        // Not decided yet: fingers that spread or close zoom, fingers that move together scroll, a quick tap is the right button.
-        g = { kind: 'two', pad: true, t0: performance.now(), d0: t.d, mx: t.x, my: t.y };
-      } else if (zoomable()) {
-        // Zoom about the point between the fingers: remember which spot of the picture is there.
-        g = { kind: 'zoom', d0: t.d, z0: view.zoom || 1, u: (t.x - r.left) / r.width, w: (t.y - r.top) / r.height, bw: r.width / (view.zoom || 1), bh: r.height / (view.zoom || 1), R };
-      } else g = { kind: 'after' };
+      const t = two();
+      // Not decided yet: fingers that spread or close zoom; moved together they scroll (the trackpad) or move a zoomed
+      // picture (direct touch), sideways they go to the monitor beside this one; a quick tap is the right button (the
+      // trackpad).
+      g = { kind: 'two', pad: g.pad, t0: performance.now(), d0: t.d, mx: t.x, my: t.y, x0: t.x, y0: t.y };
+      seen = new Set();
     } else if (pts.size >= 2) { timers(); padRing(view, null); if (g && g.kind === 'drag') button(false, 0, here()); g = { kind: 'after' }; }
-  }, true);
-  v.addEventListener('pointermove', (ev) => {
+  };
+  const move = (ev) => {
     if (ev.pointerType !== 'touch') return;
-    take(ev);
     const pt = pts.get(ev.pointerId);
-    if (!pt || !g) return;
-    const now = performance.now(), dx = ev.clientX - pt.x, dy = ev.clientY - pt.y, dt = now - pt.t;
+    if (!pt) return;
+    take(ev);
+    if (!g) return;
+    const now = performance.now();
+    if (pts.size === 2 && TWO.has(g.kind)) {
+      if (seen.has(ev.pointerId)) twoStep(now); // the other finger stood still meanwhile
+      pt.x = ev.clientX; pt.y = ev.clientY; pt.t = now;
+      seen.add(ev.pointerId);
+      if (seen.size === 2) twoStep(now);
+      return;
+    }
+    const dx = ev.clientX - pt.x, dy = ev.clientY - pt.y, dt = now - pt.t;
     pt.x = ev.clientX; pt.y = ev.clientY; pt.t = now;
     const far = Math.hypot(pt.x - pt.x0, pt.y - pt.y0) > TAP_MOVE;
     if (g.kind === 'pending' && far) {
@@ -1719,46 +1804,33 @@ function attachTouch(view, pane) {
       const p = padMove(view, dx, dy, dt);
       if (p) queueMove(view, p, g.kind === 'drag' ? 1 : 0);
     } else if (g.kind === 'drag') {
-      const p = at(pt.x, pt.y);
+      const p = at(g.pane, pt.x, pt.y); // past the picture's edge (in the margin): along the edge
       if (p) { g.last = p; queueMove(view, p, 1); }
     } else if (g.kind === 'scroll') scrollBy(dx, dy);
-    else if (pts.size === 2 && (g.kind === 'two' || g.kind === 'scroll2' || g.kind === 'zoom')) {
-      const t = two();
-      if (g.kind === 'two') {
-        if (Math.abs(t.d - g.d0) > 28 && zoomable()) {
-          // About the pointer: it stays where it is on the screen and the picture grows or shrinks around it.
-          const p = padXY(view), r = p && p.pane.video.getBoundingClientRect();
-          if (p) g = { kind: 'zoom', pad: true, d0: t.d, z0: view.zoom || 1, sx: p.x, sy: p.y, u: view.padAt.x, w: view.padAt.y, bw: r.width / (view.zoom || 1), bh: r.height / (view.zoom || 1) };
-        } else if (Math.hypot(t.x - g.mx, t.y - g.my) > 14) {
-          g.kind = 'scroll2';
-          queueMove(view, view.padAt, 0); // the wheel goes to the window under the pointer
-        }
-      }
-      if (g.kind === 'scroll2') { scrollBy(t.x - g.mx, t.y - g.my); g.mx = t.x; g.my = t.y; }
-      else if (g.kind === 'zoom') {
-        const z = clamp(g.z0 * (t.d / g.d0), 1, 5);
-        // The trackpad: the pointer's spot stays put; otherwise the spot that was between the fingers stays between them.
-        view.pan = g.pad ? { x: g.sx - g.u * g.bw * z, y: g.sy - g.w * g.bh * z } : { x: t.x - g.R.left - g.u * g.bw * z, y: t.y - g.R.top - g.w * g.bh * z };
-        zoomTo(z);
-        layout(view);
-      }
-    }
-  }, true);
+  };
   const end = (ev, cancelled) => {
-    if (ev.pointerType !== 'touch') return;
+    if (ev.pointerType !== 'touch' || !pts.has(ev.pointerId)) return;
     take(ev);
+    if (g && pts.size === 2 && TWO.has(g.kind) && seen.size) twoStep(performance.now()); // a move not looked at yet
     pts.delete(ev.pointerId);
     if (!g) return;
     timers();
     padRing(view, null);
+    if (g.kind === 'swipe') {
+      swipeEnd(view, g, cancelled); // decided as the first finger leaves; the other one does nothing after it
+      g = pts.size ? { kind: 'after' } : null;
+      return;
+    }
     if (!cancelled && g.kind === 'pending') {
-      const p = here();
-      click(0, p); // a tap (a slow one too) is a click
-      caretAsk(view, p);
+      if (g.pad || g.start) { // a tap (a slow one too) is a click; with direct touch not in the margin
+        const p = here();
+        click(0, p);
+        caretAsk(view, p);
+      }
     } else if (!cancelled && g.kind === 'armed') click(2, here()); // a long press let go: the right button
     else if (g.kind === 'drag') button(false, 0, g.pad ? view.padAt : g.last);
     else if ((g.kind === 'scroll' || g.kind === 'scroll2') && wheel.raf) { view.win.cancelAnimationFrame(wheel.raf); flushWheel(); }
-    else if (!cancelled && g.kind === 'two' && performance.now() - g.t0 < TWO_TAP_MS) click(2, view.padAt); // two fingers tapped
+    else if (!cancelled && g.kind === 'two' && g.pad && performance.now() - g.t0 < TWO_TAP_MS) click(2, view.padAt); // two fingers tapped
     if (['two', 'zoom', 'scroll2', 'after'].includes(g.kind)) {
       // Until every finger is up, a finger left over does nothing (no click at the end of a pinch).
       if (pts.size) { g = { kind: 'after' }; return; }
@@ -1766,8 +1838,72 @@ function attachTouch(view, pane) {
     }
     if (!pts.size) g = null;
   };
-  v.addEventListener('pointerup', (ev) => end(ev, false), true);
-  v.addEventListener('pointercancel', (ev) => end(ev, true), true);
+  view.touchFns = [['pointerdown', down], ['pointermove', move], ['pointerup', (ev) => end(ev, false)], ['pointercancel', (ev) => end(ev, true)]];
+  for (const [t, f] of view.touchFns) root.addEventListener(t, f, true);
+}
+// A picture hears its fingers too (see attachTouch); while it is in the window the root has taken them first.
+function touchPane(view, v) { for (const [t, f] of view.touchFns || []) v.addEventListener(t, f, true); }
+
+// Two fingers moved sideways go to the monitor beside this one, as the monitors stand on the host (the user's wish,
+// 2026-11-27: "손가락 2개 동시 스와이프로 왼쪽, 오른쪽 모니터 이동"). As pages turn on a phone, the picture follows the
+// fingers: moved to the left they bring the monitor on the right, whose name comes in at that side and turns blue once
+// letting go brings it (far enough: SWIPE_FAR, or flicked). At the last monitor the picture only gives a little. Only
+// while the window shows one monitor (not the overview), and with more than one: with one, sideways still scrolls.
+const SWIPE_FAR = 140, SWIPE_PART = 0.22; // px at most, and of the window's width
+const swipeable = (view, pad) => typeof view.sel === 'number' && monitors.length > 1 && (pad || (view.zoom || 1) <= 1);
+// The monitor beside one (dir 1: on its right, -1: on its left), in the host's arrangement; none at the end.
+function sideOf(idx, dir) {
+  const order = monitors.map((m) => m.idx).sort((a, b) => monitors[a].x - monitors[b].x || monitors[a].y - monitors[b].y);
+  const k = order.indexOf(idx), j = k + dir;
+  return k >= 0 && j >= 0 && j < order.length ? order[j] : null;
+}
+function swipeShow(view, g) {
+  const p = view.panes[0];
+  if (!p) return;
+  const W = view.root.clientWidth, dir = g.dx < 0 ? 1 : -1, to = sideOf(view.sel, dir), far = Math.min(SWIPE_FAR, W * SWIPE_PART);
+  p.video.style.transition = 'none';
+  p.video.style.transform = `translateX(${Math.round(to == null ? g.dx * 0.25 : g.dx)}px)`;
+  placePad(view); // the trackpad's pointer moves with the picture
+  let el = view.swipeEl;
+  if (!el) { el = view.swipeEl = view.win.document.createElement('div'); el.className = 'swipe'; view.root.insertBefore(el, view.toastEl); }
+  const go = to != null && Math.abs(g.dx) >= far;
+  if (to == null) el.style.display = 'none';
+  else {
+    el.textContent = dir > 0 ? `${tr('모니터 {0}', to + 1)}  ▶` : `◀  ${tr('모니터 {0}', to + 1)}`;
+    el.style.opacity = String(Math.min(1, 0.3 + 0.7 * Math.abs(g.dx) / far));
+    el.style.display = 'block';
+    // In the middle of the space the picture leaves at that side (at least 12 px from the edge), as if coming in.
+    const r = p.video.getBoundingClientRect(), R = view.root.getBoundingClientRect();
+    const side = Math.round(Math.max(12, ((dir > 0 ? R.right - r.right : r.left - R.left) - el.offsetWidth) / 2)) + 'px';
+    el.style.left = dir < 0 ? side : '';
+    el.style.right = dir > 0 ? side : '';
+  }
+  if (go !== !!g.go) {
+    g.go = go;
+    el.classList.toggle('go', go);
+    if (go) try { navigator.vibrate && navigator.vibrate(8); } catch {}
+  }
+}
+function swipeEnd(view, g, cancelled) {
+  if (view.swipeEl) { view.swipeEl.style.display = 'none'; view.swipeEl.classList.remove('go'); }
+  const W = view.root.clientWidth, dir = g.dx < 0 ? 1 : -1, to = sideOf(view.sel, dir), far = Math.min(SWIPE_FAR, W * SWIPE_PART);
+  const flick = Math.abs(g.vx) > 0.45 && Math.sign(g.vx) === Math.sign(g.dx) && Math.abs(g.dx) > 36;
+  // The picture slides into place (from where it is, or in from the side its monitor stands); the trackpad's pointer
+  // waits until it is there.
+  const slide = (p, from) => {
+    const s = p.video.style, cur = view.padEl;
+    if (cur) cur.style.visibility = 'hidden';
+    s.transition = 'none'; s.transform = from;
+    void p.video.offsetWidth; // that start is drawn first
+    s.transition = 'transform .18s ease-out, opacity .18s ease-out'; s.transform = ''; s.opacity = '';
+    setTimeout(() => { s.transition = ''; if (cur) cur.style.visibility = ''; placePad(view); }, 220);
+  };
+  if (!cancelled && to != null && (Math.abs(g.dx) >= far || flick)) {
+    if (padOn(view) && view.padAt) view.padAt = { d: to, x: view.padAt.x, y: view.padAt.y }; // the same spot of the next monitor
+    setSel(view, to);
+    const p = view.panes[0];
+    if (p) { p.video.style.opacity = '.5'; slide(p, `translateX(${Math.round(dir * W * 0.3)}px)`); }
+  } else if (view.panes[0]) slide(view.panes[0], view.panes[0].video.style.transform || 'none');
 }
 $('zoomBtn').onclick = () => { mainView.zoom = 1; layout(mainView); $('zoomBtn').style.display = 'none'; scheduleView(); };
 

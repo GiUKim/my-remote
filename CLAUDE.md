@@ -1197,8 +1197,8 @@ the client app instead).
   "한글"; switch keys `Shift+space` -> the note, its command run -> 한/영 -> "한글", no note again. The Windows
   button was checked only by the self-test (the keys it sends), not on a Windows host.
 - **Phones and tablets** (`TOUCH`: `(pointer: coarse)`, or `#touch` for tests; `attachTouch`). A
-  finger's pointer events are taken before the mouse handling (capture listeners at the target,
-  `stopImmediatePropagation`). Two ways (`touchMode`, the toolbar's `#padBtn`, kept in `mr_touch`; 2026-11-26, the
+  finger's pointer events are taken before the mouse handling (capture listeners on the window's root, `#stage`, and on
+  every picture; `stopImmediatePropagation`). Two ways (`touchMode`, the toolbar's `#padBtn`, kept in `mr_touch`; 2026-11-26, the
   start of the Android app, see the `pangmote-android` memory): **the trackpad** (`pad`, the default on a phone: the
   smaller side of the screen under 600 CSS px; the user chose it, finding it more precise in Chrome Remote Desktop):
   one finger moves the host's pointer by how far it moves (`PAD_GAIN`: 1 slow, up to 3 fast), the pointer is drawn by
@@ -1210,6 +1210,22 @@ the client app instead).
   screen pixel so the content follows the finger), two fingers zoom about themselves. In both (the user's rule): a
   long press (`LONG_MS` 400 ms, a vibration and a ring) let go is the right button, moved on is a left-button drag.
   Zoom is 1x-5x locally (`view.zoom`, `view.pan` in `layout`; the host is asked for more pixels when zoomed).
+  **The black margins** around the picture count too (the user's report from the first phone, 2026-11-27: touches
+  there did nothing): `attachTouch(view)` listens on the window's root, which takes the whole area under the toolbar
+  (`touch-action: none` already), and on every picture (`touchPane`: a picture replaced while a finger is on it still
+  hears that finger, whose events no longer reach the root); other elements in the root (the lock screen's cover and
+  bar, a note with buttons) keep their fingers. The trackpad is one touchpad over all of it. With direct touch a finger
+  in the margin is at the picture's nearest edge: a drag that leaves the picture goes on along the edge, but a tap or a
+  long press that starts there does nothing (it would click what lies at the edge, the taskbar say) and a swipe there
+  scrolls where the host's pointer is. **Two fingers moved sideways** go to the monitor beside (the user's wish, the
+  same day; `swipeShow`/`swipeEnd`, `sideOf`: the host's arrangement by x, then y; no wrap): as pages turn on a phone,
+  the picture follows the fingers and fingers moved left bring the monitor on the right, whose name comes in at that
+  side and turns blue once letting go brings it (`SWIPE_FAR` 140 px or 22% of the width, or a flick over 0.45 px/ms);
+  at the last monitor the picture only gives a little; the new picture slides in and `setSel` does the rest (swaps with
+  another window, toast). Decided after 14 px of the fingers' midpoint, sideways meaning more than 1.3 times the
+  vertical part; a spread of 28 px first is a zoom. Only while the window shows one monitor and the host has more than
+  one (else the trackpad scrolls sideways as before), and with direct touch only while not zoomed (zoomed, two fingers
+  move the picture). Nothing goes to the host.
   **The keyboard comes up by itself** where a tap made a text caret appear on the host (the user's wish: "Caret
   Blinking"): after a tap's click the page sends `caretq` (phones and tablets only: `autoKbd`), `caretQuery` in host.js
   looks four times over a second (`CARET_LOOKS`) through `main.js caretNow`: Windows' system caret
@@ -1753,7 +1769,7 @@ Run from `host/` with Electron's env var cleared.
 |---|---|
 | `npm run selftest` | Local end-to-end test, prints `[selftest] PASS/FAIL` lines, exits 0 or 1 |
 | `electron . --selftest --shell-check` | Same, plus the client app's one-click layout on the real screens. Fullscreen windows cover every monitor for a few seconds, so ask the user first |
-| `electron . --selftest --dump-phone=<file.png>` | Pictures of the phone layout: client windows of a phone's size (915x412 and 412x915, `#touch`) with the key row open, written as `<file>-landscape.png` and `<file>-portrait.png`. About 30 s, opens no window |
+| `electron . --selftest --dump-phone=<file.png>` | Pictures of the phone layout: client windows of a phone's size (915x412 and 412x915, `#touch`) with the key row open, written as `<file>-landscape.png` and `<file>-portrait.png`, and, with more than one monitor, half way through two fingers moved sideways (`-landscape-swipe.png`, `-portrait-swipe.png`). About 30 s, opens no window |
 | `electron . --selftest --dump-panel=<file.png>` | Quick look at the arrangement panel: connects, draws the panel as if the client had two screens, writes pictures (`<file>.png`, `-ctrl-drag`, `-swap-drag`, `-together`) and exits. About 20 s, opens no window |
 | `electron . --selftest --dump-lang=<folder>` | The whole self-test, and its language check writes pictures of the toolbar, the shortcuts and diagnostics dialogs and the host window in every language into `<folder>` (`page-bar-de.png`, `host-ru.png`, ...), for a look at what a longer language does to the layout |
 | `node native/build.js user@host[:folder]` | Builds the native modules on a Linux machine with mingw-w64: `host/bin/capture.dll` + `capture.dll.json` (commit them with the source), `tools/native/capprobe.dll`. After a change in `native/` |
