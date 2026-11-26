@@ -1,0 +1,12 @@
+{
+  "ko": [
+    "중계 서버(ntfy.sh)가 호스트의 메시지를 거부하면(HTTP 429) 호스트 창에 알립니다. 인터넷 주소 하나에 하루 250개라는 한도를 다 쓰면 그동안 다른 PC에서 접속할 수 없는데, 지금까지는 클라이언트에 '호스트가 응답하지 않습니다'만 보이고 어디에도 이유가 나오지 않았습니다",
+    "하루 한도를 다 쓴 경우 한도가 풀리는 시각을 함께 보여 주고, 메시지가 다시 전송되면 안내가 사라집니다",
+    "호스트를 이 버전으로 업데이트해야 적용됩니다"
+  ],
+  "en": [
+    "The host window says when the relay (ntfy.sh) refuses the host's messages (HTTP 429). Once an internet address has used its 250 messages of the day, no other PC can connect until the reset; until now the client only said the host did not answer, and nothing said why",
+    "When the day's limit is used up, the note says when it resets, and it goes once messages go through again",
+    "Update the host to this version"
+  ]
+}

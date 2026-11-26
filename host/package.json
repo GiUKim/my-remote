@@ -1,6 +1,6 @@
 {
   "name": "my-remote-host",
-  "version": "0.10.3",
+  "version": "0.10.4",
   "description": "Pangmote host: personal P2P remote desktop (WebRTC, multi-monitor)",
   "main": "main.js",
   "license": "MIT",
