@@ -1896,6 +1896,73 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
           !offFirst.auto && offFirst.checked === 'false' && offFirst.shown && /이 창에 허용 카드가 뜹니다/.test(offFirst.text) && !/(pangmote|my-remote)-client/.test(offFirst.text) &&
           onNow.auto && onNow.checked === 'true' && /바로 연결됩니다/.test(onNow.text) && inA && !askedA && !cardA.shown && usedA && autoLog && !afterUse.shown,
           JSON.stringify({ offFirst, onNow, inA, askedA, card: cardA.shown, second: ub && ub.denied, autoLog, afterUse: afterUse.shown }));
+
+        // A phone added with the card "휴대폰 추가" (host.js qrCodes; the Android app, 2026-11-26). Never shown during a
+        // remote session. Shown, its code turns away a page that only visits with it ('qr': no token asked); the app,
+        // played here by a page with a stand-in for its bridge (window.mrShell: qrPairing, deviceHello, devicePaired,
+        // deviceVerified), comes in without a card and gets a device token over the connection, which it then sees
+        // working; the code is used (another page on it: 'used'), the card shows a new one, and the phone comes back
+        // with its token alone (bootDevice).
+        await idle();
+        const pr = await page();
+        await pr.guntil((x) => x.state === 'connected', 30);
+        const duringRemote = await hjs('qrShow().then(() => ({ why: qrWhy, open: !!qrOpen, codes: qrCodes.length }))');
+        await pr.close();
+        await idle();
+        await sleep(3500); // main.js remoteNow: a moment after a session too
+        const qrDir = path.join(require('electron').app.getPath('userData'), 'qr-check');
+        fs.mkdirSync(qrDir, { recursive: true });
+        // Through the loader, as the app opens a PC: it gives a code to the page, or connects with the token the app gives.
+        const qrLoader = path.join(qrDir, 'loader.html');
+        fs.writeFileSync(qrLoader, buildLoaderHtml());
+        const appPage = async (code, boot) => {
+          const pre = path.join(qrDir, `shell-${Date.now()}-${Math.random().toString(36).slice(2)}.js`);
+          fs.writeFileSync(pre, `window.__qr = { paired: null, verified: null };
+window.mrShell = {
+  lang: () => 'ko', setLang: () => Promise.resolve(), onLang: () => {},
+  fullscreenAll: () => Promise.resolve(true), screens: () => Promise.resolve([{ left: 0, top: 0, width: 1280, height: 720 }]),
+  qrPairing: () => Promise.resolve(${boot ? 'false' : 'true'}),
+  deviceHello: () => Promise.resolve(${boot ? 'null' : "{ pc: 'Test phone', os: 'android', osName: 'Android 17', app: '0.2.0', install: 'qr-check-install' }"}),
+  devicePaired: (d) => { window.__qr.paired = d; return Promise.resolve(true); },
+  deviceVerified: (fp) => { window.__qr.verified = fp; return Promise.resolve(true); },
+  hostInfo: () => Promise.resolve(),
+  ${boot ? `bootDevice: () => Promise.resolve(${JSON.stringify(boot)}),` : ''}
+};`);
+          const gw = new BrowserWindow({ show: false, width: 1280, height: 720, webPreferences: { backgroundThrottling: false, preload: pre, contextIsolation: false, sandbox: false } });
+          const errs = [];
+          gw.webContents.on('console-message', (e) => { const m = e && (e.message || (e.params && e.params.message)); if (e && (e.level === 'error' || e.level === 3) && m) errs.push(String(m).slice(0, 200)); });
+          await gw.loadFile(qrLoader, { hash: boot ? 'auto&ro' : `k=${code}&auto&ro` });
+          const g = (c) => gw.webContents.executeJavaScript(c);
+          const gstate = () => g(`({ state: window.__rd && window.__rd.state, denied: (window.__rd && window.__rd.denied) || '', paired: !!(window.__qr && window.__qr.paired), verified: !!(window.__qr && window.__qr.verified), msg: (document.getElementById('msg') || {}).textContent || '', boot: window.__mrBoot ? { device: !!window.__mrBoot.device, key: !!window.__mrBoot.key } : null })`).then((x) => Object.assign(x, { errs: errs.slice(0, 3) }));
+          const guntil = async (pred, secs) => { let x; for (let i = 0; i < secs * 2; i++) { await sleep(500); try { x = await gstate(); if (pred(x)) return [true, x]; } catch {} } return [false, x]; };
+          const close = async () => { try { await g('disconnect("")'); } catch {} await sleep(800); gw.destroy(); };
+          return { g, guntil, close };
+        };
+        await hjs('qrAllowed = () => Promise.resolve(""); qrShow()'); // as pressed here (the test's own session would count as remote)
+        const shown = await hjs(`(() => { const c = qrCodes.filter((x) => !x.pk).slice(-1)[0]; return { code: c ? c.code : '', svg: /^<svg/.test(document.getElementById('qrImg').innerHTML), open: !!qrOpen }; })()`);
+        const visit = await page(shown.code);
+        const [visitOut, vv] = await visit.guntil((x) => x.denied === 'qr', 25);
+        await visit.close();
+        const ap = await appPage(shown.code);
+        const [apIn, av] = await ap.guntil((x) => x.state === 'connected' && x.paired && x.verified, 45);
+        const paired = await ap.g('window.__qr.paired');
+        const nextQr = await hjs(`(() => { const c = qrCodes.filter((x) => !x.pk).slice(-1)[0]; return { code: c ? c.code : '', done: qrDone ? qrDone.name : '' }; })()`);
+        const again = await appPage(shown.code);
+        const [usedOut, uv] = await again.guntil((x) => x.denied === 'used', 25);
+        await again.close();
+        await ap.close();
+        await idle();
+        const back = await appPage('', paired);
+        const [backIn, bv] = await back.guntil((x) => x.state === 'connected', 30);
+        await back.close();
+        const devList = await hjs('hostApi.devices.list().then((r) => (r && r.list ? r.list : []))');
+        const dev = paired && devList.find((d) => d.id === paired.id);
+        const viaQr = await hjs('hostApi.accessLog().then((l) => (Array.isArray(l) ? l : []).filter((e) => e.via === "qr").map((e) => e.ev).join(","))');
+        await hjs(`qrClose(true); qrAllowed = () => hostApi.qrAllowed(); ${paired ? `hostApi.devices.remove(${JSON.stringify(paired.id)})` : '1'}`);
+        check('a phone added with the QR code of "휴대폰 추가": never during a remote session, a visit with the code turned away, the app let in without a card and given a device token it sees working, the code then used and replaced, the phone back with its token alone',
+          duringRemote.why === 'remote' && !duringRemote.open && shown.open && shown.svg && /^[0-9A-Z]{12}$/.test(shown.code) && visitOut && apIn && paired && /^[0-9a-f]{16}$/.test(paired.id)
+            && nextQr.code && nextQr.code !== shown.code && nextQr.done === 'Test phone' && usedOut && backIn && dev && dev.name === 'Test phone' && /approved/.test(viaQr) && /connect/.test(viaQr),
+          JSON.stringify({ duringRemote, shown: { open: shown.open, svg: shown.svg, code: !!shown.code }, visit: vv && vv.denied, app: av, next: { changed: nextQr.code !== shown.code, done: nextQr.done }, again: uv && uv.denied, back: bv, device: dev ? dev.name : null, viaQr }));
       }
 
       if (SHELL_CHECK) {

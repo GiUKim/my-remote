@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('hostApi', {
   cursor: (last) => ipcRenderer.invoke('cursor', last),
   dragging: (nudge) => ipcRenderer.invoke('dragging', !!nudge),
   caret: () => ipcRenderer.invoke('caret'), // a text caret after a phone's tap (main.js caretForClient)
+  qrAllowed: () => ipcRenderer.invoke('qr-allowed'), // whether the card "휴대폰 추가" may show a code ('' = yes)
   dragWhat: () => ipcRenderer.invoke('drag-what'),
   putBegin: () => ipcRenderer.invoke('put-begin'),
   putDir: (gid, name) => ipcRenderer.invoke('put-dir', gid, name),

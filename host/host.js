@@ -414,6 +414,12 @@ function teardown(reason, silent) {
     o.timer = setTimeout(() => { if (oneTime === o && !(session && session.route.kind === 'code')) endOneTime('done'); }, ONE_TIME_GRACE_MS);
     showOneTime();
   }
+  if (qrWhy === 'remote') { qrWhy = ''; qrPaint(); } // the card may show a code again (asked anew when pressed)
+  // A session on a QR code of the card "휴대폰 추가": the code is heard a moment more (its page may come back), then let go.
+  if (s.route.kind === 'qr') {
+    for (const c of qrCodes) if (c.keys === s.route.keys) c.endAt = Date.now() + QR_AFTER_MS;
+    qrPlan();
+  }
 }
 
 // Ends the session and has the client come back at once with a new hello, keeping its windows: the
@@ -878,6 +884,7 @@ async function pairDevice(s) {
   }
   txTo(s, { t: 'device', ok: true, id: r.id, secret: r.secret });
   log(p.pc ? t('{0}을(를) 기기로 등록했습니다 — 다음부터 키 없이 접속합니다', p.pc) : t('이 클라이언트 앱을 기기로 등록했습니다 — 다음부터 키 없이 접속합니다'));
+  if (s.route.kind === 'qr') { qrDone = { name: p.pc || '?', at: Date.now() }; qrPaint(); }
 }
 // The address the session's connection uses (the remote end of the selected candidate pair), for the log.
 // The engine does not reveal a peer-reflexive one (the client's own addresses come hidden behind mDNS
@@ -909,13 +916,15 @@ async function noteConnected(s) {
 }
 // A client app connected with the key may ask for a token of its own (hello.pair: what it says it is).
 function pairWish(hello, route) {
-  const p = route.kind === 'key' && hello.pair && typeof hello.pair === 'object' ? hello.pair : null;
+  const p = (route.kind === 'key' || route.kind === 'qr') && hello.pair && typeof hello.pair === 'object' ? hello.pair : null;
   if (!p) return null;
   const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
   return { pc: str(p.pc, 60), os: str(p.os, 10), osName: str(p.osName, 60), app: str(p.app, 20) };
 }
 async function startSession(hello, route) {
   teardown('새 접속 요청');
+  // A remote session (other than the phone being added): the card "휴대폰 추가" closes (see qrCodes).
+  if (qrOpen && route.kind !== 'qr') { qrClose(); qrWhy = 'remote'; qrPaint(); }
   // The session is the current one from here on, so that a newer hello or a teardown during any of the
   // waits below finds it and closes what it has. After each wait it checks that it still is the
   // current one; if not, it stops there and closes what it got during that wait.
@@ -1189,6 +1198,10 @@ async function subscribe() {
     const k = oneTime.keys;
     next.set(k.topicHost, { kind: 'code', key: 'code', keys: k, send: (o) => relaySend(o, { pubTopic: k.topicClient, txKey: k.h2c }) });
   }
+  // The codes of the card "휴대폰 추가" (see qrCodes).
+  for (const c of qrCodes) {
+    next.set(c.keys.topicHost, { kind: 'qr', key: 'qr:' + c.code, keys: c.keys, send: (o) => relaySend(o, { pubTopic: c.keys.topicClient, txKey: c.keys.h2c }) });
+  }
   if (my !== subSeq) return; // a newer list is on its way
   routes = next;
   const c = RD.channel({
@@ -1400,6 +1413,95 @@ function showOneTime() {
 }
 relabel.add(() => showOneTime());
 
+// ---- a phone added with a QR code (the Android app; the user's design, 2026-11-26) ---------------------------
+// The card "휴대폰 추가" shows a QR code: QR_LINK and a one-time code (RD.newCode: 60 random bits, which RD.deriveCode
+// stretches into keys and topics of their own, as for the one-time codes above). The Pangmote app scans it with its own
+// QR button, or the phone's camera opens the link in the app (Android App Links: giukim.github.io/.well-known/
+// assetlinks.json names the app's signing certificates; without the app the link shows a page that sends the code
+// nowhere). The app connects with the code and asks for a device token in its hello (hello.pair); it gets one over the
+// session's DTLS channel (pairDevice), as the desktop client app does after the key. So the key is not in the code, and
+// the token is never on a screen. The code is shown only in this window: the first page that signs its hello on it and
+// asks for a token comes in without a card, and the code is used then (another page on it: `used`; its own page may come
+// back while the session lasts and QR_AFTER_MS after); the card goes on with a new code. An unused code is replaced
+// every QR_ROTATE_MS (the one before still works for QR_GRACE_MS: a scan in its last second) and the card closes after
+// QR_OPEN_MS. Never during a remote session (main.js remoteNow): whoever is connected, a helper on a one-time code too,
+// must not add a phone of theirs for good; and only on the default relay, the one the app's loader talks to.
+const QR_LINK = 'https://giukim.github.io/p#1.';
+const QR_ROTATE_MS = 60e3, QR_GRACE_MS = 30e3, QR_OPEN_MS = 10 * 60e3, QR_AFTER_MS = 2 * 60e3;
+let qrCodes = []; // { code, keys, made, pk: '' until used, endAt: when it is no longer listened to }
+let qrOpen = null; // { until, rotate, tick } while the card shows a code
+let qrDone = null; // { name, at }: the phone added last, said in the card for a while
+let qrWhy = '';    // why the card cannot show a code now ('remote', 'relay')
+let qrTimer = 0;
+let qrAllowed = () => api.qrAllowed(); // the self-test lets a code be shown during its own session
+async function qrShow() {
+  const why = await qrAllowed().catch(() => 'error');
+  if (why) { qrWhy = why; qrPaint(); return; }
+  qrWhy = '';
+  qrClose(true);
+  qrOpen = { until: Date.now() + QR_OPEN_MS };
+  await qrNext();
+  if (!qrOpen) return;
+  qrOpen.rotate = setInterval(() => { qrNext(); }, QR_ROTATE_MS);
+  qrOpen.tick = setInterval(() => { if (qrOpen && Date.now() > qrOpen.until) qrClose(); else qrPaint(); }, 1000);
+  log(t('휴대폰 추가 QR을 띄웠습니다: 휴대폰의 Pangmote 앱으로 찍으면 이 PC가 등록됩니다 (QR은 1분마다 바뀝니다)'));
+}
+async function qrNext() {
+  if (!qrOpen) return;
+  const code = RD.newCode(), keys = await RD.deriveCode(code);
+  if (!qrOpen) return;
+  const now = Date.now();
+  for (const c of qrCodes) if (!c.pk && c.endAt > now + QR_GRACE_MS) c.endAt = now + QR_GRACE_MS; // the one shown before
+  qrCodes.push({ code, keys, made: now, pk: '', endAt: now + QR_ROTATE_MS + QR_GRACE_MS });
+  qrPlan();
+  await subscribe();
+  qrPaint();
+}
+// Codes are let go of when their time is up (a used one: when its session is over and QR_AFTER_MS more).
+function qrPlan() {
+  clearTimeout(qrTimer);
+  const now = Date.now(), live = session && session.route.kind === 'qr' ? session.route.keys : null;
+  const before = qrCodes.length;
+  qrCodes = qrCodes.filter((c) => c.keys === live || c.endAt > now);
+  if (qrCodes.length !== before) subscribe();
+  const next = Math.min(...qrCodes.filter((c) => c.keys !== live).map((c) => c.endAt));
+  if (Number.isFinite(next)) qrTimer = setTimeout(qrPlan, Math.max(200, next - now + 50));
+}
+function qrClose(quiet) {
+  const o = qrOpen;
+  if (o) { clearInterval(o.rotate); clearInterval(o.tick); }
+  qrOpen = null;
+  const now = Date.now();
+  for (const c of qrCodes) if (!c.pk) c.endAt = now; // unused codes go at once; a used one keeps its session
+  qrPlan();
+  subscribe();
+  qrPaint();
+  if (o && !quiet) log(t('휴대폰 추가 QR을 닫았습니다'));
+}
+function qrPaint() {
+  const o = qrOpen, c = o && qrCodes.filter((x) => !x.pk).slice(-1)[0];
+  $('qr').classList.toggle('on', !!o);
+  $('qrBox').style.display = c ? '' : 'none';
+  $('qrBtn').textContent = o ? t('닫기') : t('QR 보기');
+  const done = qrDone && Date.now() - qrDone.at < 5 * 60e3 ? qrDone : null;
+  $('qrNote').textContent = qrWhy === 'remote' ? t('원격 접속 중에는 휴대폰을 추가할 수 없습니다. 이 PC 앞에서 하세요.')
+    : qrWhy === 'relay' ? t('이 호스트는 다른 시그널링 서버를 써서 Pangmote 앱을 QR로 추가할 수 없습니다.')
+      : done ? t('휴대폰을 등록했습니다: {0}. 다음부터 그 앱은 키 없이 이 PC에 접속합니다. 접속한 기기에서 차단하거나 지울 수 있습니다.', done.name)
+        : t('휴대폰의 Pangmote 앱으로 QR을 찍으면 이 PC가 앱에 등록되어, 다음부터 키 없이 접속합니다. 접속 키는 QR에 들어가지 않습니다.');
+  $('qrNote').style.display = c ? 'none' : '';
+  if (!c) { $('qrState').textContent = ''; return; }
+  if ($('qrImg').dataset.code !== c.code) {
+    $('qrImg').dataset.code = c.code;
+    try { $('qrImg').innerHTML = QR.svg(QR_LINK + c.code, { scale: 5 }); } catch { $('qrImg').textContent = ''; } // our own markup
+  }
+  const left = Math.max(0, Math.round((c.made + QR_ROTATE_MS - Date.now()) / 1000));
+  $('qrState').textContent = t('— {0}초 뒤 새 QR', left);
+  $('qrText').textContent = t('휴대폰의 Pangmote 앱에서 QR 버튼을 누르고 이 QR을 비추세요. 앱이 설치되어 있으면 휴대폰 카메라로 찍어도 됩니다. QR은 1분마다, 그리고 한 번 쓰이면 바로 바뀝니다.');
+}
+relabel.add(() => qrPaint());
+$('qrBtn').onclick = () => { if (qrOpen) qrClose(); else qrShow(); };
+qrPaint();
+
 // Who is on the other end, for the log and the access log. A device's name as the host window has it now
 // (a rename does not make a new subscription: devNames, filled by showDevices).
 const devNames = new Map();
@@ -1407,7 +1509,8 @@ const refused = new Map(); // a blocked device -> when it was last answered, and
 const cycleSaid = new Map(); // 'self' | 'loop' -> when it was last logged
 const cycleN = new Map();    // 'self' | 'loop' -> how many hellos were turned away so (the self-test reads it)
 const deviceName = (route) => devNames.get(route.id) || route.name;
-const whoOf = (route, pair) => (route.kind === 'device' ? deviceName(route) : route.kind === 'code' ? '1회용 코드 접속' : pair && pair.pc ? pair.pc + ' (키)' : '키로 접속');
+const whoOf = (route, pair) => (route.kind === 'device' ? deviceName(route) : route.kind === 'code' ? '1회용 코드 접속'
+  : route.kind === 'qr' ? (pair && pair.pc ? pair.pc + ' (QR)' : 'QR로 추가하는 휴대폰') : pair && pair.pc ? pair.pc + ' (키)' : '키로 접속');
 
 async function onMessage(m, route) {
   if (!m || typeof m.sid !== 'string' || !(Math.abs(Date.now() - m.ts) <= MAX_AGE)) return; // also without a ts
@@ -1487,6 +1590,26 @@ async function onMessage(m, route) {
         api.access({ ev: 'approved', via: 'code', name: '1회용 코드로 접속', how: 'auto' });
         log(t('1회용 코드로 접속: 자동 허용이 켜져 있어 바로 연결합니다'));
       } else { ask(m, route, { otp: false, locked: false }); return; }
+    } else if (route.kind === 'qr') {
+      // A phone added with the card's QR code (see qrCodes): no card to allow it, the code was only on this screen.
+      const c = qrCodes.find((x) => x.keys === route.keys);
+      if (!c) return;
+      if (c.pk) {
+        if (!(m.bind && m.pk === c.pk)) { route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: 'used' }).catch(() => {}); return; }
+        m.allowed = 'again'; // its own page coming back (a renew, a short loss of the network)
+      } else if (!m.bind || !m.pair || typeof m.pair !== 'object') {
+        // Only an app that signs its hello and asks for a token of its own: the code adds a phone, it is no visit.
+        route.send({ t: 'denied', sid: m.sid, ts: Date.now(), why: 'qr' }).catch(() => {});
+        return;
+      } else {
+        c.pk = m.pk;
+        c.endAt = Infinity; // heard while its session lasts (teardown gives it QR_AFTER_MS more)
+        m.allowed = 'qr';
+        const name = typeof m.pair.pc === 'string' ? m.pair.pc.slice(0, 60) : '';
+        api.access({ ev: 'approved', via: 'qr', name: name || 'QR', how: 'qr' });
+        log(t('휴대폰이 QR 코드로 접속했습니다: {0}', name || '?'));
+        if (qrOpen) qrNext(); // the card goes on with a new code
+      }
     } else if (route.kind === 'key') {
       // New devices confirmed here (see ask): a page allowed a moment ago may come again without asking.
       if (m.bind && (allowedPks.get(m.pk) || 0) > performance.now()) m.allowed = 'again';
@@ -1755,7 +1878,7 @@ async function renderAccess() {
   box.textContent = '';
   if (!list.length) { const p = document.createElement('small'); p.textContent = t('기록이 없습니다.'); box.append(p); }
   for (const e of list) {
-    const parts = [fmtTime(e.t), ACCESS_WHAT[e.ev] ? t(ACCESS_WHAT[e.ev]) : e.ev, e.name ? whoText(e.name) : e.via === 'device' ? t('기기') : e.via === 'code' ? t('1회용 코드') : t('키로 접속')];
+    const parts = [fmtTime(e.t), ACCESS_WHAT[e.ev] ? t(ACCESS_WHAT[e.ev]) : e.ev, e.name ? whoText(e.name) : e.via === 'device' ? t('기기') : e.via === 'code' ? t('1회용 코드') : e.via === 'qr' ? t('QR로 추가') : t('키로 접속')];
     if (e.ip) parts.push(e.ip);
     if (e.ev === 'end') {
       parts.push(t('{0}분', Math.max(1, Math.round((e.dur || 0) / 60))));

@@ -30,6 +30,8 @@
   #askCode { font: 600 22px Consolas, monospace; letter-spacing: .15em; color: #fff; }
   #otCode { font: 600 26px Consolas, monospace; letter-spacing: .12em; color: #fff; user-select: all; }
   #ot.on { border-color: #2b6cff; }
+  #qr.on { border-color: #2b6cff; }
+  #qrImg svg { display: block; border-radius: 4px; }
   .switch { display: inline-flex; align-items: center; gap: 8px; color: #c5ccd6; font-size: 13px; cursor: pointer; user-select: none; }
   .switch button { position: relative; width: 36px; height: 20px; padding: 0; border-radius: 10px; background: #343c48; flex: none; }
   .switch button::after { content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #aab2bd; transition: left .15s, background .15s; }
@@ -97,6 +99,13 @@
       <div class="row" style="margin-top:8px"><button id="otEnd" class="sub" data-i18n>끝내기</button><span style="flex:1"></span><label class="switch" id="otAutoRow" title="켜 두면 이 코드를 넣은 사람이 이 창의 허용 없이 바로 접속합니다. 코드를 아는 사람은 누구나 들어올 수 있으니 도와줄 사람에게만 알려 주세요." data-i18n-title><span data-i18n>자동 허용</span><button id="otAuto" role="switch" aria-checked="false" aria-label="자동 허용" data-i18n-aria></button></label></div>
     </div>
     <small id="otNote" data-i18n>접속 키를 주지 않고 이 PC를 잠깐 다른 사람에게 보여 주거나 맡길 때 씁니다. 코드는 10분 동안 한 번만 쓸 수 있고, 상대가 들어오기 전에 이 창에서 허용해야 합니다(코드를 만든 뒤 자동 허용을 켜면 바로 들어옵니다). 기기로 등록되지 않으며, 끝나면 코드도 사라집니다.</small>
+  </div>
+  <div class="card" id="qr">
+    <div class="row"><b data-i18n>휴대폰 추가</b> <small id="qrState"></small><span style="flex:1"></span><button id="qrBtn" class="sub mini" data-i18n>QR 보기</button></div>
+    <div id="qrBox" style="display:none; margin-top:8px">
+      <div class="row" style="align-items:flex-start; flex-wrap:nowrap; gap:14px"><div id="qrImg"></div><small id="qrText"></small></div>
+    </div>
+    <small id="qrNote"></small>
   </div>
   <div class="card" id="devs">
     <div class="row"><b data-i18n>접속한 기기</b> <small id="devsNote"></small><span style="flex:1"></span><button id="accessBtn" class="sub mini" data-i18n>접속 기록</button></div>

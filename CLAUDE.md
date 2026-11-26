@@ -596,6 +596,21 @@ the client app instead).
     `--trust-page-key=` (taken only with `--loader=`); the in-process test windows are attached with `trust`.
     The key's public half is also written to the run's profile as `page-key.txt` (0.9.2), for a harness that starts
     client apps of its own on the run's loader, on this PC or another machine.
+  - **Phones added with a QR code** (the Android app; the user's design, 2026-11-26: "1회성으로 찍히면 계속 바뀌는 QR").
+    The host window's card "휴대폰 추가" (`qrShow` in host.js) shows `https://giukim.github.io/p#1.<code>`: a one-time code
+    (`RD.newCode`, stretched by `RD.deriveCode` as above) on a route of its own (`kind: 'qr'`), replaced every minute (the
+    one before works 30 s more) and right after it was used; the card closes after 10 minutes. The app scans it with its own
+    QR button, or the phone's camera opens the link in the app (Android App Links: `giukim.github.io/.well-known/
+    assetlinks.json`, the user's site repository `GiUKim.github.io`; without the app the link shows a page that sends the code
+    nowhere and takes it out of the address). The app opens its loader with the code (`?k=<code>&auto`) and tells the page
+    (`mrShell.qrPairing`) to ask for a token on it (`hello.pair`, which `wantPair` otherwise leaves out for one-time codes);
+    the host lets the first page that signs its hello and asks for a token in without a card, marks the code used (another
+    page: `used`; a page that only visits with the code, asking no token: `qr`; its own page may come back for 2 minutes after
+    its session), and `pairDevice` gives a device token over the session's DTLS channel. So the key is never in the QR code
+    and the token never on a screen. Never shown during a remote session (`qr-allowed` in main.js, `remoteNow`): a helper on a
+    one-time code must not add a phone of theirs for good; only on the default relay (the app's loader talks to it). The
+    access log has `via: 'qr'`. The self-test plays the app with a stand-in for its bridge through the loader: refused
+    during a remote session, a visit turned away, paired and verified, the code used and replaced, back with the token alone.
   - **One-time codes** (0.9.0; agreed 2026-11-16, built 2026-11-17: "남을 도울 때 쓰는 1회용 코드 + 수락").
     The host window's card "1회용 코드로 도움 받기" makes a code (`RD.newCode` in `signal.js`: 12 characters
     of Crockford's base32, 60 random bits, shown XXXX-XXXX-XXXX; typed forgivingly: case, spaces, dashes, O for

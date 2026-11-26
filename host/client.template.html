@@ -2745,7 +2745,10 @@ function showLock() {
 // it (window.mrShell: devicePaired, deviceVerified). It drops the key once the token has been seen to
 // work: here, by asking the host for its page over the token's own topics (the host listens there once it
 // has taken the new token).
-const wantPair = () => !DEVICE && !ONE_TIME && !paired && !!shell && typeof shell.devicePaired === 'function' && typeof shell.deviceHello === 'function';
+// The Android app opened this page with the one-time code of a host window's QR code ("휴대폰 추가"): on that code too
+// (host.js qrCodes). Asked of the app before the hello (shell.qrPairing).
+let qrPairing = false;
+const wantPair = () => !DEVICE && (!ONE_TIME || qrPairing) && !paired && !!shell && typeof shell.devicePaired === 'function' && typeof shell.deviceHello === 'function';
 // What this app says about itself when it asks: shown at the host. Its `install` (the app's own name, by
 // which the host replaces the token of an app that pairs again) goes over the connection once it is open
 // ('pair'), not in the hello, which everyone holding the key can read on the relay.
@@ -2801,6 +2804,8 @@ const DENIED = {
   locked: '코드를 여러 번 틀려 OTP 확인이 잠시 막혔습니다. 호스트에서 허용하거나 나중에 다시 시도하세요.',
   old: '이 화면이 호스트와 맞지 않습니다. 다시 접속해 보세요.',
   used: '이 1회용 코드는 이미 다른 접속에 쓰였습니다. 호스트 PC에서 새 코드를 받으세요.',
+  // The code of a host window's QR code ("휴대폰 추가") typed in somewhere else than the Android app.
+  qr: '이 코드는 휴대폰의 Pangmote 앱에서 QR로 찍어야 쓸 수 있습니다.',
   // A connection that comes back on itself (host/cycle.js; from 0.9.0).
   self: '이 PC 자신에는 접속할 수 없습니다. 자기 화면을 끝없이 비추고, 누른 키와 클릭이 이 PC로 되돌아옵니다. 다른 PC의 키나 코드인지 확인하세요.',
   loop: '이 PC는 지금 접속하려는 PC를 조종하고 있습니다. 두 PC가 서로를 조종하면 키와 클릭이 둘 사이를 끝없이 오가므로 막았습니다. 한쪽 접속을 끊고 다시 시도하세요.',
@@ -3175,6 +3180,7 @@ async function begin() {
     if (shell && shell.localHost) { try { const f = await shell.localHost(); if (typeof f === 'string' && f) hello.from = f.slice(0, 64); } catch {} }
     // The app connected with the key: it asks for a token of its own (see gotDevice).
     pairAsk = null;
+    if (ONE_TIME && shell && typeof shell.qrPairing === 'function') { try { qrPairing = !!(await shell.qrPairing()); } catch {} }
     if (wantPair()) {
       try {
         const p = await shell.deviceHello();

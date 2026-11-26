@@ -1547,6 +1547,10 @@ else {
       win.flashFrame(true);
       if (!ISOLATED && Notification.isSupported()) new Notification({ title: 'Pangmote Host', body: t('새 기기가 접속을 요청했습니다: {0}. 호스트 창에서 허용하거나 거부하세요.', String(name || '').slice(0, 60)) }).show();
     });
+    // The card "휴대폰 추가" (host.js qrShow): never during a remote session (whoever is connected, a helper on a one-time
+    // code too, must not add a phone of theirs for good), and only on the default relay, the one the Android app's loader
+    // talks to. '' = it may show a code.
+    ipcMain.handle('qr-allowed', () => (remoteNow() ? 'remote' : !ISOLATED && cfg.server !== builder.DEFAULT_SERVER ? 'relay' : ''));
     ipcMain.handle('gate-set', async (_e, on) => {
       if (!on && remoteNow()) return { ok: false, why: 'remote', ...gateInfo() };
       if (!on && !(await askHere(t('새 기기 확인을 끌까요?'), t('끄면 접속 키만 있으면 어느 기기든 묻지 않고 접속합니다.'), t('끄기')))) return { ok: false, why: 'cancel', ...gateInfo() };

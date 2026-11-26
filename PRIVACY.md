@@ -20,6 +20,9 @@ no server of its own. The program connects to other systems only for what it doe
   does anyway.
 - **Stays on your PC:** the access key (encrypted by the system), the list of PCs, the access log of the host,
   the diagnostics log (`diag.log`: figures about the connection) and the settings. None of it is sent anywhere.
+- **Adding a phone with a QR code:** the code the host window shows is a link to `giukim.github.io` (GitHub Pages) with a
+  one-time code after `#`. The Pangmote app reads it without opening the link; opened in a browser, the phone asks
+  GitHub for that page (GitHub sees its IP address), and the part after `#` is never sent there.
 - **Links** in the program (sponsoring, reporting a problem, the business inquiry) open your browser only when
   you click them.
 - **No spell checker:** the program turns off the engine's spell checker, which would otherwise fetch a
@@ -50,6 +53,9 @@ Pangmote(0.9.x까지의 이름은 My Remote)는 사용 기록, 분석 정보, �
   PC의 IP 주소만 보입니다.
 - **이 PC에만 남는 것:** 접속 키(시스템이 암호화), PC 목록, 호스트의 접속 기록, 진단 기록(`diag.log`: 연결에 대한
   숫자), 설정. 어디로도 보내지 않습니다.
+- **QR 코드로 휴대폰 추가:** 호스트 창의 QR은 `giukim.github.io`(GitHub Pages) 주소에 `#` 뒤로 1회용 코드를 붙인 링크입니다.
+  Pangmote 앱은 링크를 열지 않고 읽기만 합니다. 브라우저로 열면 휴대폰이 GitHub에 그 페이지를 요청하고(GitHub에는 IP 주소가
+  보임), `#` 뒤의 코드는 보내지 않습니다.
 - **프로그램 안의 링크**(후원, 문제 신고, 업무용 문의)는 누를 때만 브라우저로 열립니다.
 - **맞춤법 검사 없음:** 엔진의 맞춤법 검사를 꺼서, Google 서버에서 사전을 내려받지 않습니다.
 - 브라우저로 연 `pangmote-client.html`에는 그 브라우저 자체의 동작도 적용됩니다.
