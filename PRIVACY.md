@@ -13,6 +13,11 @@ no server of its own. The program connects to other systems only for what it doe
 - **Updates:** an ordinary update is only announced and is installed when you say so; one marked critical
   installs itself; a new base of the app (a new Electron) is downloaded and put in place by itself while no
   session is on. Whatever is downloaded is checked against the project's signature before it runs.
+- **When the relay refuses the host's messages** (HTTP 429, which ntfy.sh answers once an internet address has
+  sent its messages of the day): the host asks the same relay how many messages remain and when the limit resets
+  (`/v1/account`, without an account), to say so in the host window. It asks when the refusals begin and at most
+  every 10 minutes while they last; the question carries nothing, and the relay sees the PC's IP address as it
+  does anyway.
 - **Stays on your PC:** the access key (encrypted by the system), the list of PCs, the access log of the host,
   the diagnostics log (`diag.log`: figures about the connection) and the settings. None of it is sent anywhere.
 - **Links** in the program (sponsoring, reporting a problem, the business inquiry) open your browser only when
@@ -39,6 +44,10 @@ Pangmote(0.9.x까지의 이름은 My Remote)는 사용 기록, 분석 정보, �
 
 - **업데이트:** 일반 업데이트는 알리기만 하고 사용자가 고를 때 설치합니다. 중요 업데이트는 스스로 설치됩니다. 앱
   바탕(새 Electron)은 연결이 없을 때 스스로 내려받아 바꿉니다. 내려받은 것은 실행 전에 프로젝트의 서명을 확인합니다.
+- **중계 서버가 호스트의 메시지를 거부할 때**(HTTP 429. ntfy.sh는 인터넷 주소 하나가 하루 한도를 다 쓰면 이렇게 답합니다):
+  호스트 창에 알리려고 같은 중계 서버에 남은 메시지 수와 한도가 풀리는 시각을 묻습니다(`/v1/account`, 계정 없이). 거부가
+  시작될 때, 그리고 거부가 이어지는 동안 10분에 한 번까지 묻습니다. 질문에 담아 보내는 것은 없고, 중계 서버에는 원래처럼
+  PC의 IP 주소만 보입니다.
 - **이 PC에만 남는 것:** 접속 키(시스템이 암호화), PC 목록, 호스트의 접속 기록, 진단 기록(`diag.log`: 연결에 대한
   숫자), 설정. 어디로도 보내지 않습니다.
 - **프로그램 안의 링크**(후원, 문제 신고, 업무용 문의)는 누를 때만 브라우저로 열립니다.

@@ -16,6 +16,8 @@
   button.sub { background: #343c48; }
   button.mini { font-size: 12px; font-weight: 400; padding: 2px 9px; margin-left: 6px; vertical-align: 1px; }
   #updMsg { font-size: 12.5px; font-weight: 400; }
+  #relayNote { margin-top: 8px; padding: 8px 10px; border-radius: 6px; background: #3a1f1f; border: 1px solid #7a3030; }
+  #relayNote b { color: #ffb4b4; } #relayNote small { color: #e6c4c4; }
   button:disabled { opacity: .55; cursor: default; }
   code { background: #0e1014; padding: 3px 6px; border-radius: 4px; word-break: break-all; }
   .dev { border-top: 1px solid #2c333d; padding: 6px 0 4px; } .dev:first-child { border-top: 0; }
@@ -66,6 +68,7 @@
   <div class="card">
     <div class="row"><span id="dot" class="dot"></span><b id="status" data-i18n>시작 중…</b></div>
     <small id="stats"></small>
+    <div id="relayNote" style="display:none"><b id="relayTitle"></b><br><small id="relayText"></small></div>
   </div>
   <div class="card" id="assist" style="display:none">
     <div class="row"><b data-i18n>잠금 화면에서도 원격 조종</b> <small id="assistState"></small></div>

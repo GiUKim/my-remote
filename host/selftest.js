@@ -29,13 +29,21 @@ const CLIENT_APP_CHECK = process.argv.includes('--client-app-check');
 // relayDrop: the test can have it lose messages on one topic, as the public relay now and then does: after
 // `skip` messages there, the next `n` are taken (answered 200) and never passed on.
 const relayDrop = { topic: '', skip: 0, n: 0, dropped: 0 };
+// relayRefuse: the test can have it refuse what is sent on some topics with HTTP 429, as ntfy.sh refuses every
+// message from an internet address that used up its day, and answer /v1/account (ntfy's, asked without an
+// account) with `account`, or 404 while that is null (a relay without accounts).
+const relayRefuse = { topics: new Set(), account: null, asked: 0 };
 exports.startRelay = () => new Promise((resolve) => {
   const subs = new Map();
   const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' };
   const srv = http.createServer((req, res) => {
     const parts = req.url.split('?')[0].split('/').filter(Boolean);
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); res.end(); }
-    else if (req.method === 'GET' && parts[1] === 'sse') {
+    else if (req.method === 'GET' && parts.join('/') === 'v1/account') {
+      relayRefuse.asked++;
+      if (!relayRefuse.account) { res.writeHead(404, cors); res.end(); }
+      else { res.writeHead(200, { ...cors, 'Content-Type': 'application/json' }); res.end(JSON.stringify(relayRefuse.account)); }
+    } else if (req.method === 'GET' && parts[1] === 'sse') {
       res.writeHead(200, { ...cors, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
       res.write(': open\n\n');
       const topics = parts[0].split(',').filter(Boolean);
@@ -45,6 +53,11 @@ exports.startRelay = () => new Promise((resolve) => {
       let body = '';
       req.on('data', (c) => (body += c));
       req.on('end', () => {
+        if (relayRefuse.topics.has(parts[0])) {
+          res.writeHead(429, { ...cors, 'Content-Type': 'application/json' });
+          res.end('{"code":42908,"http":429,"error":"limit reached: daily message quota reached"}');
+          return;
+        }
         if (relayDrop.n > 0 && parts[0] === relayDrop.topic) {
           if (relayDrop.skip > 0) relayDrop.skip--;
           else { relayDrop.n--; relayDrop.dropped++; res.writeHead(200, cors); res.end('{}'); return; }
@@ -1080,6 +1093,42 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       const answer = await lose(topics.toHost, 1); // the second to the host: the request, then the answer
       check('a message lost on the relay does not end the connection: the client asks once more by itself and comes back (a lost offer, a lost answer)',
         offer.up && offer.dropped === 1 && offer.again === 1 && answer.up && answer.dropped === 1 && answer.again === 1, JSON.stringify({ offer, answer }));
+    }
+    // The relay refusing what the host sends (HTTP 429: ntfy.sh's messages of the day used up from this internet
+    // address, reported 2026-11-25): no client can connect then, and none can be told, so the host window says
+    // so, with when the relay takes messages again (its /v1/account). A message to the client's topic that the
+    // client ignores (another sid). Three ways: the day used up, with the reset (and the note gone when the
+    // relay says messages remain again); a relay without accounts (a note without a time); the next message that
+    // goes through ends it.
+    {
+      const hjs = (code) => hostWin.webContents.executeJavaScript(code);
+      const topic = (await hjs('keys.topicClient'));
+      const reset = Math.floor(Date.now() / 1000) + 3 * 3600;
+      const account = (remaining) => ({ limits: { basis: 'ip', messages: 250 }, stats: { messages: 250 - remaining, messages_remaining: remaining, reset_at: reset } });
+      const send = (n) => hjs(`master.send({ t: 'selftest', sid: 'relay-limit-${n}', ts: Date.now() }).then(() => 'sent', (e) => String(e.message))`);
+      const note = () => hjs(`({ on: relayLimit.on, kind: relayLimit.kind, reset: relayLimit.reset, told: relayLimit.told, shown: $('relayNote').style.display !== 'none',
+        title: $('relayTitle').textContent, text: $('relayText').textContent, logged: /HTTP 429/.test($('log').textContent) })`);
+      const settle = async (ok) => { let x; for (let i = 0; i < 40; i++) { x = await note(); if (ok(x)) break; await sleep(250); } return x; };
+      const asked0 = relayRefuse.asked;
+      relayRefuse.topics.add(topic);
+      relayRefuse.account = account(0);
+      const r1 = await send(1);
+      const daily = await settle((x) => x.kind === 'daily');
+      relayRefuse.account = account(240);
+      await hjs('relayLimit.asked = -1e12; relayCheck(); 1');
+      const back = await settle((x) => !x.on);
+      relayRefuse.account = null;
+      await hjs('relayLimit.asked = -1e12; 1');
+      const r2 = await send(2);
+      const plain = await settle((x) => x.on && x.told);
+      relayRefuse.topics.delete(topic);
+      const r3 = await send(3);
+      const gone = await settle((x) => !x.on);
+      const okDaily = /HTTP 429/.test(r1) && daily.on && daily.shown && daily.reset === reset * 1000 && !!daily.title && /250/.test(daily.text) && daily.logged;
+      const okPlain = /HTTP 429/.test(r2) && plain.on && plain.shown && plain.kind === '' && !plain.reset && !!plain.text;
+      check('the relay refusing what the host sends (HTTP 429) is shown in the host window, with when the relay takes them again; gone when they go through again',
+        okDaily && !back.on && !back.shown && okPlain && r3 === 'sent' && !gone.on && !gone.shown && relayRefuse.asked - asked0 === 3,
+        JSON.stringify({ r1, daily, back: { on: back.on, shown: back.shown }, r2, plain, r3, gone: { on: gone.on, shown: gone.shown }, asked: relayRefuse.asked - asked0 }));
     }
     // The host's screen locked and unlocked (what main sends on Windows' lock events), and a screen the
     // native capturer cannot read for a while (a UAC prompt): the client says so over the picture.

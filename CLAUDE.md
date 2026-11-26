@@ -1861,6 +1861,19 @@ gives up (2 s, doubling to 60 s), when a subscription has not opened within 2 mi
 stream that brought ntfy keepalives stays silent for 3 minutes; what is published in that gap is
 lost and the sender retries. Checked with Node tests against a fake EventSource and relay only.
 
+**The relay's daily limit** (reported 2026-11-25: the person, at home, could not reach the office PC; the
+host's log had `HTTP 429` on every reply). ntfy.sh takes 250 messages a day from one internet address without
+an account (its `GET /v1/account`: `limits.messages`, `stats.messages_remaining`, `stats.reset_at` in Unix
+seconds), each chunk one, and PCs behind one router share it; the whole page alone is 36 after an update. Once
+it is used up, every reply of the host is refused until the reset, the client's loader says the host does not
+answer, and nothing can tell the client why. The host window says so (`relaySend`/`relayLimit` in `host.js`:
+every route's messages go through it; the status card's note, with the reset time from `/v1/account`, asked
+when the refusals begin and at most every 10 minutes while they last; `burst` when messages remain, i.e. too
+many at once, hidden after 3 minutes; gone at the next message that goes through). `PRIVACY.md` names the
+question. The self-test's relay refuses on a topic and answers `/v1/account` to check it. Not built (looked at
+the same day): sending the page over the session's own channel instead of the relay, which would take most
+of an update's messages off the relay but put a second step into what decides a page is trusted.
+
 Signaling (through the relay, each message deflated, encrypted, chunked to 3000 chars):
 
 1. client -> host topic: `{t:'hello', sid, ts, mode, codec, pk, hsig, pair?, from?}` (`codec` optional: `H264`, `H264HQ`, `VP9`, `AV1`; `pk`: the page's own ECDSA P-256 public key, SPKI base64, `hsig` its signature of `hello\n<sid>\n<ts>\n<pk>`; `pair`: a client app connected with the key asks for a device token, `{ pc, os, osName, app }`; `from` (0.9.0, the client app only): the id of the host running on the client's own PC, for `cycle.js`; refused with `denied` `self` or `loop`, see "Connections that come back on themselves")

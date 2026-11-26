@@ -44,6 +44,107 @@ relabel.add(() => { if (statusNow) status(statusNow[0], statusNow[1], ...statusN
 // The numbers under it (every 2 s during a session, see the stats loop): numbers kept, words said again.
 const statsText = (x) => `${x.head} · ${x.relay ? t('TURN 중계') : t('P2P 직접')}${x.limit === 'cpu' ? ' · ' + t('제한: 이 PC 성능') : x.limit === 'bandwidth' ? ' · ' + t('제한: 네트워크') : ''}`;
 relabel.add(() => { if (session && session.statsLine && $('stats').textContent) $('stats').textContent = statsText(session.statsLine); });
+// The status line while no session is on: waiting, unless the relay refuses what this host sends (relayLimit).
+function idle() {
+  if (relayLimit.on) status('대기 중 — 시그널링 서버가 메시지를 받지 않아 지금은 접속할 수 없습니다', 'wait');
+  else status('대기 중 — 접속을 기다리는 중', 'ok');
+}
+
+// ---- the relay refusing what this host sends (HTTP 429) ---------------------------------------------
+// ntfy.sh takes a limited number of messages a day from one internet address (anonymous: 250, seen 2026-11-25;
+// every 3000 characters of a message are one, so the client page, sent whole after each update, is up to 36),
+// and PCs behind the same router share that address. Once they are used up the relay answers HTTP 429 to every
+// message until the limit resets: no client can connect (its loader says the host does not answer), and nothing
+// can tell it why, since telling it is a message too. Reported 2026-11-25 by the person, connecting from home
+// while three updates in one day had used the office's messages up. So this window says so, and when the relay
+// takes messages again, which the relay itself tells (`/v1/account`, without an account: asked when the refusals
+// begin, then at most every 10 minutes while they last and once at the reset; asking publishes nothing). Every
+// message to a client goes through relaySend; one that goes through again ends it.
+const RELAY_RECHECK = 600e3, RELAY_BURST = 180e3, RELAY_ASK_GAP = 30e3;
+// kind: 'daily' (the day's messages are used up: the account says none remain), 'burst' (some remain: too many
+// at once, which ntfy gives back within minutes), '' (no account answered: another relay, or none could be asked).
+const relayLimit = { on: false, kind: '', reset: 0, limit: 0, asked: -1e12, asking: false, timer: 0, told: false };
+function relaySend(o, to) {
+  return chan.send(o, to).then(
+    () => { if (relayLimit.on) relayFree(false); },
+    (e) => { if (/HTTP 429\b/.test((e && e.message) || '')) relayRefused(); throw e; },
+  );
+}
+function relayRefused() {
+  if (relayLimit.on) return;
+  Object.assign(relayLimit, { on: true, kind: '', reset: 0, limit: 0, told: false });
+  log(t('시그널링 서버가 이 PC에서 보내는 메시지를 받지 않습니다 (HTTP 429)'));
+  showRelayLimit();
+  relayCheck();
+}
+// quiet: the refusals were too many at once and are surely over by now (nothing was sent to find out).
+function relayFree(quiet) {
+  clearTimeout(relayLimit.timer);
+  if (!relayLimit.on) return;
+  relayLimit.on = false;
+  if (!quiet) log(t('시그널링 서버가 다시 메시지를 받습니다'));
+  showRelayLimit();
+}
+async function relayAccount() {
+  const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), 10000);
+  try {
+    const r = await fetch(`${cfg.server}/v1/account`, { signal: ctl.signal, cache: 'no-store', credentials: 'omit' });
+    if (!r.ok) return null;
+    const j = await r.json(), st = j && j.stats, lim = j && j.limits;
+    if (!st || typeof st.messages_remaining !== 'number') return null;
+    return {
+      remaining: st.messages_remaining,
+      limit: lim && typeof lim.messages === 'number' ? lim.messages : 0,
+      reset: typeof st.reset_at === 'number' && st.reset_at > 0 ? st.reset_at * 1000 : 0,
+    };
+  } catch { return null; } finally { clearTimeout(tm); }
+}
+async function relayCheck() {
+  clearTimeout(relayLimit.timer);
+  if (!relayLimit.on || relayLimit.asking) return;
+  const since = performance.now() - relayLimit.asked;
+  if (since < RELAY_ASK_GAP) { relayLimit.timer = setTimeout(relayCheck, RELAY_ASK_GAP - since); return; }
+  relayLimit.asked = performance.now();
+  relayLimit.asking = true;
+  const a = await relayAccount();
+  relayLimit.asking = false;
+  if (!relayLimit.on) return;
+  if (a && a.remaining > 0 && relayLimit.kind === 'daily') { relayFree(false); return; } // the limit was reset
+  let wait = RELAY_RECHECK;
+  if (a) {
+    relayLimit.kind = a.remaining > 0 ? 'burst' : 'daily';
+    relayLimit.limit = a.limit;
+    relayLimit.reset = relayLimit.kind === 'daily' ? a.reset : 0;
+    if (relayLimit.kind === 'burst') wait = RELAY_BURST;
+    else if (relayLimit.reset > Date.now()) wait = Math.min(wait, relayLimit.reset - Date.now() + 5000);
+  }
+  showRelayLimit();
+  if (!relayLimit.told) { relayLimit.told = true; log($('relayText').textContent); }
+  relayLimit.timer = setTimeout(() => (relayLimit.kind === 'burst' ? relayFree(true) : relayCheck()), wait);
+}
+function showRelayLimit() {
+  const L = relayLimit;
+  $('relayNote').style.display = L.on ? '' : 'none';
+  if (!session) idle();
+  if (!L.on) return;
+  let host = cfg.server;
+  try { host = new URL(cfg.server).host; } catch {}
+  const when = L.reset ? new Date(L.reset).toLocaleString(t.lang, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  const [title, text] = L.kind === 'daily' ? [
+    t('시그널링 서버의 하루 한도를 다 써서 지금은 다른 PC에서 이 PC에 접속할 수 없습니다'),
+    when ? t('한도는 {0}에 풀립니다. {1}는 인터넷 주소 하나에서 하루 {2}개의 메시지만 받고, 같은 공유기를 쓰는 PC들이 이 한도를 함께 씁니다. 업데이트 직후의 첫 접속은 화면 페이지를 보내느라 30개 넘게 씁니다.', when, host, L.limit || '?')
+      : t('한도가 풀릴 때까지 기다려야 합니다. {0}는 인터넷 주소 하나에서 하루 {1}개의 메시지만 받고, 같은 공유기를 쓰는 PC들이 이 한도를 함께 씁니다. 업데이트 직후의 첫 접속은 화면 페이지를 보내느라 30개 넘게 씁니다.', host, L.limit || '?'),
+  ] : L.kind === 'burst' ? [
+    t('시그널링 서버가 이 PC의 메시지를 잠시 받지 않습니다'),
+    t('짧은 시간에 메시지를 너무 많이 보냈습니다. 보통 몇 분 안에 다시 받습니다.'),
+  ] : [
+    t('시그널링 서버가 이 PC의 메시지를 받지 않아 지금은 다른 PC에서 이 PC에 접속할 수 없습니다'),
+    t('{0}가 메시지가 너무 많다고 답했습니다 (HTTP 429). 서버가 정한 한도가 풀리면 다시 접속할 수 있습니다.', host),
+  ];
+  $('relayTitle').textContent = title;
+  $('relayText').textContent = text;
+}
+relabel.add(() => { if (relayLimit.on) showRelayLimit(); });
 
 // ---- the screen locked or behind a secure prompt ---------------------------------------------
 // The lock screen and UAC prompts are on a desktop this page can neither see nor control. The client
@@ -298,7 +399,7 @@ function teardown(reason, silent) {
   try { if (!silent && s.dc && s.dc.readyState === 'open') s.dc.send(JSON.stringify({ t: 'bye' })); } catch {}
   setTimeout(() => { try { s.pc.close(); } catch {} }, 200);
   $('stats').textContent = '';
-  status('대기 중 — 접속을 기다리는 중', 'ok');
+  idle();
   log(t('세션 종료: {0}', t(reason)));
   if (s.connectedAt) {
     // Its 'connect' first, when the address had not come yet (noteConnected then writes nothing).
@@ -1057,13 +1158,13 @@ async function subscribe() {
     try { k = await RD.derive(d.secret, RD.DEVICE); } catch { continue; }
     next.set(k.topicHost, {
       kind: 'device', key: 'dev:' + d.id, id: d.id, name: d.name || '이름 없는 기기', blocked: !!d.blocked, keys: k,
-      send: (o) => chan.send(o, { pubTopic: k.topicClient, txKey: k.h2c }),
+      send: (o) => relaySend(o, { pubTopic: k.topicClient, txKey: k.h2c }),
     });
   }
   // A one-time code while it lasts (see oneTime).
   if (oneTime) {
     const k = oneTime.keys;
-    next.set(k.topicHost, { kind: 'code', key: 'code', keys: k, send: (o) => chan.send(o, { pubTopic: k.topicClient, txKey: k.h2c }) });
+    next.set(k.topicHost, { kind: 'code', key: 'code', keys: k, send: (o) => relaySend(o, { pubTopic: k.topicClient, txKey: k.h2c }) });
   }
   if (my !== subSeq) return; // a newer list is on its way
   routes = next;
@@ -1071,7 +1172,7 @@ async function subscribe() {
     server: cfg.server, subTopic: [...next.keys()].join(','), pubTopic: keys.topicClient, txKey: keys.h2c,
     rxKey: (t) => { const r = t ? next.get(t) : master; return r ? r.keys.c2h : null; },
     onMessage: (m, t) => { const r = t ? routes.get(t) : master; if (r) onMessage(m, r); },
-    onState: (st) => { if (c === chan && !session) status(st === 'open' ? '대기 중 — 접속을 기다리는 중' : '시그널링 서버 재연결 중…', st === 'open' ? 'ok' : 'wait'); },
+    onState: (st) => { if (c === chan && !session) { if (st === 'open') idle(); else status('시그널링 서버 재연결 중…', 'wait'); } },
   });
   chan = c;
   // The subscriptions before this one go once it is open (a minute at most, should it never open): until
@@ -1703,7 +1804,7 @@ $('otpCancel').onclick = () => otpForm(false);
 (async () => {
   cfg = await api.getConfig();
   keys = await RD.derive(cfg.key);
-  master = { kind: 'key', key: 'key', keys, send: (o) => chan.send(o) };
+  master = { kind: 'key', key: 'key', keys, send: (o) => relaySend(o) };
   await subscribe();
   api.devices.onChanged((resub) => { if (resub) subscribe(); showDevices(); showGate(); });
   showDevices();
