@@ -1,0 +1,12 @@
+{
+  "ko": [
+    "호스트 창에 '휴대폰 추가' 카드가 생겼습니다: Pangmote 안드로이드 앱으로 QR을 찍으면 그 휴대폰이 이 PC에 등록되어, 다음부터 키 없이 접속합니다. 접속 키는 QR에 들어가지 않습니다",
+    "QR은 한 번 쓰이면 바로, 그리고 1분마다 바뀌고, 원격 접속 중에는 보이지 않습니다 (휴대폰은 이 PC 앞에서 추가합니다)",
+    "안드로이드 앱은 아직 시험 중이라 Google Play에는 없습니다"
+  ],
+  "en": [
+    "The host window has a new card, Add a phone: scan its QR code with the Pangmote Android app and that phone is registered with this PC, connecting without the key from then on. The access key is not in the QR code",
+    "The QR code changes as soon as it is used and every minute, and is not shown during a remote session (a phone is added at the PC)",
+    "The Android app is still in testing and not on Google Play yet"
+  ]
+}
