@@ -394,4 +394,5 @@ module.exports = {
   // cursor of the program in front (physical pixels; null where it cannot be told, as on X11).
   koreanKeyboard: backend.koreanKeyboard,
   caretAt: backend.caretAt || (() => null),
+  caretBox: backend.caretBox || (() => null), // the system caret as a box (Windows), for a phone's keyboard (main.js caretNow)
 };

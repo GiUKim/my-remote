@@ -547,10 +547,22 @@ function caretAt() {
     return ClientToScreen(gi.hwndCaret, pt) ? { x: pt.x, y: pt.y } : null;
   } catch { return null; }
 }
+// The system caret of the program in front as a box on the desktop (physical pixels: its top left, width, height),
+// or null: whether a tap from a phone put a text caret somewhere (main.js caretNow). Programs that draw their own
+// caret have none here (main.js then asks UI Automation).
+function caretBox() {
+  try {
+    const gi = { cbSize: koffi.sizeof(GUITHREADINFO), flags: 0, hwndActive: 0, hwndFocus: 0, hwndCapture: 0, hwndMenuOwner: 0, hwndMoveSize: 0, hwndCaret: 0, rcCaret: { left: 0, top: 0, right: 0, bottom: 0 } };
+    if (!GetGUIThreadInfo(0, gi) || !gi.hwndCaret) return null;
+    const pt = { x: gi.rcCaret.left, y: gi.rcCaret.top };
+    if (!ClientToScreen(gi.hwndCaret, pt)) return null;
+    return { x: pt.x, y: pt.y, w: Math.max(1, gi.rcCaret.right - gi.rcCaret.left), h: Math.max(1, gi.rcCaret.bottom - gi.rcCaret.top) };
+  } catch { return null; }
+}
 
 module.exports = {
   viewOnlyReason: () => '',
-  koreanKeyboard, caretAt,
+  koreanKeyboard, caretAt, caretBox,
   hidesCursors: true,
   virtualDesktop, move, button, wheel, keyOf, sendKey, typeText, maskKey, setSink, clipboardPrivate,
   cursorState, cursorBitmap, hideCursors, restoreCursors, dragFullWindows, displayColor,

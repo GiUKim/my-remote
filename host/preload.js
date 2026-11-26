@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('hostApi', {
   dragFileDone: (id) => ipcRenderer.send('drag-file-done', id),
   cursor: (last) => ipcRenderer.invoke('cursor', last),
   dragging: (nudge) => ipcRenderer.invoke('dragging', !!nudge),
+  caret: () => ipcRenderer.invoke('caret'), // a text caret after a phone's tap (main.js caretForClient)
   dragWhat: () => ipcRenderer.invoke('drag-what'),
   putBegin: () => ipcRenderer.invoke('put-begin'),
   putDir: (gid, name) => ipcRenderer.invoke('put-dir', gid, name),

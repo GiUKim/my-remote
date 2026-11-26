@@ -109,7 +109,7 @@ async function restoreClipboard(rec) {
 module.exports.keepTextClipboard = keepTextClipboard; // also for dragcheck.js
 module.exports.restoreClipboard = restoreClipboard;
 
-exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged, pageKey, getClientApp, inputGuardHb, koreanKeyCame }) => {
+exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged, pageKey, getClientApp, inputGuardHb, koreanKeyCame, caretFake, caretNow }) => {
   const results = [];
   const check = (name, ok, detail) => { results.push(!!ok); console.log(`[selftest] ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  - ' + detail : ''}`); };
   const info = (text) => console.log(`[selftest] INFO  ${text}`);
@@ -1273,6 +1273,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       const t = await js(`(async () => {
         if (typeof mainView.sel !== 'number') setSel(mainView, 0);
         if (mainView.fit !== 'fit') setFit(mainView, 'fit');
+        setTouchMode('direct');
         const v = mainView.panes[0].video, r = v.getBoundingClientRect();
         const P = (type, id, fx, fy) => v.dispatchEvent(new PointerEvent(type, { pointerType: 'touch', pointerId: id, isPrimary: id === 11, clientX: r.left + r.width * fx, clientY: r.top + r.height * fy, bubbles: true, cancelable: true }));
         const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
@@ -1284,7 +1285,7 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
         };
         await run('tap', async () => { P('pointerdown', 11, .5, .5); await wait(60); P('pointerup', 11, .5, .5); });
         await run('long', async () => { P('pointerdown', 11, .3, .3); await wait(700); P('pointerup', 11, .3, .3); });
-        await run('drag', async () => { P('pointerdown', 11, .4, .4); await wait(420); P('pointermove', 11, .45, .4); P('pointermove', 11, .5, .4); P('pointerup', 11, .5, .4); });
+        await run('drag', async () => { P('pointerdown', 11, .4, .4); await wait(560); P('pointermove', 11, .45, .4); P('pointermove', 11, .5, .4); P('pointerup', 11, .5, .4); });
         await run('swipe', async () => { P('pointerdown', 11, .5, .6); await wait(30); P('pointermove', 11, .5, .55); P('pointermove', 11, .5, .45); await wait(40); P('pointerup', 11, .5, .45); });
         await run('pinch', async () => { P('pointerdown', 11, .45, .5); P('pointerdown', 12, .55, .5); P('pointermove', 11, .35, .5); P('pointermove', 12, .65, .5); P('pointerup', 12, .65, .5); P('pointerup', 11, .35, .5); });
         out.zoom = +(mainView.zoom || 1).toFixed(2);
@@ -1308,6 +1309,81 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
       const ok = same(t.tap, ['md0', 'mu0']) && same(t.long, ['md2', 'mu2']) && t.drag[0] === 'md0' && t.drag.includes('mm') && t.drag[t.drag.length - 1] === 'mu0'
         && t.swipe.includes('mw+') && !t.swipe.some((x) => /^m[du]/.test(x)) && !t.pinch.some((x) => /^m[du]/.test(x)) && t.zoom > 1.2
         && same(t.kbd, ['text', 'kd', 'ku', 'kd', 'ku', 'kd', 'ku', 'kd', 'ku']) && t.kept === '" "' && same(t.ctrl, ['kd', 'kd', 'ku', 'ku']) && typed && typed.text === '한글 a';
+      // The trackpad (a phone's way, 2026-11-26): a finger moves the host's pointer by how far it moves (no click), a
+      // tap clicks where the pointer is (not where the finger is) and asks whether a text caret came up there; a long
+      // press let go is the right button, moved on it drags; two fingers moved together scroll, tapped are the right
+      // button, spread zoom about the pointer (which stays put on the screen).
+      const pad = await js(`(async () => {
+        if (typeof mainView.sel !== 'number') setSel(mainView, 0);
+        if (mainView.fit !== 'fit') setFit(mainView, 'fit');
+        mainView.zoom = 1; layout(mainView);
+        setTouchMode('pad');
+        const ak = autoKbd, ro0 = READONLY; autoKbd = true; READONLY = false; // traced: nothing is sent
+        mainView.padAt = { d: mainView.sel, x: 0.5, y: 0.5 }; placePad(mainView);
+        const v = mainView.panes[0].video, r = v.getBoundingClientRect();
+        const P = (type, id, fx, fy) => v.dispatchEvent(new PointerEvent(type, { pointerType: 'touch', pointerId: id, isPrimary: id === 21, clientX: r.left + r.width * fx, clientY: r.top + r.height * fy, bubbles: true, cancelable: true }));
+        const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+        const INPUT = new Set(['mm', 'md', 'mu', 'mw', 'caretq']);
+        const out = {};
+        const run = async (name, fn) => {
+          window.__rd.trace = []; await fn(); await wait(80);
+          const got = window.__rd.trace.filter((m) => INPUT.has(m.t));
+          out[name] = got.map((m) => m.t + (m.b != null ? m.b : '') + (m.t === 'mm' && m.h ? 'h' : '') + (m.t === 'mw' ? (m.dy > 0 ? '+' : m.dy < 0 ? '-' : '0') : ''));
+          out[name + 'At'] = got.filter((m) => m.t === 'md').map((m) => [+m.x.toFixed(3), +m.y.toFixed(3)]);
+        };
+        out.drawn = mainView.padEl && mainView.padEl.style.display;
+        await run('move', async () => { P('pointerdown', 21, .2, .8); for (let i = 1; i <= 5; i++) { await wait(16); P('pointermove', 21, .2 + .02 * i, .8); } P('pointerup', 21, .3, .8); });
+        out.after = { x: +mainView.padAt.x.toFixed(3), y: +mainView.padAt.y.toFixed(3) };
+        await run('tap', async () => { P('pointerdown', 21, .9, .1); await wait(50); P('pointerup', 21, .9, .1); });
+        await run('long', async () => { P('pointerdown', 21, .3, .3); await wait(560); P('pointerup', 21, .3, .3); });
+        await run('drag', async () => { P('pointerdown', 21, .3, .3); await wait(560); for (let i = 1; i <= 3; i++) { await wait(16); P('pointermove', 21, .3 + .03 * i, .3); } P('pointerup', 21, .39, .3); });
+        await run('scroll', async () => { P('pointerdown', 21, .4, .6); P('pointerdown', 22, .6, .6); for (let i = 1; i <= 4; i++) { await wait(16); P('pointermove', 21, .4, .6 - .05 * i); P('pointermove', 22, .6, .6 - .05 * i); } P('pointerup', 21, .4, .4); P('pointerup', 22, .6, .4); });
+        await run('tap2', async () => { P('pointerdown', 21, .4, .5); P('pointerdown', 22, .6, .5); await wait(60); P('pointerup', 21, .4, .5); P('pointerup', 22, .6, .5); });
+        // About the pointer in the middle of the picture: near its edge the pointer moves aside on the screen, since a
+        // zoomed picture always covers the window (it stays on the same spot of the host).
+        mainView.padAt = { d: mainView.sel, x: 0.5, y: 0.5 }; placePad(mainView);
+        const before = padXY(mainView);
+        await run('pinch', async () => { P('pointerdown', 21, .45, .5); P('pointerdown', 22, .55, .5); for (let i = 1; i <= 4; i++) { await wait(16); P('pointermove', 21, .45 - .04 * i, .5); P('pointermove', 22, .55 + .04 * i, .5); } P('pointerup', 21, .29, .5); P('pointerup', 22, .71, .5); });
+        const after = padXY(mainView);
+        out.zoom = +(mainView.zoom || 1).toFixed(2);
+        out.still = before && after ? +Math.hypot(after.x - before.x, after.y - before.y).toFixed(1) : -1;
+        document.getElementById('zoomBtn').click();
+        window.__rd.trace = null; autoKbd = ak; READONLY = ro0;
+        setTouchMode('direct');
+        out.hidden = mainView.padEl.style.display;
+        return out;
+      })()`);
+      const padOk = pad.drawn === 'block' && pad.move.length > 0 && pad.move.every((x) => x === 'mm') && pad.after.x > 0.55 && Math.abs(pad.after.y - 0.5) < 0.01
+        && same(pad.tap, ['md0', 'mu0', 'caretq']) && same(pad.tapAt, [[pad.after.x, pad.after.y]])
+        && same(pad.long, ['md2', 'mu2']) && pad.drag[0] === 'md0' && pad.drag.includes('mmh') && pad.drag[pad.drag.length - 1] === 'mu0'
+        && pad.scroll.includes('mw+') && !pad.scroll.some((x) => /^m[du]/.test(x)) && same(pad.tap2, ['md2', 'mu2'])
+        && !pad.pinch.some((x) => /^m[du]/.test(x)) && pad.zoom > 1.2 && pad.still >= 0 && pad.still < 3 && pad.hidden === 'none';
+      check('a phone\'s trackpad: a finger moves the pointer, a tap clicks where it is and asks for a text caret, a long press is the right button or a drag, two fingers scroll, tap the right button and zoom about the pointer',
+        padOk, JSON.stringify(pad));
+      // The keyboard comes up by itself (2026-11-26): the host says a text caret came up after the tap (a made-up answer
+      // here: small text near the bottom of the picture): the hidden field takes the focus (the phone's keyboard), the
+      // picture is zoomed in about the caret and the caret stays in the window; no caret after the next tap: the
+      // keyboard goes down and the zoom with it. An answer long after a tap does nothing.
+      if (caretFake) {
+        const sel = await js('mainView.sel');
+        const ask = async (fake) => {
+          caretFake(fake);
+          await js('window.__rd.caret = null; autoKbd = true; { const ro0 = READONLY; READONLY = false; caretAsk(mainView); READONLY = ro0; } 1');
+          let got = null;
+          for (let i = 0; i < 40 && !got; i++) { await sleep(100); got = await js('window.__rd.caret'); }
+          await sleep(150);
+          return js(`(() => { const c = mainView.caret, p = mainView.panes[0].video.getBoundingClientRect(), R = mainView.root.getBoundingClientRect();
+            const y = c ? p.top - R.top + c.y * p.height : null;
+            return { got: window.__rd.caret, kbd: document.activeElement === document.getElementById('kbd'), zoom: +(mainView.zoom || 1).toFixed(2), inside: y == null ? null : y >= 0 && y <= mainView.root.clientHeight }; })()`);
+        };
+        const up = await ask({ on: true, d: sel, x: 0.3, y: 0.85, h: 0.01 });
+        const down = await ask({ on: false });
+        const late = await js(`(() => { caretAskedAt = -1e9; gotCaret({ t: 'caret', on: true, d: mainView.sel, x: .5, y: .5, h: .02 }); const k = document.activeElement === document.getElementById('kbd'); autoKbd = false; return k; })()`);
+        caretFake(null);
+        check('the phone\'s keyboard comes up by itself when the tap put a text caret on the host (zoomed in about small text, the caret kept in view), and goes down when the next tap put none',
+          up.got && up.got.on && up.kbd && up.zoom > 1.5 && up.inside && down.got && down.got.on === false && !down.kbd && down.zoom === 1 && !late,
+          JSON.stringify({ up, down, late }));
+      }
       // The first rule: in a window this PC's system shortcuts stay here, in fullscreen they go to the
       // host; a key whose press went keeps its release. The clipboard is shared either way.
       const r = await js(`(() => {
@@ -2152,6 +2228,59 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
           fs.rmSync(liveHere, { force: true });
         }
       }
+    }
+
+    // --caret-check (Windows, a test PC: a window of its own takes the focus): the text caret found for real, in another
+    // program, as a host asks programs it does not own: an Electron program started for it, with a text field that has
+    // the focus, which it then leaves. Asked a few times as host.js does (a Chromium program tells only from a moment
+    // after the first question); whether the program then reports its accessibility support as on (what VS Code takes
+    // for a screen reader) is said as INFO.
+    if (caretNow && process.platform === 'win32') {
+      const { app } = require('electron');
+      const dir = path.join(app.getPath('userData'), 'caret-check');
+      fs.mkdirSync(dir, { recursive: true });
+      const appJs = path.join(dir, 'main.js'), logf = path.join(dir, 'log.txt');
+      fs.writeFileSync(appJs, `const { app, BrowserWindow } = require('electron');
+const fs = require('fs');
+const note = (o) => fs.appendFileSync(${JSON.stringify(logf)}, JSON.stringify(o) + '\\n');
+app.whenReady().then(async () => {
+  const w = new BrowserWindow({ width: 560, height: 260, x: 80, y: 80, title: 'caret-check' });
+  await w.loadURL('data:text/html,' + encodeURIComponent('<!doctype html><body style="margin:40px"><input id=f style="font-size:20px"><p>plain text</p></body>'));
+  w.focus();
+  await w.webContents.executeJavaScript('document.getElementById("f").focus(); 1');
+  note({ ready: true, bounds: w.getBounds() });
+  let left = false;
+  setInterval(async () => {
+    try {
+      const c = fs.readFileSync(${JSON.stringify(logf)}, 'utf8');
+      if (!left && c.includes('"leave"')) { left = true; await w.webContents.executeJavaScript('document.getElementById("f").blur(); 1'); note({ left: true }); }
+      if (c.includes('"quit"')) { note({ a11y: app.isAccessibilitySupportEnabled() }); app.quit(); }
+    } catch {}
+  }, 100);
+  setTimeout(() => app.quit(), 30000);
+});
+`);
+      fs.writeFileSync(logf, '');
+      const lines = () => { try { return fs.readFileSync(logf, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
+      const waitFor = async (k, secs) => { for (let i = 0; i < secs * 10; i++) { const x = lines().find((o) => o[k] !== undefined); if (x) return x; await sleep(100); } return null; };
+      const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+      const child = require('child_process').spawn(process.execPath, [appJs, '--user-data-dir=' + path.join(dir, 'profile')], { env, stdio: 'ignore' });
+      try {
+        const ready = await waitFor('ready', 20);
+        const looks = async (want) => { let c = null; for (let i = 0; i < 8; i++) { c = await caretNow(); if (c && c.on === want) return { c, tries: i + 1 }; await sleep(400); } return { c, tries: 8 }; };
+        const field = ready ? await looks(true) : null;
+        fs.appendFileSync(logf, JSON.stringify({ leave: true }) + '\n');
+        await waitFor('left', 5);
+        await sleep(300);
+        const none = ready ? await looks(false) : null;
+        fs.appendFileSync(logf, JSON.stringify({ quit: true }) + '\n');
+        const a11y = await waitFor('a11y', 5);
+        const b = ready && ready.bounds, f = field && field.c;
+        const inside = !!(b && f && f.on && f.x >= b.x && f.x < b.x + b.width && f.y >= b.y && f.y < b.y + b.height);
+        check('the text caret of another program is found (an Electron program\'s text field: inside its window), and none once it left the field', inside && none && none.c && none.c.on === false,
+          JSON.stringify({ field, none, window: b }));
+        info(`the program asked reports its accessibility support as ${a11y ? a11y.a11y : '?'} afterwards (VS Code takes "true" for a screen reader)`);
+      } finally { try { child.kill(); } catch {} }
     }
 
     // No spell checker, and so no dictionary fetched for it from Google's servers (PRIVACY.md; main.js,

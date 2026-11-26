@@ -13,6 +13,8 @@
 //     topmost window lies over the pointer; nothing was pressed).
 //   const char *so_error(void)   text of the last error
 //   const char *so_debug(void)   what the last drop saw (for the self-test and the log)
+//   int so_caret(int *out, int timeoutMs)
+//     Where the text caret of the program in front is, through UI Automation (see below).
 //
 // How: the drag runs on a thread of its own (OLE wants a single-threaded apartment with a message
 // loop), which the call waits for. Drop targets take nothing from a drag without a mouse button
@@ -269,3 +271,191 @@ EXPORT int so_drop(const wchar_t *paths, int effects, int timeoutMs) {
 
 EXPORT const char *so_error(void) { return lastError; }
 EXPORT const char *so_debug(void) { return debugText; }
+
+// ---- the text caret of the program in front, through UI Automation ------------------------------------------
+// For a phone controlling this PC (2026-11-26, the user's wish): a tap that puts a text caret somewhere brings the
+// phone's keyboard up. Programs with a classic edit field have a system caret, which the host reads itself
+// (GetGUIThreadInfo); Chrome, Edge, Electron apps, the Start menu's search and others draw their own and say where
+// it is only through UI Automation - the same thing Windows' own touch keyboard asks before it comes up.
+//
+//   int so_caret(int *out, int timeoutMs)
+//     out[0..3]: the caret's left, top, width and height on the desktop (physical pixels), or the field's box
+//     when the program gives no caret rectangle (out[6] = 1 then); out[4]: the focused element's control type;
+//     out[5]: 1 when its text cannot be changed. Returns 1: the focus is in an editable text field (an edit, or
+//     a document whose value can be changed); 0: the focus is somewhere else; -1: no focus could be read; -2: UI
+//     Automation could not be started; -3: the program in front did not answer within timeoutMs (the question
+//     then finishes on its own thread and is forgotten).
+namespace caret {
+
+// Our own declarations of the few UI Automation interfaces used: mingw-w64 8's uiautomationclient.h has none.
+// The methods stand in the interfaces' own order (UIAutomationClient.idl); one that is never called is declared
+// without its parameters, only to hold its place in the table.
+struct Range : IUnknown {
+  virtual HRESULT STDMETHODCALLTYPE Clone(Range **out) = 0;                    // 0
+  virtual HRESULT STDMETHODCALLTYPE Compare_() = 0;                            // 1
+  virtual HRESULT STDMETHODCALLTYPE CompareEndpoints_() = 0;                   // 2
+  virtual HRESULT STDMETHODCALLTYPE ExpandToEnclosingUnit(int unit) = 0;      // 3 (TextUnit_Character = 0)
+  virtual HRESULT STDMETHODCALLTYPE FindAttribute_() = 0;                      // 4
+  virtual HRESULT STDMETHODCALLTYPE FindText_() = 0;                           // 5
+  virtual HRESULT STDMETHODCALLTYPE GetAttributeValue_() = 0;                  // 6
+  virtual HRESULT STDMETHODCALLTYPE GetBoundingRectangles(SAFEARRAY **out) = 0; // 7 (doubles: left, top, width, height, ...)
+};
+struct Ranges : IUnknown {
+  virtual HRESULT STDMETHODCALLTYPE get_Length(int *n) = 0;                    // 0
+  virtual HRESULT STDMETHODCALLTYPE GetElement(int i, Range **out) = 0;        // 1
+};
+struct Text : IUnknown {
+  virtual HRESULT STDMETHODCALLTYPE RangeFromPoint_() = 0;                     // 0
+  virtual HRESULT STDMETHODCALLTYPE RangeFromChild_() = 0;                     // 1
+  virtual HRESULT STDMETHODCALLTYPE GetSelection(Ranges **out) = 0;            // 2
+  virtual HRESULT STDMETHODCALLTYPE GetVisibleRanges_() = 0;                   // 3
+  virtual HRESULT STDMETHODCALLTYPE get_DocumentRange_() = 0;                  // 4
+  virtual HRESULT STDMETHODCALLTYPE get_SupportedTextSelection_() = 0;         // 5
+};
+struct Text2 : Text {
+  virtual HRESULT STDMETHODCALLTYPE RangeFromAnnotation_() = 0;                // 6
+  virtual HRESULT STDMETHODCALLTYPE GetCaretRange(BOOL *active, Range **out) = 0; // 7
+};
+struct Element : IUnknown {
+  virtual HRESULT STDMETHODCALLTYPE SetFocus_() = 0;                           // 0
+  virtual HRESULT STDMETHODCALLTYPE GetRuntimeId_() = 0;                       // 1
+  virtual HRESULT STDMETHODCALLTYPE FindFirst_() = 0;                          // 2
+  virtual HRESULT STDMETHODCALLTYPE FindAll_() = 0;                            // 3
+  virtual HRESULT STDMETHODCALLTYPE FindFirstBuildCache_() = 0;                // 4
+  virtual HRESULT STDMETHODCALLTYPE FindAllBuildCache_() = 0;                  // 5
+  virtual HRESULT STDMETHODCALLTYPE BuildUpdatedCache_() = 0;                  // 6
+  virtual HRESULT STDMETHODCALLTYPE GetCurrentPropertyValue(int id, VARIANT *out) = 0; // 7
+  virtual HRESULT STDMETHODCALLTYPE GetCurrentPropertyValueEx_() = 0;          // 8
+  virtual HRESULT STDMETHODCALLTYPE GetCachedPropertyValue_() = 0;             // 9
+  virtual HRESULT STDMETHODCALLTYPE GetCachedPropertyValueEx_() = 0;           // 10
+  virtual HRESULT STDMETHODCALLTYPE GetCurrentPatternAs(int id, REFIID riid, void **out) = 0; // 11
+};
+struct Automation : IUnknown {
+  virtual HRESULT STDMETHODCALLTYPE CompareElements_() = 0;                    // 0
+  virtual HRESULT STDMETHODCALLTYPE CompareRuntimeIds_() = 0;                  // 1
+  virtual HRESULT STDMETHODCALLTYPE GetRootElement_() = 0;                     // 2
+  virtual HRESULT STDMETHODCALLTYPE ElementFromHandle_() = 0;                  // 3
+  virtual HRESULT STDMETHODCALLTYPE ElementFromPoint_() = 0;                   // 4
+  virtual HRESULT STDMETHODCALLTYPE GetFocusedElement(Element **out) = 0;      // 5
+};
+const CLSID CLSID_CUIAutomation_ = { 0xff48dba4, 0x60ef, 0x4201, { 0xaa, 0x87, 0x54, 0x10, 0x3e, 0xef, 0x59, 0x4e } };
+const IID IID_IUIAutomation_ = { 0x30cbe57d, 0xd9d0, 0x452a, { 0xab, 0x13, 0x7a, 0xc5, 0xac, 0x48, 0x25, 0xee } };
+const IID IID_TextPattern_ = { 0x32eba289, 0x3583, 0x42c9, { 0x9c, 0x59, 0x3b, 0x6d, 0x9a, 0x1e, 0x9b, 0x6a } };
+const IID IID_TextPattern2_ = { 0x506a921a, 0xfcc9, 0x409f, { 0xb2, 0x3b, 0x37, 0xeb, 0x74, 0x10, 0x68, 0x72 } };
+enum { TextPatternId = 10014, TextPattern2Id = 10024, BoundingRectangle = 30001, ControlType = 30003,
+       IsValuePatternAvailable = 30043, ValueIsReadOnly = 30046, EditControl = 50004, DocumentControl = 50030 };
+
+// The first rectangle of a SAFEARRAY of doubles (left, top, width, height, ...), which is let go of here.
+bool firstRect(SAFEARRAY *sa, int *out) {
+  if (!sa) return false;
+  bool ok = false;
+  LONG lo = 0, hi = -1;
+  double *d = nullptr;
+  if (SafeArrayGetDim(sa) == 1 && SUCCEEDED(SafeArrayGetLBound(sa, 1, &lo)) && SUCCEEDED(SafeArrayGetUBound(sa, 1, &hi))
+      && hi - lo + 1 >= 4 && SUCCEEDED(SafeArrayAccessData(sa, (void **)&d)) && d) {
+    out[0] = (int)d[0]; out[1] = (int)d[1]; out[2] = (int)d[2]; out[3] = (int)d[3];
+    ok = d[3] > 0;
+    SafeArrayUnaccessData(sa);
+  }
+  SafeArrayDestroy(sa);
+  return ok;
+}
+// A caret is an empty range, which many programs give no rectangle: then the character next to it.
+bool rangeRect(Range *r, int *out) {
+  SAFEARRAY *sa = nullptr;
+  if (SUCCEEDED(r->GetBoundingRectangles(&sa)) && firstRect(sa, out)) return true;
+  Range *c = nullptr;
+  if (FAILED(r->Clone(&c)) || !c) return false;
+  sa = nullptr;
+  bool ok = SUCCEEDED(c->ExpandToEnclosingUnit(0)) && SUCCEEDED(c->GetBoundingRectangles(&sa)) && firstRect(sa, out);
+  c->Release();
+  if (ok) out[2] = 2; // the caret stands at the character's left edge
+  return ok;
+}
+bool boolOf(Element *el, int id) {
+  VARIANT v;
+  VariantInit(&v);
+  bool on = SUCCEEDED(el->GetCurrentPropertyValue(id, &v)) && v.vt == VT_BOOL && v.boolVal != VARIANT_FALSE;
+  VariantClear(&v);
+  return on;
+}
+
+int ask(int *out) {
+  Automation *uia = nullptr;
+  if (FAILED(CoCreateInstance(CLSID_CUIAutomation_, nullptr, CLSCTX_INPROC_SERVER, IID_IUIAutomation_, (void **)&uia)) || !uia) return -2;
+  Element *el = nullptr;
+  int result = -1;
+  if (SUCCEEDED(uia->GetFocusedElement(&el)) && el) {
+    VARIANT v;
+    VariantInit(&v);
+    int type = SUCCEEDED(el->GetCurrentPropertyValue(ControlType, &v)) && v.vt == VT_I4 ? v.lVal : 0;
+    VariantClear(&v);
+    const bool hasValue = boolOf(el, IsValuePatternAvailable), readOnly = hasValue && boolOf(el, ValueIsReadOnly);
+    out[4] = type;
+    out[5] = readOnly ? 1 : 0;
+    // A web page, a PDF, a help window are documents too, and have no value to change: only an edit, or a
+    // document whose value can be changed, is a place to type.
+    result = !readOnly && (type == EditControl || (type == DocumentControl && hasValue)) ? 1 : 0;
+    if (result == 1) {
+      bool placed = false;
+      Text2 *t2 = nullptr;
+      if (SUCCEEDED(el->GetCurrentPatternAs(TextPattern2Id, IID_TextPattern2_, (void **)&t2)) && t2) {
+        BOOL active = FALSE;
+        Range *r = nullptr;
+        if (SUCCEEDED(t2->GetCaretRange(&active, &r)) && r) { placed = rangeRect(r, out); r->Release(); }
+        t2->Release();
+      }
+      Text *t = nullptr;
+      if (!placed && SUCCEEDED(el->GetCurrentPatternAs(TextPatternId, IID_TextPattern_, (void **)&t)) && t) {
+        Ranges *rs = nullptr;
+        int n = 0;
+        if (SUCCEEDED(t->GetSelection(&rs)) && rs) {
+          Range *r = nullptr;
+          if (SUCCEEDED(rs->get_Length(&n)) && n > 0 && SUCCEEDED(rs->GetElement(0, &r)) && r) { placed = rangeRect(r, out); r->Release(); }
+          rs->Release();
+        }
+        t->Release();
+      }
+      if (!placed) { // the field's own box
+        VariantInit(&v);
+        if (SUCCEEDED(el->GetCurrentPropertyValue(BoundingRectangle, &v)) && v.vt == (VT_ARRAY | VT_R8) && v.parray) {
+          SAFEARRAY *sa = v.parray;
+          v.vt = VT_EMPTY; // firstRect lets go of it
+          if (firstRect(sa, out)) out[6] = 1;
+        }
+        VariantClear(&v);
+      }
+    }
+    el->Release();
+  }
+  uia->Release();
+  return result;
+}
+
+struct Job { LONG refs; int out[8]; int result; };
+DWORD WINAPI thread(LPVOID p) {
+  Job *job = (Job *)p;
+  const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  job->result = SUCCEEDED(co) ? ask(job->out) : -2;
+  if (SUCCEEDED(co)) CoUninitialize();
+  if (InterlockedDecrement(&job->refs) == 0) delete job;
+  return 0;
+}
+
+} // namespace caret
+
+EXPORT int so_caret(int *out, int timeoutMs) {
+  if (!out) return -1;
+  caret::Job *job = new caret::Job();
+  job->refs = 2;
+  job->result = -1;
+  for (int &x : job->out) x = 0;
+  HANDLE th = CreateThread(nullptr, 0, caret::thread, job, 0, nullptr);
+  if (!th) { delete job; return -2; }
+  const DWORD waited = WaitForSingleObject(th, timeoutMs > 0 && timeoutMs <= 10000 ? (DWORD)timeoutMs : 1500);
+  CloseHandle(th);
+  int result = -3;
+  if (waited == WAIT_OBJECT_0) { result = job->result; for (int i = 0; i < 8; i++) out[i] = job->out[i]; }
+  if (InterlockedDecrement(&job->refs) == 0) delete job;
+  return result;
+}

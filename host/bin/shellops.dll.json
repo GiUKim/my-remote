@@ -1,7 +1,7 @@
 {
   "source": "native/shellops.cpp",
-  "sourceSha256": "7c3abaab97a128e81c0b3912fe09e1524fdf4806564bb724857c7d4a96d08876",
-  "dllSha256": "3371c2998588c6c02dfce6beedff260fe58d555a50ac1631d7681f5fd5065df8",
+  "sourceSha256": "d1c3ae8c21bc805aa9aba4e3c2a0591a42a9b85d32ba8be757685d13b3a786b4",
+  "dllSha256": "a0015eb73f6bbbe4cfe2b0bc77f83dda4cd527547e3fed0fa743aa2ab7f3cc60",
   "compiler": "x86_64-w64-mingw32-g++ (GCC) 10-win32 20220113",
-  "command": "x86_64-w64-mingw32-g++ -O2 -Wall -shared -static -s -fno-exceptions -fno-rtti -Wl,--no-insert-timestamp -o shellops.dll shellops.cpp -lole32 -lshell32 -luuid"
+  "command": "x86_64-w64-mingw32-g++ -O2 -Wall -shared -static -s -fno-exceptions -fno-rtti -Wl,--no-insert-timestamp -o shellops.dll shellops.cpp -lole32 -loleaut32 -lshell32 -luuid"
 }

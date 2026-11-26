@@ -38,7 +38,7 @@ const EXES = new Set(['winassist.cpp']); // built as .exe (wmain), not a DLL
 const LIBS = {
   'capture.cpp': '-ld3d11 -ldxgi -ldxguid -luuid',
   'capprobe.cpp': '-ld3d11 -ldxgi -ldxguid -luuid',
-  'shellops.cpp': '-lole32 -lshell32 -luuid',
+  'shellops.cpp': '-lole32 -loleaut32 -lshell32 -luuid',
   'winassist.cpp': '-lwtsapi32 -luserenv -ladvapi32 -lgdi32 -luser32',
 };
 const sources = fs.readdirSync(here).filter((f) => f.endsWith('.cpp'));

@@ -382,6 +382,7 @@ function shellOps() {
     if (process.platform === 'win32' && fs.existsSync(file)) {
       const lib = require('koffi').load(file);
       shellops = { drop: lib.func('int so_drop(const char16_t *paths, int effects, int timeoutMs)'), error: lib.func('const char *so_error()'), debug: lib.func('const char *so_debug()') };
+      try { shellops.caret = lib.func('int so_caret(_Out_ int *out, int timeoutMs)'); } catch {} // from 0.11.0 (a DLL from before has none)
     }
   } catch (e) { console.error('shell operations are not available:', e.message); }
   return shellops;
@@ -501,6 +502,47 @@ function koreanKeyCame() {
     win.webContents.send('ime', { os: s.os, why: s.why, im: s.im, fix: s.fix, at: c ? input.whereIs(c.x, c.y) : null });
     console.log(`[host] the Korean key cannot work here: ${s.why}${s.im ? ' (' + s.im + ')' : ''}; the client is told: ${s.fix || '-'}`);
   }, () => {});
+}
+// ---- the text caret after a tap from a phone -------------------------------------------------------------
+// (2026-11-26, the user's wish: tapping a place where one types brings the phone's keyboard up.) After the client's tap
+// (`caretq`, host.js) the page asks here whether the program in front now has a text caret, and where: Windows' system
+// caret first (GetGUIThreadInfo: classic edit fields, Notepad, Office), else UI Automation (so_caret in shellops.dll:
+// Chrome, Edge, Electron apps, the Start menu's search), the question Windows' own touch keyboard asks. Only after a tap
+// of the person's, never by itself, and one question at a time. Linux: not yet (null: the client leaves its keyboard
+// as it is). The self-test answers from `caretFake` unless --caret-check asks this PC for real (on a test PC only: it
+// opens a text field of its own and asks the program in front).
+// Seen in the test VM (2026-11-26, Windows 10, real programs): Notepad and the Run dialog have the system caret; the
+// Start menu's search, Edge's address bar and web fields and an Electron program answer through UI Automation - a
+// Chromium program only from a moment after its first question (the first got its window, one 0.8 s later the field:
+// host.js asks a few times), and from then on with its accessibility support turned on, which an Electron program
+// reports (app.isAccessibilitySupportEnabled; VS Code takes that for a screen reader), as Windows' touch keyboard does.
+const CARET_CHECK = SELFTEST && process.argv.includes('--caret-check');
+let caretFake = null, caretBusy = false;
+async function caretNow() {
+  if (SELFTEST && (!CARET_CHECK || caretFake)) return caretFake;
+  if (process.platform !== 'win32') return null;
+  const sys = input.caretBox();
+  if (sys) return { on: true, src: 'sys', ...sys };
+  const so = shellOps();
+  if (!so || !so.caret) return { on: false, src: 'sys' };
+  if (caretBusy) return null;
+  caretBusy = true;
+  try {
+    const out = new Array(8).fill(0);
+    const r = await new Promise((res) => so.caret.async(out, 1500, (err, v) => res(err ? -9 : v)));
+    if (r === 1) return { on: true, src: 'uia', x: out[0], y: out[1], w: out[2], h: out[3], field: out[6] === 1, type: out[4] };
+    if (r === 0) return { on: false, src: 'uia', type: out[4] };
+    return null;
+  } finally { caretBusy = false; }
+}
+// In the client's terms: the caret's monitor, its top left (0..1) and height (in that monitor's heights), or { on: false }.
+async function caretForClient() {
+  const c = await caretNow().catch(() => null);
+  if (!c) return null;
+  if (!c.on) return { on: false };
+  if (c.d !== undefined) return c; // the self-test's made-up answer is in these terms already
+  const at = input.whereIs(c.x, c.y), low = input.whereIs(c.x, c.y + c.h - 1);
+  return at ? { on: true, d: at.d, x: at.x, y: at.y, h: low && low.d === at.d ? low.y - at.y : 0, field: !!c.field, src: c.src } : { on: true };
 }
 // The client app's live.json (see cycle.js): which hosts this PC's client app controls right now. A test run
 // (its profile is a throwaway one) reads a file of its own there, which the self-test writes.
@@ -1278,6 +1320,7 @@ else {
     // `nudge`: the pointer a pixel aside and back first (see input.nudge), while the client waits to learn
     // whether its drag became a drag-and-drop here.
     ipcMain.handle('dragging', (_e, nudge) => timed('dragging', () => { try { if (nudge) input.nudge(); return input.dragging(); } catch { return false; } }));
+    ipcMain.handle('caret', () => caretForClient());
     // Asked about 30 times a second while a client is connected. `last`: the cursor the page already
     // has; then its picture (a data URL of up to tens of KB) is not copied over again.
     ipcMain.handle('cursor', (_e, last) => timed('cursor', () => {
@@ -1597,7 +1640,8 @@ else {
       }
     }
     if (SHELL_SWAP_TRIAL) shellSetup(); // the test VM's end-to-end check of the swap (see SHELL_SWAP_TRIAL)
-    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged, pageKey: testPageKeyPub, getClientApp, inputGuardHb: () => startInputGuard.hb || null, koreanKeyCame });
+    if (SELFTEST) selftest.run({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dragOut, closeDragFiles, listFolder, devices, deviceStore, accessLog, devicesChanged, pageKey: testPageKeyPub, getClientApp, inputGuardHb: () => startInputGuard.hb || null, koreanKeyCame,
+      caretFake: (c) => { caretFake = c; }, caretNow: CARET_CHECK ? caretNow : null });
     if (BENCH) require('./bench').run({ cfg, bench: benchCfg, buildClientHtml, app });
     if (LOCALTEST) {
       const file = path.join(app.getPath('userData'), 'pangmote-localtest.html');

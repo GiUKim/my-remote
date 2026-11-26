@@ -91,11 +91,16 @@
   #keyrow { position: fixed; left: 0; right: 0; bottom: 0; height: 50px; box-sizing: border-box; z-index: 4; display: none; gap: 5px; padding: 5px; background: #1d2229; border-top: 1px solid #2c333d; overflow-x: auto; white-space: nowrap; }
   html.touch.keys #keyrow { display: flex; }
   #keyrow button { flex: 0 0 auto; min-width: 46px; padding: 0 10px; }
+  /* the trackpad's pointer and the ring of a long press (attachTouch) */
+  .padcur { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; display: none; will-change: transform; filter: drop-shadow(0 1px 2px rgba(0,0,0,.6)); }
+  .padcur img { display: block; }
+  .padring { position: absolute; left: -22px; top: -22px; width: 44px; height: 44px; box-sizing: border-box; border-radius: 50%; border: 3px solid #2b6cff; background: rgba(43,108,255,.15); z-index: 3; pointer-events: none; display: none; }
 </style>
 </head>
 <body>
 <div id="bar">
   <span id="mons"></span>
+  <button id="padBtn" class="touchOnly" title="손가락으로 조작하는 방식을 바꿉니다: 트랙패드(커서를 움직여 정확하게) 또는 직접 터치(누른 곳을 바로 클릭)" data-i18n-title></button>
   <button id="kbdBtn" class="touchOnly" title="휴대폰 키보드로 입력합니다 (한글 포함)" data-i18n-title data-i18n>⌨ 키보드</button>
   <button id="keyBtn" class="touchOnly" title="Esc, Tab, Ctrl, 방향키 같은 특수 키" data-i18n-title data-i18n>특수키</button>
   <button id="zoomBtn" class="touchOnly" style="display:none" title="확대한 화면을 원래 크기로" data-i18n-title data-i18n>확대 해제</button>
@@ -259,7 +264,7 @@ I18N.apply(document, tr);
 // (the self-test's picture of the phone layout).
 const TOUCH = matchMedia('(pointer: coarse)').matches || hash.has('touch');
 if (TOUCH) document.documentElement.classList.add('touch');
-const BLOCKED_WHEN_RO = new Set(['mm', 'md', 'mu', 'mw', 'kd', 'ku', 'text', 'reset', 'clip', 'dragout', 'dragq', 'clipget']);
+const BLOCKED_WHEN_RO = new Set(['mm', 'md', 'mu', 'mw', 'kd', 'ku', 'text', 'reset', 'clip', 'dragout', 'dragq', 'clipget', 'caretq']);
 const CURSORS = new Set(['default', 'text', 'wait', 'crosshair', 'nwse-resize', 'nesw-resize', 'ew-resize', 'ns-resize', 'move', 'not-allowed', 'pointer', 'progress', 'help']);
 const HINT = 'Ctrl+Alt+←/→ 모니터 전환 · ↑ 전체 보기 · ↓ 원본 크기 · Enter 전체화면 끝내기'; // tr(HINT) where shown
 
@@ -359,7 +364,7 @@ function makeView(win, root, isMain) {
     else if (!onPicture(ev)) toast(view, tr('파일은 호스트 화면 위에 놓아야 보낼 수 있습니다'), 3000);
   }, true);
   attachKeys(view);
-  const relayout = () => { layout(view); scheduleView(); };
+  const relayout = () => { layout(view); scheduleView(); if (view.caret && performance.now() - view.caret.at < 1500) revealCaret(view); };
   win.addEventListener('resize', relayout);
   win.document.addEventListener('fullscreenchange', () => {
     setTimeout(relayout, 60);
@@ -607,6 +612,10 @@ function render(view) {
 // ratio, so there is never a letterbox inside the element and pointer mapping
 // is a plain proportion of the element.
 function layout(view) {
+  placePanes(view);
+  placePad(view); // the trackpad's pointer follows the picture (attachTouch)
+}
+function placePanes(view) {
   const W = view.root.clientWidth, H = view.root.clientHeight;
   if (!W || !H || !view.panes.length) return;
   const dpr = view.win.devicePixelRatio || 1;
@@ -631,17 +640,24 @@ function layout(view) {
     view.pan.y = h <= H ? (H - h) / 2 : clamp(view.pan.y, H - h, 0);
     place(p, view.pan.x, view.pan.y, w, h, false);
   } else {
-    const z = view.zoom || 1, s = Math.min(W / m.width, H / m.height) * z, dev = s * dpr;
+    // A phone's keyboard takes the lower part of the window (interactive-widget=resizes-content): the picture keeps the
+    // size it had without it and may be moved up, so that what is typed into stays above the keyboard (revealCaret).
+    const kbOpen = TOUCH && view === mainView && document.activeElement === $('kbd') && view.fullH && W === view.fullW && H < view.fullH - 60;
+    if (!kbOpen) { view.fullW = W; view.fullH = H; }
+    const z = view.zoom || 1, s = Math.min(W / m.width, (kbOpen ? view.fullH : H) / m.height) * z, dev = s * dpr;
     // An exact 2x/3x enlargement (e.g. a 1080p host on a 4K screen) is shown with sharp pixels, like the real monitor.
     const crisp = dev >= 1.99 && Math.abs(dev - Math.round(dev)) < 0.01;
     const w = m.width * s, h = m.height * s;
-    if (z > 1) {
-      // Zoomed in with two fingers (attachTouch): view.pan is the picture's top left, kept so that the
-      // picture covers the window wherever it is larger than it.
+    if (z > 1 || h > H + 0.5) {
+      // Zoomed in with two fingers (attachTouch), or taller than what the keyboard leaves: view.pan is the picture's
+      // top left, kept so that the picture covers the window wherever it is larger than it.
       view.pan.x = w <= W ? (W - w) / 2 : clamp(view.pan.x, W - w, 0);
       view.pan.y = h <= H ? (H - h) / 2 : clamp(view.pan.y, H - h, 0);
       place(p, view.pan.x, view.pan.y, w, h, crisp);
-    } else place(p, (W - w) / 2, (H - h) / 2, w, h, crisp);
+    } else {
+      view.pan = { x: (W - w) / 2, y: (H - h) / 2 }; // where a zoom or the keyboard starts from
+      place(p, view.pan.x, view.pan.y, w, h, crisp);
+    }
   }
 }
 // Where monitors go when one window shows several: as they stand on the host, with the empty
@@ -669,6 +685,7 @@ function applyCursor() {
   const out = carrying();
   for (const view of liveViews()) {
     for (const p of view.panes) p.video.style.cursor = out ? 'copy' : cursorCss;
+    placePad(view); // the trackpad's pointer takes the host's shape too
     // Outside our windows the browser may well keep the last cursor it showed over them: it applies a
     // page's cursor only while the pointer is over that page, and the system asks a window that holds
     // the mouse for none. So "copy" is put everywhere it could take effect: the pictures, each window's
@@ -1498,24 +1515,130 @@ function attachPointer(view, pane) {
 }
 
 // ---- phones and tablets ---------------------------------------------------------------
-// A finger has no hover and no buttons. On the picture: a tap clicks; a long press (LONG_MS) clicks the
-// right button; holding still for HOLD_MS and then moving drags with the left button held (selecting
-// text, moving a window); a quick swipe scrolls (the wheel, so that the content follows the finger);
-// two fingers zoom and move the picture here, nothing is sent. Any pointer that is not a finger (a
-// mouse, a pen) goes on to attachPointer as before.
-const TAP_MOVE = 10, HOLD_MS = 300, LONG_MS = 550;
+// A finger has no hover and no buttons. It works the picture in one of two ways (`touchMode`, kept in mr_touch):
+// - 'pad', the trackpad (phones; the user's choice, 2026-11-26: more precise on a small screen, as in Chrome Remote
+//   Desktop): the picture is a laptop's touchpad. One finger moves the host's pointer by how far it moves, further
+//   when it moves fast (PAD_GAIN), and the pointer is drawn here, big enough for a phone (placePad); a zoomed picture
+//   follows it to the edges. A tap clicks where the pointer is, two taps double-click.
+// - 'direct' (tablets, touch screens): the host's pointer goes where the finger is; a tap clicks there, a quick swipe
+//   scrolls (the wheel, so that the content follows the finger).
+// In both: a long press (LONG_MS, a short vibration and a ring) let go is the right button, and moved on it is the
+// left button held (selecting text, moving a window, dragging a file); two fingers pinched zoom (1x-5x, here: nothing
+// is sent; about the pointer in the trackpad, about the fingers otherwise). In the trackpad two fingers moved together
+// scroll and two fingers tapped are the right button. A tap that puts a text caret on the host brings the phone's
+// keyboard up (caretAsk). Any pointer that is not a finger (a mouse, a pen) goes on to attachPointer as before.
+const TAP_MOVE = 10, LONG_MS = 400, TWO_TAP_MS = 250;
+let touchMode = ['pad', 'direct'].includes(store.get('mr_touch')) ? store.get('mr_touch')
+  : TOUCH && Math.min(screen.width, screen.height) < 600 ? 'pad' : 'direct';
+// Host pixels the pointer moves per finger pixel: 1 when slow (precise), up to 3 when fast (across the screen).
+const PAD_GAIN = (pxPerMs) => clamp(1 + (pxPerMs - 0.2) * 1.6, 1, 3);
+// The pointer of the trackpad, drawn here: the host's cursor shape when it is one we draw (an arrow, a hand, an
+// I-beam), else the picture the host sent; the size of a phone's own pointer, whatever the zoom.
+const PAD_SVG = {
+  default: ['<svg xmlns="http://www.w3.org/2000/svg" width="20" height="26" viewBox="0 0 20 26"><path d="M1.5 1.5v20.2l4.9-4.6 3.3 7.4 3.3-1.4-3.2-7.2h6.9z" fill="#fff" stroke="#000" stroke-width="1.4" stroke-linejoin="round"/></svg>', 1.5, 1.5],
+  pointer: ['<svg xmlns="http://www.w3.org/2000/svg" width="22" height="26" viewBox="0 0 22 26"><path d="M7 1.5c1.2 0 2 .9 2 2v7.2l1-.2c.9-.3 1.9.2 2.2 1l.9-.1c1-.2 1.9.4 2.1 1.3l.8-.1c1.1-.1 2 .8 2 1.9v4.5c0 3.6-2.6 6.5-6.2 6.5h-1.4c-2.2 0-4.1-1.2-5.2-3.1L1.6 15.6c-.6-1-.2-2.2.8-2.7.9-.4 1.9-.1 2.5.7L5 15V3.5c0-1.1.9-2 2-2z" fill="#fff" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/></svg>', 7, 1.5],
+  text: ['<svg xmlns="http://www.w3.org/2000/svg" width="12" height="26" viewBox="0 0 12 26"><path d="M2 2h3l1 1 1-1h3M6 3v20M2 24h3l1-1 1 1h3" fill="none" stroke="#000" stroke-width="3.4" stroke-linecap="round"/><path d="M2 2h3l1 1 1-1h3M6 3v20M2 24h3l1-1 1 1h3" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>', 6, 13],
+};
+const padOn = (view) => touchMode === 'pad' && !!view.panes.length && !!monitors.length;
+function padStart(view) {
+  const ok = view.padAt && view.panes.some((p) => p.idx === view.padAt.d);
+  if (!ok) view.padAt = { d: view.panes[0].idx, x: 0.5, y: 0.5 };
+  return view.padAt;
+}
+// Where the trackpad's pointer is in the window (its root's coordinates), and over which picture.
+function padXY(view) {
+  const at = view.padAt, pane = at && view.panes.find((p) => p.idx === at.d);
+  if (!pane) return null;
+  const r = pane.video.getBoundingClientRect(), R = view.root.getBoundingClientRect();
+  return { x: r.left - R.left + at.x * r.width, y: r.top - R.top + at.y * r.height, pane, r, R };
+}
+function padImage(view) {
+  const el = view.padEl;
+  const url = /^url\("([^"]+)"\) (\d+) (\d+)/.exec(cursorCss);
+  const key = url ? cursorCss : PAD_SVG[cursorCss] ? cursorCss : 'default';
+  if (el.dataset.key === key) return;
+  el.dataset.key = key;
+  const img = el.firstChild;
+  if (url) {
+    // The host's own picture of an app's cursor, at most 32 px here, its hot spot scaled with it.
+    img.onload = () => { const k = Math.min(1, 32 / Math.max(img.naturalWidth, img.naturalHeight, 1)); img.style.width = img.naturalWidth * k + 'px'; el.hx = +url[2] * k; el.hy = +url[3] * k; placePad(view); };
+    img.style.width = '';
+    img.src = url[1];
+  } else {
+    const [svg, hx, hy] = PAD_SVG[key];
+    img.onload = null; img.style.width = '';
+    img.src = 'data:image/svg+xml,' + encodeURIComponent(svg);
+    el.hx = hx; el.hy = hy;
+  }
+}
+function placePad(view) {
+  if (!view.padEl) {
+    if (!padOn(view)) return;
+    const el = (view.padEl = view.win.document.createElement('div'));
+    el.className = 'padcur';
+    el.appendChild(view.win.document.createElement('img'));
+    view.root.appendChild(el);
+  }
+  const p = padOn(view) && view.padAt ? padXY(view) : null;
+  view.padEl.style.display = p ? 'block' : 'none';
+  if (!p) return;
+  padImage(view);
+  view.padEl.style.transform = `translate(${Math.round(p.x - (view.padEl.hx || 0))}px, ${Math.round(p.y - (view.padEl.hy || 0))}px)`;
+}
+// The pointer moved by a finger's (dx, dy) in dt ms. It stays on the pictures of this window; on a zoomed picture the
+// picture moves along when the pointer comes near the window's edge (EDGE), so that every part of the host is reached.
+function padMove(view, dx, dy, dt) {
+  const p = padXY(view);
+  if (!p) return null;
+  const gain = PAD_GAIN(Math.hypot(dx, dy) / Math.max(dt, 4));
+  let x = p.x + dx * gain, y = p.y + dy * gain, pane = p.pane, r = p.r;
+  const R = p.R;
+  const other = view.panes.find((q) => { const b = q.video.getBoundingClientRect(); return x >= b.left - R.left && x < b.right - R.left && y >= b.top - R.top && y < b.bottom - R.top; });
+  if (other && other !== pane) { pane = other; r = other.video.getBoundingClientRect(); }
+  view.padAt = { d: pane.idx, x: clamp((x - (r.left - R.left)) / r.width, 0, 0.9999), y: clamp((y - (r.top - R.top)) / r.height, 0, 0.9999) };
+  const q = padXY(view), W = view.root.clientWidth, H = view.root.clientHeight, EDGE = 36;
+  if (q && (q.r.width > W + 1 || q.r.height > H + 1)) {
+    const mx = q.x < EDGE ? EDGE - q.x : q.x > W - EDGE ? W - EDGE - q.x : 0;
+    const my = q.y < EDGE ? EDGE - q.y : q.y > H - EDGE ? H - EDGE - q.y : 0;
+    if (mx || my) { view.pan.x += mx; view.pan.y += my; placePanes(view); scheduleView(); }
+  }
+  placePad(view);
+  return view.padAt;
+}
+// The ring of a long press: let go now for the right button, move on for a drag.
+function padRing(view, at) {
+  if (!view.ringEl) { view.ringEl = view.win.document.createElement('div'); view.ringEl.className = 'padring'; view.root.appendChild(view.ringEl); }
+  view.ringEl.style.display = at ? 'block' : 'none';
+  if (at) view.ringEl.style.transform = `translate(${Math.round(at.x)}px, ${Math.round(at.y)}px)`;
+}
+function setTouchMode(mode, say) {
+  touchMode = mode === 'pad' ? 'pad' : 'direct';
+  store.set('mr_touch', touchMode);
+  paintTouchMode();
+  for (const v of liveViews()) { if (touchMode === 'pad' && v.panes.length) padStart(v); placePad(v); }
+  if (say) toast(mainView, tr(touchMode === 'pad' ? PAD_HINT : DIRECT_HINT), 6000);
+}
+const PAD_HINT = '트랙패드: 한 손가락으로 커서 이동 · 탭은 클릭 · 길게 누르고 떼면 오른쪽 클릭, 길게 누른 채 끌면 드래그 · 두 손가락으로 스크롤과 확대';
+const DIRECT_HINT = '직접 터치: 누른 곳을 클릭 · 길게 누르고 떼면 오른쪽 클릭, 길게 누른 채 끌면 드래그 · 밀면 스크롤 · 두 손가락으로 확대';
+function paintTouchMode() { const b = $('padBtn'); if (b) b.textContent = tr(touchMode === 'pad' ? '🖱 트랙패드' : '👆 직접 터치'); }
+$('padBtn').onclick = () => setTouchMode(touchMode === 'pad' ? 'direct' : 'pad', true);
+paintTouchMode();
+
 function attachTouch(view, pane) {
   const v = pane.video, pts = new Map();
-  let g = null; // the gesture under way: { kind: 'pending' | 'armed' | 'drag' | 'scroll' | 'right' | 'two' | 'after', ... }
+  let g = null; // the gesture under way: { kind: 'pending' | 'armed' | 'move' | 'drag' | 'scroll' | 'two' | 'zoom' | 'scroll2' | 'after', pad, ... }
   const at = (x, y) => { const q = rel(pane, x, y); return q && { d: q.d, x: clamp(q.x, 0, 1), y: clamp(q.y, 0, 1) }; };
   const take = (ev) => { ev.preventDefault(); ev.stopImmediatePropagation(); };
-  const timers = () => { if (g) { clearTimeout(g.hold); clearTimeout(g.long); } };
+  const timers = () => { if (g) clearTimeout(g.long); };
   const button = (down, b, p) => {
     if (!p) return;
     lastAt = p;
     held = down ? held | (1 << b) : held & ~(1 << b);
     send({ t: down ? 'md' : 'mu', b, d: p.d, x: p.x, y: p.y });
   };
+  const click = (b, p) => { button(true, b, p); button(false, b, p); };
+  // Where a click of this gesture goes: the trackpad's pointer, or where the finger came down.
+  const here = () => (g && g.pad ? view.padAt : g && g.start);
   // Host pixels per finger pixel, so that a swipe scrolls about as far as the finger went over the picture.
   const hostPerPx = () => { const r = v.getBoundingClientRect(), m = monitors[pane.idx]; return m && r.height ? m.height / r.height : 1; };
   let wheel = { dx: 0, dy: 0, raf: 0 };
@@ -1525,65 +1648,100 @@ function attachTouch(view, pane) {
     if (dx || dy) send({ t: 'mw', dx, dy });
     wheel.dx -= dx; wheel.dy -= dy;
   };
+  const scrollBy = (dx, dy) => {
+    const k = hostPerPx();
+    wheel.dx -= dx * k; wheel.dy -= dy * k;
+    if (!wheel.raf) wheel.raf = view.win.requestAnimationFrame(flushWheel);
+  };
   const two = () => {
     const [a, b] = [...pts.values()];
     return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  };
+  const zoomable = () => !isMulti(view.sel) && view.fit !== '1:1';
+  const ringAt = () => {
+    if (g.pad) { const p = padXY(view); return p && { x: p.x, y: p.y }; }
+    const R = view.root.getBoundingClientRect(), f = [...pts.values()][0];
+    return f && { x: f.x - R.left, y: f.y - R.top };
+  };
+  const zoomTo = (z) => {
+    view.zoom = z;
+    if (view === mainView) $('zoomBtn').style.display = z > 1 ? 'inline-block' : 'none'; // also on a touch screen that is no phone
+    scheduleView(); // larger on screen: the host may send more pixels
   };
   v.addEventListener('pointerdown', (ev) => {
     if (ev.pointerType !== 'touch') return;
     take(ev);
     try { v.setPointerCapture(ev.pointerId); } catch {}
-    pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY, x0: ev.clientX, y0: ev.clientY });
+    pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY, x0: ev.clientX, y0: ev.clientY, t: performance.now() });
     if (pts.size === 1 && (!g || g.kind !== 'after')) {
-      const start = at(ev.clientX, ev.clientY);
-      g = { kind: 'pending', start, last: start };
-      g.hold = setTimeout(() => { if (g && g.kind === 'pending') g.kind = 'armed'; }, HOLD_MS);
+      const pad = padOn(view);
+      if (pad) padStart(view);
+      const start = pad ? null : at(ev.clientX, ev.clientY);
+      g = { kind: 'pending', pad, start, last: start };
       g.long = setTimeout(() => {
-        if (!g || g.kind !== 'armed') return;
-        g.kind = 'right'; // a long press: the right button, at once (the finger is still down)
-        button(true, 2, g.start); button(false, 2, g.start);
-        try { navigator.vibrate && navigator.vibrate(15); } catch {}
+        if (!g || g.kind !== 'pending') return;
+        g.kind = 'armed'; // let go now: the right button; move on: the left button held
+        try { navigator.vibrate && navigator.vibrate(12); } catch {}
+        padRing(view, ringAt());
       }, LONG_MS);
-    } else if (pts.size === 2 && !isMulti(view.sel) && view.fit !== '1:1') {
+    } else if (pts.size === 2 && g && g.kind !== 'after') {
       timers();
-      if (g && g.kind === 'drag') button(false, 0, g.last);
-      // Zoom about the point between the fingers: remember which spot of the picture is there.
-      const r = v.getBoundingClientRect(), R = view.root.getBoundingClientRect(), t = two();
-      g = { kind: 'two', d0: t.d, z0: view.zoom || 1, u: (t.x - r.left) / r.width, w: (t.y - r.top) / r.height, bw: r.width / (view.zoom || 1), bh: r.height / (view.zoom || 1), R };
-    } else if (pts.size >= 2) { timers(); if (g && g.kind === 'drag') button(false, 0, g.last); g = { kind: 'after' }; }
+      padRing(view, null);
+      if (g.kind === 'drag') button(false, 0, here());
+      const t = two(), r = v.getBoundingClientRect(), R = view.root.getBoundingClientRect();
+      if (g.pad) {
+        // Not decided yet: fingers that spread or close zoom, fingers that move together scroll, a quick tap is the right button.
+        g = { kind: 'two', pad: true, t0: performance.now(), d0: t.d, mx: t.x, my: t.y };
+      } else if (zoomable()) {
+        // Zoom about the point between the fingers: remember which spot of the picture is there.
+        g = { kind: 'zoom', d0: t.d, z0: view.zoom || 1, u: (t.x - r.left) / r.width, w: (t.y - r.top) / r.height, bw: r.width / (view.zoom || 1), bh: r.height / (view.zoom || 1), R };
+      } else g = { kind: 'after' };
+    } else if (pts.size >= 2) { timers(); padRing(view, null); if (g && g.kind === 'drag') button(false, 0, here()); g = { kind: 'after' }; }
   }, true);
   v.addEventListener('pointermove', (ev) => {
     if (ev.pointerType !== 'touch') return;
     take(ev);
     const pt = pts.get(ev.pointerId);
     if (!pt || !g) return;
-    const dx = ev.clientX - pt.x, dy = ev.clientY - pt.y;
-    pt.x = ev.clientX; pt.y = ev.clientY;
+    const now = performance.now(), dx = ev.clientX - pt.x, dy = ev.clientY - pt.y, dt = now - pt.t;
+    pt.x = ev.clientX; pt.y = ev.clientY; pt.t = now;
     const far = Math.hypot(pt.x - pt.x0, pt.y - pt.y0) > TAP_MOVE;
     if (g.kind === 'pending' && far) {
       timers();
-      g.kind = 'scroll';
-      if (g.start) queueMove(view, g.start); // the wheel goes to the window under the host's pointer
+      if (g.pad) g.kind = 'move';
+      else { g.kind = 'scroll'; if (g.start) queueMove(view, g.start); } // the wheel goes to the window under the host's pointer
     } else if (g.kind === 'armed' && far) {
-      timers();
       g.kind = 'drag';
-      button(true, 0, g.start);
+      padRing(view, null);
+      button(true, 0, here());
     }
-    if (g.kind === 'drag') {
+    if (g.kind === 'move' || (g.kind === 'drag' && g.pad)) {
+      const p = padMove(view, dx, dy, dt);
+      if (p) queueMove(view, p, g.kind === 'drag' ? 1 : 0);
+    } else if (g.kind === 'drag') {
       const p = at(pt.x, pt.y);
       if (p) { g.last = p; queueMove(view, p, 1); }
-    } else if (g.kind === 'scroll') {
-      const k = hostPerPx();
-      wheel.dx -= dx * k; wheel.dy -= dy * k;
-      if (!wheel.raf) wheel.raf = view.win.requestAnimationFrame(flushWheel);
-    } else if (g.kind === 'two' && pts.size === 2) {
-      const t = two(), z = clamp(g.z0 * (t.d / g.d0), 1, 5);
-      view.zoom = z;
-      // The spot that was between the fingers stays between them.
-      view.pan = { x: t.x - g.R.left - g.u * g.bw * z, y: t.y - g.R.top - g.w * g.bh * z };
-      layout(view);
-      if (view === mainView) $('zoomBtn').style.display = z > 1 ? 'inline-block' : 'none'; // also on a touch screen that is no phone
-      scheduleView(); // larger on screen: the host may send more pixels
+    } else if (g.kind === 'scroll') scrollBy(dx, dy);
+    else if (pts.size === 2 && (g.kind === 'two' || g.kind === 'scroll2' || g.kind === 'zoom')) {
+      const t = two();
+      if (g.kind === 'two') {
+        if (Math.abs(t.d - g.d0) > 28 && zoomable()) {
+          // About the pointer: it stays where it is on the screen and the picture grows or shrinks around it.
+          const p = padXY(view), r = p && p.pane.video.getBoundingClientRect();
+          if (p) g = { kind: 'zoom', pad: true, d0: t.d, z0: view.zoom || 1, sx: p.x, sy: p.y, u: view.padAt.x, w: view.padAt.y, bw: r.width / (view.zoom || 1), bh: r.height / (view.zoom || 1) };
+        } else if (Math.hypot(t.x - g.mx, t.y - g.my) > 14) {
+          g.kind = 'scroll2';
+          queueMove(view, view.padAt, 0); // the wheel goes to the window under the pointer
+        }
+      }
+      if (g.kind === 'scroll2') { scrollBy(t.x - g.mx, t.y - g.my); g.mx = t.x; g.my = t.y; }
+      else if (g.kind === 'zoom') {
+        const z = clamp(g.z0 * (t.d / g.d0), 1, 5);
+        // The trackpad: the pointer's spot stays put; otherwise the spot that was between the fingers stays between them.
+        view.pan = g.pad ? { x: g.sx - g.u * g.bw * z, y: g.sy - g.w * g.bh * z } : { x: t.x - g.R.left - g.u * g.bw * z, y: t.y - g.R.top - g.w * g.bh * z };
+        zoomTo(z);
+        layout(view);
+      }
     }
   }, true);
   const end = (ev, cancelled) => {
@@ -1591,16 +1749,19 @@ function attachTouch(view, pane) {
     take(ev);
     pts.delete(ev.pointerId);
     if (!g) return;
-    if (!cancelled && (g.kind === 'pending' || g.kind === 'armed')) {
-      timers();
-      button(true, 0, g.start); button(false, 0, g.start); // a tap (a slow one too) is a click
-    } else if (g.kind === 'drag') button(false, 0, g.last);
-    else if (g.kind === 'scroll' && wheel.raf) { view.win.cancelAnimationFrame(wheel.raf); flushWheel(); }
     timers();
-    if (g.kind === 'two' || g.kind === 'after') {
+    padRing(view, null);
+    if (!cancelled && g.kind === 'pending') {
+      click(0, here()); // a tap (a slow one too) is a click
+      caretAsk(view);
+    } else if (!cancelled && g.kind === 'armed') click(2, here()); // a long press let go: the right button
+    else if (g.kind === 'drag') button(false, 0, g.pad ? view.padAt : g.last);
+    else if ((g.kind === 'scroll' || g.kind === 'scroll2') && wheel.raf) { view.win.cancelAnimationFrame(wheel.raf); flushWheel(); }
+    else if (!cancelled && g.kind === 'two' && performance.now() - g.t0 < TWO_TAP_MS) click(2, view.padAt); // two fingers tapped
+    if (['two', 'zoom', 'scroll2', 'after'].includes(g.kind)) {
       // Until every finger is up, a finger left over does nothing (no click at the end of a pinch).
       if (pts.size) { g = { kind: 'after' }; return; }
-      if ((view.zoom || 1) < 1.05) { view.zoom = 1; layout(view); $('zoomBtn').style.display = 'none'; scheduleView(); }
+      if ((view.zoom || 1) < 1.05 && view.zoom > 1) { zoomTo(1); layout(view); }
     }
     if (!pts.size) g = null;
   };
@@ -1661,6 +1822,74 @@ $('kbdBtn').onclick = () => {
   kbd.focus(); // brings the phone's keyboard up (only from a tap, which this is)
   try { kbd.setSelectionRange(kbd.value.length, kbd.value.length); } catch {}
 };
+// ---- the phone's keyboard comes up by itself where one types ----------------------------------------
+// (2026-11-26, the user's wish: "a tap that makes the text caret blink brings the keyboard up", as on the phone itself.)
+// After a tap the host is asked (caretq) whether a text caret came up there (host.js caretQuery: Windows' system caret,
+// else UI Automation, which Windows' own touch keyboard asks too). Yes: the keyboard comes up, and the picture is moved
+// (zoomed in where the text is small) so that the caret stays above it (revealCaret). No: a keyboard that came up by
+// itself goes down again; one the person opened stays. Only right after a tap of ours (CARET_WAIT), never by itself.
+// Phones and tablets only (`autoKbd`): a PC has a keyboard of its own, and the hidden field would take its keys.
+let autoKbd = TOUCH && store.get('mr_autokbd') !== '0';
+let caretView = null, caretAskedAt = -1e9, kbdAuto = false;
+const CARET_WAIT = 4000;
+function caretAsk(view) {
+  if (!autoKbd || READONLY) return;
+  caretView = view; caretAskedAt = performance.now();
+  send({ t: 'caretq' });
+}
+function gotCaret(m) {
+  window.__rd.caret = m; // the self-test sees what came
+  const view = caretView;
+  if (!view || view.win.closed || performance.now() - caretAskedAt > CARET_WAIT) return;
+  if (m.on) {
+    view.caret = Number.isInteger(m.d) && monitors[m.d] ? { d: m.d, x: clamp(+m.x || 0, 0, 1), y: clamp(+m.y || 0, 0, 1), h: clamp(+m.h || 0, 0, 0.5), at: performance.now() } : null;
+    if (document.activeElement !== kbd) { openKbd(); kbdAuto = true; }
+    revealCaret(view);
+  } else if (kbdAuto && document.activeElement === kbd) kbd.blur();
+}
+function openKbd() {
+  kbd.value = kbdPrev = KBD_KEEP;
+  kbd.focus(); // brings the phone's keyboard up (shortly after a tap: the page still counts as used by the person)
+  try { kbd.setSelectionRange(kbd.value.length, kbd.value.length); } catch {}
+}
+// The caret above the keyboard: on the picture of its monitor, a text smaller than CARET_PX zoomed in (up to 3x, about
+// the caret), then the picture moved so that the caret's line is inside what the keyboard leaves of the window.
+const CARET_PX = 15;
+function revealCaret(view) {
+  const c = view.caret;
+  if (!c || typeof view.sel !== 'number' || view.sel !== c.d || view.fit === '1:1' || !view.panes[0]) return;
+  const R = view.root.getBoundingClientRect(), pic = () => view.panes[0].video.getBoundingClientRect();
+  let r = pic();
+  const lineH = c.h * r.height;
+  if (lineH > 0 && lineH < CARET_PX) {
+    const z0 = view.zoom || 1, z = clamp(z0 * (CARET_PX + 3) / lineH, 1, 3);
+    if (z > z0 * 1.1) {
+      if (!view.autoZoom) view.autoZoom = { z: z0, pan: { ...view.pan } };
+      const sx = r.left - R.left + c.x * r.width, sy = r.top - R.top + c.y * r.height, bw = r.width / z0, bh = r.height / z0;
+      view.pan = { x: sx - c.x * bw * z, y: sy - c.y * bh * z };
+      view.zoom = z;
+      view.autoZoom.z1 = z;
+      if (view === mainView) $('zoomBtn').style.display = 'inline-block';
+      placePanes(view);
+      r = pic();
+    }
+  }
+  const W = view.root.clientWidth, H = view.root.clientHeight, M = 16;
+  const x = r.left - R.left + c.x * r.width, top = r.top - R.top + c.y * r.height, bottom = top + Math.max(c.h * r.height, 16);
+  const my = bottom > H - M ? H - M - bottom : top < M ? M - top : 0;
+  const mx = x < M || x > W - M ? W / 2 - x : 0;
+  if (mx || my) { view.pan.x += mx; view.pan.y += my; }
+  layout(view);
+  scheduleView();
+}
+// The keyboard went down: a zoom that came with it goes too, unless the person zoomed since.
+kbd.addEventListener('blur', () => {
+  kbdAuto = false;
+  const view = mainView, a = view && view.autoZoom;
+  if (view) { view.caret = null; view.autoZoom = null; }
+  if (a && view.zoom === a.z1) { view.zoom = a.z; view.pan = a.pan; if (a.z <= 1) $('zoomBtn').style.display = 'none'; }
+  setTimeout(() => { if (view) { layout(view); scheduleView(); } }, 50);
+});
 // Keys a phone keyboard does not have. Ctrl, Alt, Shift and Win stay held for the next key.
 const KEYROW = [['Esc', 'Escape'], ['Tab', 'Tab'], ['Ctrl', 'ControlLeft', 1], ['Alt', 'AltLeft', 1], ['Shift', 'ShiftLeft', 1], ['⊞', 'MetaLeft', 1],
   ['←', 'ArrowLeft'], ['↑', 'ArrowUp'], ['↓', 'ArrowDown'], ['→', 'ArrowRight'], ['Home', 'Home'], ['End', 'End'], ['PgUp', 'PageUp'], ['PgDn', 'PageDown'],
@@ -1687,7 +1916,9 @@ $('keyBtn').onclick = () => {
 if (TOUCH) {
   const upright = matchMedia('(orientation: portrait)');
   let said = false;
-  const hint = () => { if (upright.matches && !said && monitors.length) { said = true; toast(mainView, tr('휴대폰을 가로로 돌리면 화면이 크게 보입니다 · 두 손가락으로 확대할 수 있습니다'), 5000); } };
+  const hint = () => {
+    if (monitors.length && touchMode === 'pad' && !store.get('mr_padhint')) { store.set('mr_padhint', '1'); toast(mainView, tr(PAD_HINT), 8000); return; }
+    if (upright.matches && !said && monitors.length) { said = true; toast(mainView, tr('휴대폰을 가로로 돌리면 화면이 크게 보입니다 · 두 손가락으로 확대할 수 있습니다'), 5000); } };
   upright.addEventListener('change', hint);
   setInterval(hint, 3000);
 }
@@ -2762,6 +2993,7 @@ function onHostMessage(data) {
     window.__rd.storms = (window.__rd.storms || 0) + 1;
     for (const v of liveViews()) toast(v, tr('같은 키나 클릭이 사람보다 빠르게 계속 들어가 호스트가 입력을 {0}초 멈췄습니다 · 이 PC를 이 PC에서 보거나 두 PC가 서로를 조종하고 있지 않은지 확인하세요', sec), 10000);
   }
+  else if (m.t === 'caret') gotCaret(m); // after a tap: whether a text caret came up on the host (caretAsk)
   else if (m.t === 'ime') imeNote(m); // a Korean key cannot work on the host: why, and what fixes it
   else if (m.t === 'device') gotDevice(m);
   else if (m.t === 'dragdata') gotDragData(m);
@@ -3005,6 +3237,7 @@ function relabel() {
   showLock();
   $('fs').textContent = document.fullscreenElement || $('bar').classList.contains('peek') ? tr('전체화면 끝내기') : tr('전체화면');
   $('snd').textContent = $('audio').muted ? tr('소리 꺼짐') : tr('소리 켜짐');
+  paintTouchMode();
   if (DEVICE) { $('keyHint').textContent = tr('이 PC는 호스트에 기기로 등록되어 있어 키 없이 접속합니다.'); $('go').textContent = tr('다시 연결'); }
   if (arr.open) { arrBuild(); arrPaint(arr.A); }
   for (const v of liveViews()) if (v.peek && v.peek.shown && v.peek.el) fillPeek(v, v.peek.el);

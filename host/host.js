@@ -607,6 +607,8 @@ function onClientMessage(s, dc, data) {
     dragOut(s, m.b | 0);
   } else if (m.t === 'dragq') {
     pollDrag(s, 1200);
+  } else if (m.t === 'caretq') {
+    caretQuery(s);
   } else if (m.t === 'sas') {
     if (api.assist) api.assist.sas(); // Ctrl+Alt+Del for a lock screen that asks for it (the helper refuses it elsewhere)
   } else if (m.t === 'clipget') {
@@ -733,6 +735,27 @@ async function pollDrag(s, ms) {
       await new Promise((r) => setTimeout(r, 15));
     }
   } finally { s.dragPoll = false; }
+}
+// A phone tapped the picture (the client sends `caretq` right after its click): whether a text caret came up there,
+// so that the phone's keyboard comes up by itself (main.js caretForClient). Programs take a moment to put the focus
+// where it was clicked, and a Chromium program tells only from a moment after the first question (see main.js), so it
+// is looked at a few times over a second; the first caret seen is said at once.
+// A new tap starts again. Answered once: { on: true, d, x, y, h } (where: the keyboard must not cover it),
+// { on: false } (none: a keyboard brought up by an earlier tap goes down), or nothing at all when this host cannot
+// tell (Linux for now; an old DLL).
+const CARET_LOOKS = [120, 200, 300, 400];
+async function caretQuery(s) {
+  const my = s.caretSeq = (s.caretSeq || 0) + 1;
+  let got = null;
+  for (const wait of CARET_LOOKS) {
+    await new Promise((r) => setTimeout(r, wait));
+    if (session !== s || s.caretSeq !== my) return;
+    got = await api.caret().catch(() => null);
+    if (session !== s || s.caretSeq !== my) return;
+    if (!got || got.on) break;
+  }
+  if (!got) return;
+  txTo(s, got.on ? { t: 'caret', on: true, d: got.d, x: got.x, y: got.y, h: got.h || 0, field: !!got.field } : { t: 'caret', on: false });
 }
 async function sendFiles(s, files) {
   const ch = s.pc.createDataChannel('file', { ordered: true });

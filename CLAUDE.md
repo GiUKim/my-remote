@@ -1183,11 +1183,36 @@ the client app instead).
   button was checked only by the self-test (the keys it sends), not on a Windows host.
 - **Phones and tablets** (`TOUCH`: `(pointer: coarse)`, or `#touch` for tests; `attachTouch`). A
   finger's pointer events are taken before the mouse handling (capture listeners at the target,
-  `stopImmediatePropagation`): a tap clicks, a long press (550 ms) clicks the right button, holding
-  still for 300 ms and then moving drags with the left button, a quick swipe scrolls (the wheel, scaled
-  by host pixels per screen pixel so the content follows the finger), two fingers zoom (1x-5x) and move
-  the picture locally (`view.zoom`, `view.pan` in `layout`; the host is asked for more pixels when
-  zoomed). The phone's keyboard types into a hidden textarea (`#kbd`) that always keeps one space so
+  `stopImmediatePropagation`). Two ways (`touchMode`, the toolbar's `#padBtn`, kept in `mr_touch`; 2026-11-26, the
+  start of the Android app, see the `pangmote-android` memory): **the trackpad** (`pad`, the default on a phone: the
+  smaller side of the screen under 600 CSS px; the user chose it, finding it more precise in Chrome Remote Desktop):
+  one finger moves the host's pointer by how far it moves (`PAD_GAIN`: 1 slow, up to 3 fast), the pointer is drawn by
+  the page (`placePad`: the host's shape as an arrow, hand or I-beam of its own, or the host's picture at most 32 px),
+  a zoomed picture follows it to the window's edges; a tap clicks where the pointer is; two fingers moved together
+  scroll, tapped (under 250 ms) are the right button, spread zoom about the pointer (it stays put on the screen unless
+  the picture, which always covers the window when zoomed, has to move). **Direct touch** (`direct`, tablets and
+  touch screens): the pointer goes where the finger is, a quick swipe scrolls (the wheel, scaled by host pixels per
+  screen pixel so the content follows the finger), two fingers zoom about themselves. In both (the user's rule): a
+  long press (`LONG_MS` 400 ms, a vibration and a ring) let go is the right button, moved on is a left-button drag.
+  Zoom is 1x-5x locally (`view.zoom`, `view.pan` in `layout`; the host is asked for more pixels when zoomed).
+  **The keyboard comes up by itself** where a tap made a text caret appear on the host (the user's wish: "Caret
+  Blinking"): after a tap's click the page sends `caretq` (phones and tablets only: `autoKbd`), `caretQuery` in host.js
+  looks four times over a second (`CARET_LOOKS`) through `main.js caretNow`: Windows' system caret
+  (`GetGUIThreadInfo`, `input.caretBox`), else UI Automation (`so_caret` in shellops.dll: the focused element, an edit
+  or a document whose value can be changed, its caret range or selection or box, on a thread of its own with a 1.5 s
+  limit; the few interfaces declared by hand, since mingw-w64 8's header has none, their order checked against
+  mingw-w64's current UIAutomationClient.idl), and answers `caret` `{on, d, x, y, h}` or `{on: false}`; nothing from a
+  Linux host yet. On: the hidden field takes the focus (the phone's keyboard comes up: a focus shortly after a tap still
+  counts as the person's), text smaller than `CARET_PX` is zoomed in about the caret (up to 3x), and the picture is
+  moved so that the caret's line stays above the keyboard (`revealCaret`; with the keyboard open the picture keeps the
+  size it had without it, `layout`'s `kbOpen`); off: a keyboard that came up by itself goes down, and its zoom with
+  it. Seen in the test VM (Windows 10, real programs, 2026-11-26): Notepad and the Run dialog by the system caret; the
+  Start menu's search, Edge's address bar and web fields and an Electron program by UI Automation - a Chromium program
+  only from a moment after the first question (the first gets its window, 0.8 s later the field), and afterwards that
+  program reports its accessibility support as on (`app.isAccessibilitySupportEnabled`; VS Code with
+  `editor.accessibilitySupport: auto` takes that for a screen reader), as with Windows' own touch keyboard. The
+  self-test traces the gestures and the keyboard with a made-up host answer; `--caret-check` (a test PC: a window
+  takes the focus) asks a separate Electron program for real. Not tried on a real phone yet. The phone's keyboard types into a hidden textarea (`#kbd`) that always keeps one space so
   Backspace has something to delete; what changes there goes as `text` (characters, Hangul composition
   included) or Backspace/Enter/Tab keys. The host types `text` with `KEYEVENTF_UNICODE` on Windows; on
   X11 with keycodes lent to the characters' keysyms (see the Linux gotchas). A key row offers Esc, Tab, sticky Ctrl/Alt/Shift/Win (for the next
@@ -1716,6 +1741,7 @@ Run from `host/` with Electron's env var cleared.
 | `electron . --selftest --frame-check` | Only presses from the client onto the host window's own frame (`framecheck.js`, Windows): its minimize button and a title-bar drag through the real input path, then a press around it that the input guard must end within about a second. Shows the host window and INJECTS INPUT onto it for about fifteen seconds: the test VM, or with the user's agreement |
 | `electron . --selftest --dropin-check` | Only real drags IN (`dragcheck.js runIn`): from an Explorer window on the second display onto a client window's picture of the first, dropped by the host into another Explorer window (empty space; a folder icon; a whole folder). Needs two displays. INJECTS INPUT for about half a minute: only with the user's agreement |
 | `electron . --selftest --soak=<minutes>` | A long session instead of the rest of the self-test, to find what grows: the view-only client keeps switching monitors and going to the overview, and the host drops the session every minute so the client reconnects. Every 20 s (15, 35 and 55 s after a reconnect), after collecting garbage in every process (the pages through the debugger protocol, the main process through V8's `gc()`): memory of every process (the host page and the client page separately), the script heaps of both pages and of the main process, and on Windows the kernel/GDI/USER handles of the main process and the host page. Fails when what each session leaves behind in the main process and both pages together (median of the last third of the samples minus the first, per reconnect, after the first 3 minutes) passes 2 MB. `--soak-heap=<folder>` writes two heap snapshots of the main process (they hold the test's throwaway key; delete them), `--soak-no-audio` leaves the system sound out after the first session. 2026-11-13, before that day's fixes: about +1.2 MB and +8 to +10 kernel handles (sections and mutexes) per reconnect in the main process. Traced with a bare Electron script to the engine's desktop capture started for the sound of every session (2 sections and 2 mutexes per start; `desktopCapturer.getSources` and peer connections leave nothing) and fixed (the sound is taken over, the source list cached). After: 10 min, 9 reconnects, main process 85-86 MB and its handles flat, both pages flat; the host page still gained about 2 handles per monitor per session, traced to destroyed D3D devices and fixed in `capture.dll` (see "Native capture") |
+| `electron . --selftest --caret-check` | Windows, a test PC only (a window of its own takes the focus): an Electron program started for it, with a focused text field, asked for its text caret as a host asks after a phone's tap (system caret, then UI Automation), and again once it left the field. Says as INFO whether that program then reports its accessibility support as on |
 | `electron . --selftest --clip-check` | Same, plus putting two files on this PC's clipboard and reading them back, files copied on the host announced and fetched, files the client sent not announced back, and (Windows) text from the client on the clipboard before the next input. Only runs when the clipboard holds nothing or plain text, which is put back |
 | `electron . --selftest --cursor-check` | Same, plus a real-screen check that hiding the host cursor removes it from the video. The PC's cursor vanishes for about 20 seconds, so ask the user first. Windows only |
 | `electron . --selftest --input-check` | Linux (X11) only (`inputcheck.js`): the pointer read back after an XTest move, whether the engine's video has the pointer in it (INFO), all 133 keys of the table, five buttons and the wheel into a test window, window-or-desktop under the pointer, text and a file dragged out of a second program it starts, and the client app's drop placement. INJECTS INPUT: on a virtual display only, or with the user's agreement |
@@ -1855,8 +1881,10 @@ copies do not.
 
 A receiver drops a message of more than 40 chunks (120,000 characters, about 90 KB deflated). Every
 loader handed out has this limit and cannot be changed, so the `app` reply with the whole page must
-fit: the self-test fails above 36 chunks (19 on 2026-11-13). New code also drops a message that
-inflates past 1 MiB. The relay subscription (`signal.js`) resubscribes by itself when EventSource
+fit: the self-test fails above 36 chunks (19 on 2026-11-13; 36 on 2026-11-25, then the page's whole-line comments were
+left out when it is built: `stripComments` in build-client.js, which reads the scripts as JavaScript does and leaves
+the page as it is if it loses its way; release/build.js signs the same page; 27 chunks then). New code also drops a
+message that inflates past 1 MiB. The relay subscription (`signal.js`) resubscribes by itself when EventSource
 gives up (2 s, doubling to 60 s), when a subscription has not opened within 2 minutes, and when a
 stream that brought ntfy keepalives stays silent for 3 minutes; what is published in that gap is
 lost and the sender retries. Checked with Node tests against a fake EventSource and relay only.

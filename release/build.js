@@ -98,9 +98,11 @@ function build({ out = path.join(ROOT, 'dist', 'release'), key = defaultKey(), c
   // folder, serves an unsigned page. `kind: 'page'` keeps it from passing as a manifest, and the reverse.
   if (files.has('host/client.template.html') && files.has('host/signal.js')) {
     const builder = require('../host/build-client');
-    // (i18n.js is inlined into the page from 0.9.6 on, as the host does: build-client.js fill)
+    // (i18n.js is inlined into the page from 0.9.6 on, as the host does: build-client.js fill; and from 0.11.0 the
+    // page's whole-line comments are left out, as build() does: stripComments)
     const i18n = files.has('host/i18n.js') ? files.get('host/i18n.js').toString('utf8') : '';
-    const html = builder.fillText(files.get('host/client.template.html').toString('utf8'), files.get('host/signal.js').toString('utf8'), builder.DEFAULT_SERVER, '', i18n);
+    const filled = builder.fillText(files.get('host/client.template.html').toString('utf8'), files.get('host/signal.js').toString('utf8'), builder.DEFAULT_SERVER, '', i18n);
+    const html = builder.stripComments ? builder.stripComments(filled) : filled;
     const statement = Buffer.from(JSON.stringify({ format: 1, app: core.APP, kind: 'page', version, server: builder.DEFAULT_SERVER, sha256: core.sha256(Buffer.from(html, 'utf8')) }) + '\n');
     let pagePem;
     try { pagePem = fs.readFileSync(key, 'utf8'); } catch { throw new Error(`no signing key at ${key} (node release/keygen.js makes one)`); }
