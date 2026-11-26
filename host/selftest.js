@@ -965,7 +965,14 @@ exports.run = async ({ cfg, buildClientHtml, buildLoaderHtml, app, offerFile, dr
           await js(`READONLY = false; window.__rd.lastDrop = null; 1`);
           w.webContents.focus(); w.webContents.paste();
           const [pasted, ps] = await until((x) => x.xfer.inDone > px0.inDone || x.xfer.inFailed > px0.inFailed, 8);
-          const pl = await js(`(() => { READONLY = true; const l = window.__rd.lastDrop; return l && { plain: l.plain, skipped: l.skipped || [], files: l.files, error: l.error }; })()`);
+          // The counts may move for an earlier transfer that ends late (seen once in CI, 2026-11-26: lastDrop still
+          // empty): wait for what this paste read as well.
+          let pl = null;
+          for (let i = 0; i < 30 && !pl; i++) {
+            pl = await js(`(() => { const l = window.__rd.lastDrop; return l && { plain: l.plain, skipped: l.skipped || [], files: l.files, error: l.error }; })()`);
+            if (!pl) await sleep(100);
+          }
+          await js('READONLY = true; 1');
           info(`pasted a file and a folder: the browser listed ${pl ? pl.plain : '?'}, ${pl && pl.files === 2 ? 'the folder went whole (its file inside)' : 'left out ' + (pl ? JSON.stringify(pl.skipped) : '?')}`);
           check('files pasted into the picture: the file goes, and the folder whole (or, where the browser hands it over as a file, left out and named)', pasted && ps.xfer.inHow === 'staged' && pl
             && (pl.files === 2 || pl.skipped.includes('pasted-folder')), JSON.stringify({ how: ps.xfer.inHow, ...pl }));
