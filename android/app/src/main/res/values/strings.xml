@@ -1,7 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name" translatable="false">Pangmote</string>
-    <string name="leave_question">Close Pangmote? The connection to the PC ends.</string>
-    <string name="leave">Close</string>
+    <string name="leave_question">Disconnect and go back to the list of PCs?</string>
+    <string name="leave">Disconnect</string>
     <string name="stay">Stay</string>
+    <string name="home_empty">No PCs yet</string>
+    <string name="home_how">On the PC, in the Pangmote host window, press \"Show QR code\" under \"Add a phone\", then scan it with the button below.</string>
+    <string name="home_scan">Add a PC with a QR code</string>
+    <string name="home_key">Connect with an access key</string>
+    <string name="home_last">last connected {0}</string>
+    <string name="home_never">not connected yet</string>
+    <string name="home_rename">Rename</string>
+    <string name="home_remove">Remove from the list</string>
+    <string name="home_remove_q">Remove {0} from the list? To use it again, add it again with a QR code. To remove this phone from the host too, remove it under Registered devices in the host window.</string>
+    <string name="ok">OK</string>
+    <string name="cancel">Cancel</string>
+    <string name="licenses">Open source licenses</string>
+    <string name="scan_hint">Point the camera at the Pangmote QR code on the PC\'s screen</string>
+    <string name="scan_no_camera">The camera cannot be used. Allow camera access for Pangmote in Settings.</string>
+    <string name="scan_not_ours">This is not a Pangmote QR code. Scan the code of \"Add a phone\" in the host window.</string>
 </resources>

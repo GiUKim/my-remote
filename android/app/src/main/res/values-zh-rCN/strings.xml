@@ -1,6 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="leave_question">要关闭 Pangmote 吗？与电脑的连接会断开。</string>
-    <string name="leave">关闭</string>
-    <string name="stay">继续使用</string>
+    <string name="leave_question">断开连接并返回电脑列表？</string>
+    <string name="leave">断开</string>
+    <string name="stay">继续</string>
+    <string name="home_empty">还没有添加电脑</string>
+    <string name="home_how">在电脑的 Pangmote 主机窗口中，点“添加手机”里的“显示二维码”，然后用下面的按钮扫描。</string>
+    <string name="home_scan">用二维码添加电脑</string>
+    <string name="home_key">用访问密钥连接</string>
+    <string name="home_last">上次连接 {0}</string>
+    <string name="home_never">尚未连接</string>
+    <string name="home_rename">重命名</string>
+    <string name="home_remove">从列表中删除</string>
+    <string name="home_remove_q">要从列表中删除 {0} 吗？之后要再用，需要重新用二维码添加。若也要在主机上删除这部手机，请在主机窗口的已注册设备中删除。</string>
+    <string name="ok">确定</string>
+    <string name="cancel">取消</string>
+    <string name="licenses">开源许可</string>
+    <string name="scan_hint">把电脑屏幕上的 Pangmote 二维码放进框内</string>
+    <string name="scan_no_camera">无法使用相机。请在设置中允许 Pangmote 使用相机。</string>
+    <string name="scan_not_ours">这不是 Pangmote 二维码。请扫描主机窗口“添加手机”中的二维码。</string>
 </resources>

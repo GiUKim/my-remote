@@ -1,6 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="leave_question">Pangmote を閉じますか? PC との接続が切れます。</string>
-    <string name="leave">閉じる</string>
+    <string name="leave_question">接続を切って PC の一覧に戻りますか?</string>
+    <string name="leave">切断</string>
     <string name="stay">続ける</string>
+    <string name="home_empty">まだ PC がありません</string>
+    <string name="home_how">PC の Pangmote ホストウィンドウで「スマートフォンを追加」の「QRコードを表示」を押し、下のボタンで読み取ってください。</string>
+    <string name="home_scan">QR コードで PC を追加</string>
+    <string name="home_key">接続キーで接続</string>
+    <string name="home_last">最終接続 {0}</string>
+    <string name="home_never">まだ接続していません</string>
+    <string name="home_rename">名前を変更</string>
+    <string name="home_remove">一覧から削除</string>
+    <string name="home_remove_q">{0} を一覧から削除しますか? もう一度使うには QR コードで追加し直します。ホスト側からもこのスマートフォンを消すには、ホストウィンドウの登録済みデバイスで削除してください。</string>
+    <string name="ok">OK</string>
+    <string name="cancel">キャンセル</string>
+    <string name="licenses">オープンソースライセンス</string>
+    <string name="scan_hint">PC 画面の Pangmote QR コードを枠の中に写してください</string>
+    <string name="scan_no_camera">カメラを使用できません。設定で Pangmote のカメラへのアクセスを許可してください。</string>
+    <string name="scan_not_ours">Pangmote の QR コードではありません。ホストウィンドウの「スマートフォンを追加」の QR コードを写してください。</string>
 </resources>

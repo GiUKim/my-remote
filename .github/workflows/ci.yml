@@ -88,11 +88,11 @@ jobs:
           curl -sfL -o /tmp/gradle.zip "https://services.gradle.org/distributions/gradle-$v-bin.zip"
           echo "$(curl -sfL "https://services.gradle.org/distributions/gradle-$v-bin.zip.sha256")  /tmp/gradle.zip" | sha256sum -c -
           unzip -q /tmp/gradle.zip -d /tmp && mv "/tmp/gradle-$v" /tmp/gradle
-      - name: Build the test APK and the release bundle
+      - name: Build the test APK and the release bundle, and lint (an error fails the job)
         working-directory: android
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"
-          /tmp/gradle/bin/gradle assembleDebug bundleRelease --no-daemon --console=plain
+          /tmp/gradle/bin/gradle assembleDebug bundleRelease lintDebug --no-daemon --console=plain
       - uses: actions/upload-artifact@v4
         with:
           name: pangmote-android-debug

@@ -1,6 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="leave_question">Đóng Pangmote? Kết nối với PC sẽ bị ngắt.</string>
-    <string name="leave">Đóng</string>
-    <string name="stay">Tiếp tục dùng</string>
+    <string name="leave_question">Ngắt kết nối và quay lại danh sách PC?</string>
+    <string name="leave">Ngắt</string>
+    <string name="stay">Ở lại</string>
+    <string name="home_empty">Chưa có PC nào</string>
+    <string name="home_how">Trên PC, trong cửa sổ máy chủ Pangmote, nhấn \"Hiện mã QR\" ở mục \"Thêm điện thoại\", rồi quét bằng nút bên dưới.</string>
+    <string name="home_scan">Thêm PC bằng mã QR</string>
+    <string name="home_key">Kết nối bằng khóa truy cập</string>
+    <string name="home_last">kết nối lần cuối {0}</string>
+    <string name="home_never">chưa kết nối</string>
+    <string name="home_rename">Đổi tên</string>
+    <string name="home_remove">Xóa khỏi danh sách</string>
+    <string name="home_remove_q">Xóa {0} khỏi danh sách? Muốn dùng lại thì thêm lại bằng mã QR. Muốn xóa điện thoại này khỏi máy chủ, hãy xóa trong Thiết bị đã đăng ký ở cửa sổ máy chủ.</string>
+    <string name="ok">OK</string>
+    <string name="cancel">Hủy</string>
+    <string name="licenses">Giấy phép nguồn mở</string>
+    <string name="scan_hint">Hướng camera vào mã QR Pangmote trên màn hình PC</string>
+    <string name="scan_no_camera">Không dùng được camera. Hãy cho phép Pangmote dùng camera trong Cài đặt.</string>
+    <string name="scan_not_ours">Đây không phải mã QR Pangmote. Hãy quét mã ở mục \"Thêm điện thoại\" trong cửa sổ máy chủ.</string>
 </resources>

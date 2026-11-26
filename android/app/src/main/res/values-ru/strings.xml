@@ -1,6 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="leave_question">Закрыть Pangmote? Подключение к ПК будет разорвано.</string>
-    <string name="leave">Закрыть</string>
+    <string name="leave_question">Отключиться и вернуться к списку ПК?</string>
+    <string name="leave">Отключиться</string>
     <string name="stay">Остаться</string>
+    <string name="home_empty">ПК пока нет</string>
+    <string name="home_how">На ПК в окне хоста Pangmote нажмите «Показать QR-код» в разделе «Добавить телефон» и отсканируйте его кнопкой ниже.</string>
+    <string name="home_scan">Добавить ПК по QR-коду</string>
+    <string name="home_key">Подключиться по ключу доступа</string>
+    <string name="home_last">последнее подключение {0}</string>
+    <string name="home_never">ещё не подключались</string>
+    <string name="home_rename">Переименовать</string>
+    <string name="home_remove">Удалить из списка</string>
+    <string name="home_remove_q">Удалить {0} из списка? Чтобы снова им пользоваться, добавьте его заново по QR-коду. Чтобы удалить этот телефон и на хосте, удалите его в разделе «Зарегистрированные устройства» окна хоста.</string>
+    <string name="ok">ОК</string>
+    <string name="cancel">Отмена</string>
+    <string name="licenses">Лицензии открытого ПО</string>
+    <string name="scan_hint">Наведите камеру на QR-код Pangmote на экране ПК</string>
+    <string name="scan_no_camera">Камера недоступна. Разрешите Pangmote доступ к камере в настройках.</string>
+    <string name="scan_not_ours">Это не QR-код Pangmote. Отсканируйте код из раздела «Добавить телефон» в окне хоста.</string>
 </resources>

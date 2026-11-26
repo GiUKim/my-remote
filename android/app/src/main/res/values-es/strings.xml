@@ -1,6 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="leave_question">¿Cerrar Pangmote? La conexión con el PC se cortará.</string>
-    <string name="leave">Cerrar</string>
+    <string name="leave_question">¿Desconectar y volver a la lista de PC?</string>
+    <string name="leave">Desconectar</string>
     <string name="stay">Seguir</string>
+    <string name="home_empty">Aún no hay PC</string>
+    <string name="home_how">En el PC, en la ventana del host de Pangmote, pulsa «Mostrar código QR» en «Añadir un teléfono» y escanéalo con el botón de abajo.</string>
+    <string name="home_scan">Añadir un PC con código QR</string>
+    <string name="home_key">Conectar con una clave de acceso</string>
+    <string name="home_last">última conexión {0}</string>
+    <string name="home_never">aún sin conectar</string>
+    <string name="home_rename">Cambiar nombre</string>
+    <string name="home_remove">Quitar de la lista</string>
+    <string name="home_remove_q">¿Quitar {0} de la lista? Para volver a usarlo, añádelo de nuevo con un código QR. Para quitar también este teléfono del host, hazlo en Dispositivos registrados de la ventana del host.</string>
+    <string name="ok">Aceptar</string>
+    <string name="cancel">Cancelar</string>
+    <string name="licenses">Licencias de código abierto</string>
+    <string name="scan_hint">Apunta la cámara al código QR de Pangmote en la pantalla del PC</string>
+    <string name="scan_no_camera">No se puede usar la cámara. Permite el acceso a la cámara para Pangmote en Ajustes.</string>
+    <string name="scan_not_ours">No es un código QR de Pangmote. Escanea el código de «Añadir un teléfono» en la ventana del host.</string>
 </resources>

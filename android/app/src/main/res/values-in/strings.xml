@@ -1,6 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="leave_question">Tutup Pangmote? Sambungan ke PC akan terputus.</string>
-    <string name="leave">Tutup</string>
-    <string name="stay">Tetap di sini</string>
+    <string name="leave_question">Putuskan sambungan dan kembali ke daftar PC?</string>
+    <string name="leave">Putuskan</string>
+    <string name="stay">Tetap</string>
+    <string name="home_empty">Belum ada PC</string>
+    <string name="home_how">Di PC, pada jendela host Pangmote, tekan \"Tampilkan kode QR\" di bagian \"Tambah ponsel\", lalu pindai dengan tombol di bawah.</string>
+    <string name="home_scan">Tambah PC dengan kode QR</string>
+    <string name="home_key">Sambungkan dengan kunci akses</string>
+    <string name="home_last">terakhir tersambung {0}</string>
+    <string name="home_never">belum pernah tersambung</string>
+    <string name="home_rename">Ganti nama</string>
+    <string name="home_remove">Hapus dari daftar</string>
+    <string name="home_remove_q">Hapus {0} dari daftar? Untuk memakainya lagi, tambahkan lagi dengan kode QR. Untuk menghapus ponsel ini juga dari host, hapus di Perangkat terdaftar pada jendela host.</string>
+    <string name="ok">OK</string>
+    <string name="cancel">Batal</string>
+    <string name="licenses">Lisensi sumber terbuka</string>
+    <string name="scan_hint">Arahkan kamera ke kode QR Pangmote di layar PC</string>
+    <string name="scan_no_camera">Kamera tidak bisa dipakai. Izinkan akses kamera untuk Pangmote di Setelan.</string>
+    <string name="scan_not_ours">Ini bukan kode QR Pangmote. Pindai kode di bagian \"Tambah ponsel\" pada jendela host.</string>
 </resources>

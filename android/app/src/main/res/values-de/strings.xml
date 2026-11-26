@@ -1,6 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="leave_question">Pangmote schließen? Die Verbindung zum PC wird getrennt.</string>
-    <string name="leave">Schließen</string>
-    <string name="stay">Weiter nutzen</string>
+    <string name="leave_question">Verbindung trennen und zur PC-Liste zurückkehren?</string>
+    <string name="leave">Trennen</string>
+    <string name="stay">Bleiben</string>
+    <string name="home_empty">Noch keine PCs</string>
+    <string name="home_how">Öffne am PC das Pangmote-Hostfenster, tippe unter „Handy hinzufügen“ auf „QR-Code zeigen“ und scanne ihn mit der Taste unten.</string>
+    <string name="home_scan">PC per QR-Code hinzufügen</string>
+    <string name="home_key">Mit Zugangsschlüssel verbinden</string>
+    <string name="home_last">zuletzt verbunden {0}</string>
+    <string name="home_never">noch nicht verbunden</string>
+    <string name="home_rename">Umbenennen</string>
+    <string name="home_remove">Aus der Liste entfernen</string>
+    <string name="home_remove_q">{0} aus der Liste entfernen? Um ihn wieder zu nutzen, füge ihn erneut per QR-Code hinzu. Um dieses Handy auch beim Host zu entfernen, lösche es im Hostfenster unter Registrierte Geräte.</string>
+    <string name="ok">OK</string>
+    <string name="cancel">Abbrechen</string>
+    <string name="licenses">Open-Source-Lizenzen</string>
+    <string name="scan_hint">Richte die Kamera auf den Pangmote-QR-Code am PC-Bildschirm</string>
+    <string name="scan_no_camera">Die Kamera kann nicht genutzt werden. Erlaube Pangmote in den Einstellungen den Kamerazugriff.</string>
+    <string name="scan_not_ours">Das ist kein Pangmote-QR-Code. Scanne den Code unter „Handy hinzufügen“ im Hostfenster.</string>
 </resources>

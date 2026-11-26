@@ -1,6 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="leave_question">要關閉 Pangmote 嗎？與電腦的連線會中斷。</string>
-    <string name="leave">關閉</string>
-    <string name="stay">繼續使用</string>
+    <string name="leave_question">中斷連線並返回電腦清單？</string>
+    <string name="leave">中斷</string>
+    <string name="stay">繼續</string>
+    <string name="home_empty">還沒有新增電腦</string>
+    <string name="home_how">在電腦的 Pangmote 主機視窗中，點「新增手機」裡的「顯示 QR 碼」，然後用下面的按鈕掃描。</string>
+    <string name="home_scan">用 QR 碼新增電腦</string>
+    <string name="home_key">用存取金鑰連線</string>
+    <string name="home_last">上次連線 {0}</string>
+    <string name="home_never">尚未連線</string>
+    <string name="home_rename">重新命名</string>
+    <string name="home_remove">從清單中刪除</string>
+    <string name="home_remove_q">要從清單中刪除 {0} 嗎？之後要再用，需要重新用 QR 碼新增。若也要在主機上刪除這支手機，請在主機視窗的已註冊裝置中刪除。</string>
+    <string name="ok">確定</string>
+    <string name="cancel">取消</string>
+    <string name="licenses">開放原始碼授權</string>
+    <string name="scan_hint">把電腦螢幕上的 Pangmote QR 碼放進框內</string>
+    <string name="scan_no_camera">無法使用相機。請在設定中允許 Pangmote 使用相機。</string>
+    <string name="scan_not_ours">這不是 Pangmote QR 碼。請掃描主機視窗「新增手機」中的 QR 碼。</string>
 </resources>

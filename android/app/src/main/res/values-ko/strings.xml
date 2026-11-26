@@ -1,6 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="leave_question">Pangmote를 닫을까요? PC와의 연결이 끊깁니다.</string>
-    <string name="leave">닫기</string>
-    <string name="stay">계속 쓰기</string>
+    <string name="leave_question">연결을 끊고 PC 목록으로 돌아갈까요?</string>
+    <string name="leave">끊기</string>
+    <string name="stay">계속</string>
+    <string name="home_empty">아직 추가한 PC가 없습니다</string>
+    <string name="home_how">PC의 Pangmote 호스트 창에서 \"휴대폰 추가\"의 \"QR 보기\"를 누르고, 아래 버튼으로 QR을 찍으세요.</string>
+    <string name="home_scan">QR로 PC 추가</string>
+    <string name="home_key">접속 키로 접속</string>
+    <string name="home_last">마지막 접속 {0}</string>
+    <string name="home_never">아직 접속 전</string>
+    <string name="home_rename">이름 바꾸기</string>
+    <string name="home_remove">목록에서 지우기</string>
+    <string name="home_remove_q">{0}을(를) 목록에서 지울까요? 다시 쓰려면 QR로 다시 추가해야 합니다. 이 휴대폰을 호스트에서도 지우려면 호스트 창의 접속한 기기에서 지우세요.</string>
+    <string name="ok">확인</string>
+    <string name="cancel">취소</string>
+    <string name="licenses">오픈소스 라이선스</string>
+    <string name="scan_hint">PC 화면의 Pangmote QR 코드를 네모 안에 비추세요</string>
+    <string name="scan_no_camera">카메라를 쓸 수 없습니다. 설정에서 Pangmote의 카메라 권한을 허용해 주세요.</string>
+    <string name="scan_not_ours">Pangmote QR 코드가 아닙니다. 호스트 창의 \"휴대폰 추가\" QR을 비추세요.</string>
 </resources>
