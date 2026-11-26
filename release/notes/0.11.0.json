@@ -1,0 +1,14 @@
+{
+  "ko": [
+    "휴대폰으로 조종할 때 트랙패드 방식이 기본이 됩니다: 한 손가락으로 커서를 움직이고, 탭은 커서 자리 클릭, 길게 누르고 떼면 오른쪽 클릭, 길게 누른 채 끌면 드래그, 두 손가락으로 스크롤과 확대입니다. 툴바에서 직접 터치 방식으로 바꿀 수 있습니다",
+    "휴대폰에서 입력칸을 눌러 호스트에 글자 커서가 생기면 휴대폰 키보드가 저절로 올라오고, 입력하는 줄이 키보드 위에 보이게 화면이 옮겨집니다 (Windows 호스트, 한글 입력기 ibus를 쓰는 Linux 호스트)",
+    "Chrome·VS Code 같은 프로그램은 처음 한 번 1초 가까이 늦게 올라오고, 그 뒤 VS Code가 새 창을 화면 읽기 프로그램 최적화 모드로 열 수 있습니다 (원하지 않으면 VS Code 설정 editor.accessibilitySupport를 off로)",
+    "호스트를 이 버전으로 업데이트해야 적용됩니다"
+  ],
+  "en": [
+    "Controlling from a phone now works like a trackpad by default: one finger moves the pointer, a tap clicks where it is, a long press released is a right-click, a long press moved is a drag, two fingers scroll and zoom. The toolbar switches to direct touch",
+    "Tapping a text field from a phone brings the phone's keyboard up by itself when a text caret appears on the host, and the line being typed stays above the keyboard (Windows hosts, and Linux hosts with ibus)",
+    "Programs such as Chrome and VS Code answer about a second late the first time, and VS Code may then open new windows in its screen reader optimized mode (set editor.accessibilitySupport to off if you do not want that)",
+    "Update the host to this version"
+  ]
+}
