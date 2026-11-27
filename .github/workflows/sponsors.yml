@@ -1,9 +1,10 @@
-# The picture of Pangmote's sponsors in the README (release/sponsors.js): drawn every day and by hand, and published
-# as the one file of the branch `sponsors`, in one commit that replaces the one before (never on main: see the
-# script's header). Asked with the repository secret SPONSORS_TOKEN when it is set (a classic personal access token
-# of the sponsored account, the user's own: never read, printed or set by anyone else), else with the workflow's own
-# token. This job never fails: it runs on main's head commit, and release/build.js wants every check run of a commit
-# to have passed. What went wrong shows as a warning on the run.
+# The picture of Pangmote's sponsors and the badge of their count in the README (release/sponsors.js): drawn every
+# day and by hand, and published as the files of the branch `sponsors`, in one commit that replaces the one before
+# (never on main: see the script's header). Asked with the workflow's own token, which reads public sponsorships
+# (tried 2026-11-27); the repository secret SPONSORS_TOKEN is taken first when it is set (a classic personal access
+# token of the sponsored account, the user's own: never read, printed or set by anyone else), should GitHub stop
+# allowing that. This job never fails: it runs on main's head commit, and release/build.js wants every check run of
+# a commit to have passed. What went wrong shows as a warning on the run.
 name: Sponsors
 
 on:
@@ -39,8 +40,8 @@ jobs:
         env:
           SPONSORS_TOKEN: ${{ secrets.SPONSORS_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: node release/sponsors.js --login="$GITHUB_REPOSITORY_OWNER" --old="$RUNNER_TEMP/old.svg" --out="$RUNNER_TEMP/sponsors.svg" --soft
-      - name: Publish it as the branch sponsors (one commit, replacing the one before)
+        run: node release/sponsors.js --login="$GITHUB_REPOSITORY_OWNER" --old="$RUNNER_TEMP/old.svg" --out="$RUNNER_TEMP/sponsors.svg" --badge="$RUNNER_TEMP/badge.svg" --soft
+      - name: Publish them as the branch sponsors (one commit, replacing the one before)
         continue-on-error: true
         run: |
           if [ ! -f "$RUNNER_TEMP/sponsors.svg" ]; then echo "nothing new to publish"; exit 0; fi
@@ -50,8 +51,8 @@ jobs:
           git checkout -q --orphan sponsors-new
           git rm -rq --cached .
           find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-          cp "$RUNNER_TEMP/sponsors.svg" sponsors.svg
-          git add sponsors.svg
-          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -q -m "The sponsors picture (release/sponsors.js, drawn by the Sponsors workflow)"
+          cp "$RUNNER_TEMP/sponsors.svg" "$RUNNER_TEMP/badge.svg" .
+          git add sponsors.svg badge.svg
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -q -m "The sponsors picture and badge (release/sponsors.js, drawn by the Sponsors workflow)"
           git push -q --force origin HEAD:refs/heads/sponsors
           echo "published"

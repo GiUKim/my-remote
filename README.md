@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sponsors/GiUKim"><img src="https://img.shields.io/github/sponsors/GiUKim?label=%ED%9B%84%EC%9B%90%EC%9E%90&amp;logo=githubsponsors&amp;color=ea4aaa" alt="GitHub Sponsors 후원자 수"></a>
+  <a href="https://github.com/sponsors/GiUKim"><img src="https://raw.githubusercontent.com/GiUKim/pangmote/sponsors/badge.svg" alt="GitHub Sponsors 후원자 수"></a>
 </p>
 
 ### 🐧 Ubuntu는 터미널로도 설치할 수 있습니다

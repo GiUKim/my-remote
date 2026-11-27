@@ -1,7 +1,7 @@
-// release/sponsors.js (the README's picture of the sponsors) without GitHub: sponsorships asked page by page with
-// private ones dropped, avatars taken only from GitHub's avatar host and only as pictures, the drawing (escaped,
-// nothing outside it referenced, rows, the cap, the empty panel), the key (the same sponsors give the same bytes,
-// and "unchanged"), --soft, and a token never printed.
+// release/sponsors.js (the README's picture and badge of the sponsors) without GitHub: sponsorships asked page by
+// page with private ones dropped, avatars taken only from GitHub's avatar host and only as pictures, the drawing
+// (escaped, nothing outside it referenced, rows, the cap, the empty panel), the badge, the key (the same sponsors
+// give the same bytes, and "unchanged"), --soft, and a token never printed.
 //   node release/test-sponsors.js
 'use strict';
 const assert = require('assert');
@@ -96,6 +96,15 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-sponsors-'));
     assert.ok(!svg.includes('<image'));
   });
 
+  await check('the badge: the count, wider for more digits, nothing outside referenced', async () => {
+    const one = S.badge(1), many = S.badge(123), w = (svg) => +/width="(\d+)"/.exec(svg)[1];
+    assert.ok(one.includes('후원자') && />1<\/text>/.test(one) && />123<\/text>/.test(many));
+    assert.strictEqual(w(many), w(one) + 14);
+    assert.ok(one.includes('height="20"') && one.endsWith('</svg>\n'));
+    assert.ok(!/href=|url\((?!#)|<image|<script/.test(one + many));
+    assert.ok(/aria-label="후원자: 0"/.test(S.badge(0)));
+  });
+
   await check('the key: the same sponsors and avatars give the same bytes; a new sponsor, avatar or drawing a new key', async () => {
     const list = [{ login: 'alice', avatar: av('alice') }];
     const got = { alice: { type: 'image/png', b64: 'QUJD' } };
@@ -110,14 +119,15 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pangmote-sponsors-'));
     assert.strictEqual(S.readKey('<svg/>'), null);
   });
 
-  await check('the run: drawn, then "unchanged" with nothing written; asked with the stand-in only', async () => {
-    const out = path.join(tmp, 'a.svg'), lines = [];
-    const deps = { ask: async () => page([node('alice')]), get: okImage, log: (s) => lines.push(s), err: (s) => lines.push(s), script: 'x' };
-    assert.strictEqual(await S.main(['--login=owner', `--out=${out}`], {}, deps), 0);
-    assert.ok(fs.existsSync(out) && /drawn: 1 public sponsor/.test(lines[0]));
-    const again = path.join(tmp, 'b.svg');
-    assert.strictEqual(await S.main(['--login=owner', `--out=${again}`, `--old=${out}`], {}, deps), 0);
-    assert.ok(!fs.existsSync(again) && /unchanged/.test(lines[1]));
+  await check('the run: picture and badge drawn, then "unchanged" with nothing written; asked with the stand-in only', async () => {
+    const out = path.join(tmp, 'a.svg'), badge = path.join(tmp, 'badge.svg'), lines = [];
+    const deps = { ask: async () => page([node('alice'), node('bob')]), get: okImage, log: (s) => lines.push(s), err: (s) => lines.push(s), script: 'x' };
+    assert.strictEqual(await S.main(['--login=owner', `--out=${out}`, `--badge=${badge}`], {}, deps), 0);
+    assert.ok(fs.existsSync(out) && /drawn: 2 public sponsor/.test(lines[0]));
+    assert.ok(/>2<\/text>/.test(fs.readFileSync(badge, 'utf8')));
+    const again = path.join(tmp, 'b.svg'), badge2 = path.join(tmp, 'badge2.svg');
+    assert.strictEqual(await S.main(['--login=owner', `--out=${again}`, `--badge=${badge2}`, `--old=${out}`], {}, deps), 0);
+    assert.ok(!fs.existsSync(again) && !fs.existsSync(badge2) && /unchanged/.test(lines[1]));
     assert.strictEqual(await S.main(['--login=owner', `--out=${again}`, `--old=${path.join(tmp, 'none.svg')}`], {}, deps), 0);
     assert.ok(fs.existsSync(again), 'no old picture: drawn');
   });

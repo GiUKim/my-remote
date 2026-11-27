@@ -2,22 +2,22 @@
 // by themselves): the avatar and name of every person or organisation that sponsors the account on GitHub
 // Sponsors, on a dark panel of its own like the README's other pictures (so it reads on a light and a dark page),
 // the avatars inside it as data (a picture shown through <img> loads nothing else). The Sponsors workflow
-// (.github/workflows/sponsors.yml) draws it every day and publishes it as the one file of the branch `sponsors`, in
-// one commit that replaces the one before: never on main, where every commit wants CI and a pull in every clone,
-// and whose history would keep the picture of someone who has since stopped or turned private.
-// Only public sponsorships are drawn: private ones are not asked for (includePrivate: false), and are dropped if
-// they come all the same.
+// (.github/workflows/sponsors.yml) draws it every day, with a badge of the count (--badge), and publishes the two as
+// the files of the branch `sponsors`, in one commit that replaces the one before: never on main, where every commit
+// wants CI and a pull in every clone, and whose history would keep the picture of someone who has since stopped or
+// turned private. Only public sponsorships are drawn: private ones are not asked for (includePrivate: false), and
+// are dropped if they come all the same.
 //
-//   node release/sponsors.js --login=<account> --out=<file.svg> [--old=<file.svg>] [--gh=<gh>] [--soft]
+//   node release/sponsors.js --login=<account> --out=<file.svg> [--badge=<file.svg>] [--old=<file.svg>] [--gh=<gh>] [--soft]
 //
-// Asked with SPONSORS_TOKEN (a classic personal access token of the sponsored account with read:user only: the
-// user's, a repository secret; never read, print or set it for them), else, with --gh, through GitHub CLI and its
-// own login (drawing it on a PC), else with GITHUB_TOKEN (the workflow's own, which GitHub may not let read
-// sponsorships). A token goes to api.github.com and nowhere else and is never printed; avatars are fetched from
-// GitHub's avatar host only, without a token. --old: when that picture was drawn by this same script from the same
-// sponsors and avatars, nothing is written ("unchanged"). --soft: a failure is a warning (an annotation on GitHub)
-// with exit code 0, since the workflow runs on main's head commit and release/build.js wants every check run of a
-// commit to have passed.
+// Asked with SPONSORS_TOKEN when it is set (a classic personal access token of the sponsored account: the user's,
+// a repository secret; never read, print or set it for them), else, with --gh, through GitHub CLI and its own login
+// (drawing it on a PC), else with GITHUB_TOKEN (the workflow's own, which reads public sponsorships: tried
+// 2026-11-27, so no secret is needed). A token goes to api.github.com and nowhere else and is never printed; avatars
+// are fetched from GitHub's avatar host only, without a token. --old: when that picture was drawn by this same
+// script from the same sponsors and avatars, nothing is written ("unchanged"). --soft: a failure is a warning (an
+// annotation on GitHub) with exit code 0, since the workflow runs on main's head commit and release/build.js wants
+// every check run of a commit to have passed.
 'use strict';
 const fs = require('fs');
 const crypto = require('crypto');
@@ -155,23 +155,45 @@ function draw(list, avatars, key) {
   return out.join('\n');
 }
 
+// The count as a small badge for the top of the README, drawn here too: shields.io's badge of it took 2 to 10 s to
+// answer and GitHub's image proxy gives up after about 4, so the README showed it broken (tried 2026-11-27).
+// Public sponsorships, as in the picture. The texts are fitted to fixed widths (textLength), whatever the font.
+function badge(count) {
+  const value = String(count), LW = 61, RW = 14 + 7 * value.length, BW = LW + RW;
+  const text = (x, w, s) => `<text x="${x}" y="15" fill="#010101" fill-opacity=".3" textLength="${w}" lengthAdjust="spacingAndGlyphs">${s}</text><text x="${x}" y="14" fill="#fff" textLength="${w}" lengthAdjust="spacingAndGlyphs">${s}</text>`;
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${BW}" height="20" viewBox="0 0 ${BW} 20" role="img" aria-label="후원자: ${value}">`,
+    `  <title>GitHub Sponsors 후원자: ${value}</title>`,
+    '  <linearGradient id="g" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient>',
+    `  <clipPath id="r"><rect width="${BW}" height="20" rx="3"/></clipPath>`,
+    `  <g clip-path="url(#r)"><rect width="${LW}" height="20" fill="#555"/><rect x="${LW}" width="${RW}" height="20" fill="#ea4aaa"/><rect width="${BW}" height="20" fill="url(#g)"/></g>`,
+    `  ${heart(4, 3.5, '#ea4aaa').replace('translate(4 3.5)', 'translate(4 3.5) scale(0.55)')}`,
+    `  <g font-family="Verdana,Geneva,'DejaVu Sans','Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="11" text-anchor="middle">`,
+    `    ${text(37.5, 33, '후원자')}`,
+    `    ${text(LW + RW / 2, 7 * value.length, esc(value))}`,
+    '  </g>',
+    '</svg>',
+    '',
+  ].join('\n');
+}
+
 async function main(argv = process.argv.slice(2), env = process.env, deps = {}) {
   const log = deps.log || ((s) => console.log(s)), err = deps.err || ((s) => console.error(s));
   const arg = (n) => { const a = argv.find((x) => x.startsWith(`--${n}=`)); return a ? a.slice(n.length + 3) : undefined; };
   const soft = argv.includes('--soft');
   try {
-    const login = arg('login'), out = arg('out'), gh = arg('gh');
-    if (!login || !LOGIN.test(login) || !out) throw new Error('usage: node release/sponsors.js --login=<account> --out=<file.svg> [--old=<file.svg>] [--gh=<gh>] [--soft]');
+    const login = arg('login'), out = arg('out'), gh = arg('gh'), badgeOut = arg('badge');
+    if (!login || !LOGIN.test(login) || !out) throw new Error('usage: node release/sponsors.js --login=<account> --out=<file.svg> [--badge=<file.svg>] [--old=<file.svg>] [--gh=<gh>] [--soft]');
     let ask, via;
     if (deps.ask) { ask = deps.ask; via = 'a stand-in'; }
     else if (env.SPONSORS_TOKEN) { ask = (q, v) => askApi(env.SPONSORS_TOKEN, q, v); via = 'SPONSORS_TOKEN'; }
     else if (gh) { ask = (q, v) => askGh(gh, q, v); via = 'GitHub CLI'; }
     else if (env.GITHUB_TOKEN) { ask = (q, v) => askApi(env.GITHUB_TOKEN, q, v); via = "the workflow's own token"; }
-    else throw new Error('no token: the repository secret SPONSORS_TOKEN is not set (see the header of release/sponsors.js)');
+    else throw new Error('no token: neither SPONSORS_TOKEN nor GITHUB_TOKEN is set, and no --gh (see the header of release/sponsors.js)');
     let list;
     try { list = await collect(ask, login); }
     catch (e) {
-      const hint = via === "the workflow's own token" ? ' - set the repository secret SPONSORS_TOKEN (a classic token of the account with read:user only)' : '';
+      const hint = via === "the workflow's own token" ? ' - set the repository secret SPONSORS_TOKEN (a classic personal access token of the account, made by its owner)' : '';
       throw new Error(`asking GitHub with ${via} failed: ${e.message}${hint}`);
     }
     const avatars = {};
@@ -180,6 +202,7 @@ async function main(argv = process.argv.slice(2), env = process.env, deps = {}) 
     const old = arg('old') && fs.existsSync(arg('old')) ? readKey(fs.readFileSync(arg('old'), 'utf8')) : null;
     if (old === key) { log(`unchanged: ${list.length} public sponsor(s)`); return 0; }
     fs.writeFileSync(out, draw(list, avatars, key));
+    if (badgeOut) fs.writeFileSync(badgeOut, badge(list.length));
     const missing = list.slice(0, MAX_SHOWN).filter((s) => !avatars[s.login]).length;
     log(`drawn: ${list.length} public sponsor(s)${missing ? `, ${missing} drawn as a letter (no avatar)` : ''}, asked with ${via}`);
     return 0;
@@ -193,4 +216,4 @@ async function main(argv = process.argv.slice(2), env = process.env, deps = {}) 
 
 if (require.main === module) main().then((code) => process.exit(code));
 
-module.exports = { QUERY, LOGIN, MAX_SHOWN, PER_ROW, collect, avatarOf, draw, keyOf, readKey, esc, fit, main };
+module.exports = { QUERY, LOGIN, MAX_SHOWN, PER_ROW, collect, avatarOf, draw, badge, keyOf, readKey, esc, fit, main };
