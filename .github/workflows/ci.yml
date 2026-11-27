@@ -58,6 +58,8 @@ jobs:
         run: node release/ci-run.js node release/test-i18n.js
       - name: The check of a signed Pangmote.exe before a package takes it (the byte rules)
         run: node release/ci-run.js node release/test-signed-exe.js
+      - name: The README's picture of the sponsors (public only, avatars from GitHub only, escaped, the key)
+        run: node release/ci-run.js node release/test-sponsors.js
 
   native:
     name: native binaries rebuilt byte for byte

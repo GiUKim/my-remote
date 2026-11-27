@@ -21,6 +21,10 @@
   <sub>🌐 <a href="https://giukim.github.io/pangmote/">소개 페이지 (12개 언어)</a> &nbsp;·&nbsp; 💙 <a href="https://github.com/sponsors/GiUKim">후원</a> &nbsp;·&nbsp; 🏢 <a href="https://github.com/GiUKim/pangmote/issues/new?template=business.yml">업무용 사용 문의</a> &nbsp;·&nbsp; 🔏 <a href="#code-signing-policy">Code signing policy</a> &nbsp;·&nbsp; 📜 <a href="LICENSE">MIT</a></sub>
 </p>
 
+<p align="center">
+  <a href="https://github.com/sponsors/GiUKim"><img src="https://img.shields.io/github/sponsors/GiUKim?label=%ED%9B%84%EC%9B%90%EC%9E%90&amp;logo=githubsponsors&amp;color=ea4aaa" alt="GitHub Sponsors 후원자 수"></a>
+</p>
+
 ### 🐧 Ubuntu는 터미널로도 설치할 수 있습니다
 
 위 **Linux용 내려받기**와 같은 파일(데스크톱 앱)을 받아 `~/Pangmote`에 풉니다. 블록 오른쪽 위의 복사 단추로 복사해 터미널에 붙여 넣으세요.
@@ -191,8 +195,12 @@ sudo chown root:root ~/Pangmote/chrome-sandbox && sudo chmod 4755 ~/Pangmote/chr
 
 ## 💙 후원 · 업무용 사용
 
-- **Pangmote는 무료입니다.** 쓸모가 있었다면 [GitHub Sponsors](https://github.com/sponsors/GiUKim)로 후원해 주세요.
+- **Pangmote는 무료입니다.** 쓸모가 있었다면 [GitHub Sponsors](https://github.com/sponsors/GiUKim)로 후원해 주세요. 공개로 후원해 주신 분은 아래 그림에 하루 안에 저절로 나옵니다(비공개 후원은 나오지 않습니다).
 - **회사에서 쓰시나요?** [업무용 사용 문의](https://github.com/GiUKim/pangmote/issues/new?template=business.yml)로 규모와 필요한 기능을 알려 주세요. 회사망 안에서의 연결(중계 서버), 여러 PC의 기기 일괄 관리 같은 업무용 기능을 준비하는 데 반영합니다.
+
+<p align="center">
+  <a href="https://github.com/sponsors/GiUKim"><img src="https://raw.githubusercontent.com/GiUKim/pangmote/sponsors/sponsors.svg" alt="Pangmote를 후원해 주신 분들" width="880"></a>
+</p>
 
 ## 📜 라이선스 · 개인정보 · 코드 서명
 

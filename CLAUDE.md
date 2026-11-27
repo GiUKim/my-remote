@@ -109,6 +109,10 @@ the client app instead).
   (`release/signed-exe.js`); never sign anything with a certificate or tool of your own, and keep the policy
   page true: what it says about who builds, reviews and approves, and `PRIVACY.md` about every connection the
   program makes (a new one needs a line there before it ships).
+- **The sponsors picture's token is the user's.** `.github/workflows/sponsors.yml` asks GitHub Sponsors with the
+  repository secret `SPONSORS_TOKEN` when it is set (a classic personal access token of the user's account, made by
+  them): never read, print or set it, and never ask the user to paste it. The picture shows public sponsorships
+  only; keep it so (see "The sponsors picture" under CI).
 - **Publish a release only when the user asks for one.** Since 2026-11-16 (the user's decision, from
   v0.5.2 on) the agent publishes it, which was the user's step before: CI green on the commit
   (`release/build.js` checks), `release/build.js`, the packages (`release/package.js` on Windows; the
@@ -1699,7 +1703,7 @@ that name is made again under the account; GitHub Pages is not forwarded: the we
 Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하는 벤치마크, 버그를 잡는 CI/CD"):
 
 - **`.github/workflows/ci.yml`** on every push to `main`, every pull request, by hand and weekly:
-  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-devices.js`, `test-qr.js`, `test-totp.js`, `test-pagecheck.js`, `test-appsync.js`, `test-shellswap.js` with sh, `test-watchdog.js`, `test-cycle.js`, `test-keylock.js`, `test-imecheck.js`, `test-i18n.js`, `test-signed-exe.js`), `native` (`release/ci-native.js`:
+  `checks` (`release/ci-checks.js`, `test-update.js`, `test-hosts.js`, `test-devices.js`, `test-qr.js`, `test-totp.js`, `test-pagecheck.js`, `test-appsync.js`, `test-shellswap.js` with sh, `test-watchdog.js`, `test-cycle.js`, `test-keylock.js`, `test-imecheck.js`, `test-i18n.js`, `test-signed-exe.js`, `test-sponsors.js`), `native` (`release/ci-native.js`:
   every committed binary rebuilt from `native/` with Ubuntu 22.04's mingw-w64 and compared byte for byte),
   `Windows` (`test-assist.js`, `test-signed-exe.js` with Windows' Authenticode verdict, `test-shellswap.js` with PowerShell, `test-watchdog.js`, the self-test with `--client-app-check` (from 2026-11-16: device tokens, and safeStorage's key that only a normal quit writes, are Windows matters), `test-app.js --packaged`), `Linux X11` (the self-test with
   `--input-check --clip-check --client-app-check` under Xvfb, `test-app.js --packaged`) and the `performance
@@ -1708,7 +1712,22 @@ Set up 2026-11-15 at the user's request ("기능을 넣을 때 통과해야 하�
   SignPath sign `Pangmote.exe` (see "Code signing" under the installed app); without the secret it only builds.
 - **The release gate:** `release/build.js` refuses to build from a commit whose CI has not passed on GitHub
   (every check run finished successfully, each CI job among them; asked anonymously, the repository is
-  public). `--skip-ci` overrides it and says so; `--allow-dirty` try-out builds skip it.
+  public). `--skip-ci` overrides it and says so; `--allow-dirty` try-out builds skip it. It also refuses
+  uncommitted or untracked files under `host/`, `client/`, `app/`, `release/` and in `pangmote-client.html`:
+  new work there waits until it has run.
+- **The sponsors picture** (`sponsors.yml`, 2026-11-27, the user's wish: the sponsors' count and avatars in the
+  README). Every day and by hand, `release/sponsors.js` draws the account's public sponsorships (avatar and account
+  name, the avatars inside the SVG as data: a picture shown through `<img>` loads nothing else) and the job
+  publishes it as the only file of the branch `sponsors`, one commit force-pushed over the one before; the README
+  shows it from raw.githubusercontent.com, and the count as a shields.io badge. Not on main: a commit there would
+  want CI and a pull before the next push, and main's history would keep the avatar of someone who stopped or
+  turned private. The job never fails (every step `continue-on-error`, the script `--soft`: warnings instead):
+  scheduled and dispatched runs sit on main's head commit and the release gate wants every check run of a commit
+  passed, so an expired token would have blocked releases; a run under way makes `release/build.js` say "CI is
+  still running: sponsors picture" for a minute. Asked with `SPONSORS_TOKEN` when set, else the workflow's own
+  token. `privacyLevel` needs `read:user` (the GitHub CLI's token, with gist, read:org, repo and workflow, was
+  refused it), so the query leaves it out and relies on `includePrivate: false`; a sponsorship marked private
+  that comes all the same is dropped.
 - **Locally:** `git config core.hooksPath .githooks` once per clone turns on the pre-commit hook (the
   static checks, the leak scan on what is staged). Patterns of your own that must never be committed go
   into `.git/info/private-patterns` (one regular expression per line, untracked); in CI the same list can
@@ -1794,6 +1813,8 @@ Run from `host/` with Electron's env var cleared.
 | `node release/test-assist.js` | The host's side of the Windows assist service (`host/assist.js`) against a fake service and helper on test pipes: protocol and version, the pipe-server session checks, input routing per state and its encoding, pictures in pieces, Ctrl+Alt+Del, reconnecting, installing refused during a remote session, the first-start offer. Windows only (skips elsewhere); no input reaches the PC (the sink is recorded, never installed) and nothing runs elevated (`T.elevate`). A few seconds |
 | `host\bin\winassist.exe install`, `uninstall`, `status`, `grab <file.bmp>`, `grabmon <prefix>` | The assist service itself: install/uninstall need an elevated prompt (the host window's card does this through UAC). `grab` writes the current input desktop to a BMP (a secure one only when run as LocalSystem); `grabmon` every monitor as the helper sends them (`<prefix>-<n>.bmp`, rectangles printed). Both are pictures of the person's screen: delete them after looking |
 | `node release/test-signed-exe.js` | The signed-exe check: byte rules everywhere, Windows' Authenticode verdict on node.exe's own signature (taken off and put back, one byte changed). Seconds |
+| `node release/test-sponsors.js` | The README's picture of the sponsors (`release/sponsors.js`) without GitHub: private, unnamed and oddly named sponsorships dropped, avatars only from GitHub's avatar host and only as pictures, the drawing (escaped, nothing outside referenced, rows of nine, the cap, the empty panel), the key and "unchanged", `--soft`, a token never printed. A second |
+| `node release/sponsors.js --login=<account> --out=<file.svg> [--old=<file.svg>] [--gh=<gh>]` | Draws the sponsors picture; `--gh=<gh.exe>` asks through GitHub CLI's own login (a look on a PC before the workflow's run). It sends nothing anywhere but GitHub |
 | `node release/package.js --exe-only=<folder>` | Only `Pangmote.exe` as a package holds it, unsigned (what `sign.yml` uploads to SignPath). Windows |
 | `node release/package.js [--signed-exe=<file>] [--require-signed]` | The package with the signed program from `dist/signed/<Electron>/Pangmote.exe` (or the file given), checked first; `--require-signed` refuses to make an unsigned Windows package |
 | `node release/test-hosts.js` | The client app's list of PCs (`client/hosts.js`) in plain Node with a stand-in for the system's encryption: keys never as text in the file, duplicates, renaming, a new key, removal, a broken file kept, device tokens (kept, the key let go only for the token that worked, a key given again replaces the token). A second |
@@ -1854,6 +1875,7 @@ must then be given the new file). Run `npm run selftest` after either.
 | `release/signed-exe.js`, `release/test-signed-exe.js` | The check of a signed `Pangmote.exe` before a package takes it (same program plus a signature; Windows' own verdict: valid, timestamped, SignPath Foundation), and its test (made-up signature tables on a committed DLL; on Windows node.exe's real signature) |
 | `.github/workflows/sign.yml`, `release/signpath/artifact-configuration.xml` | Has SignPath sign `Pangmote.exe` (by hand, once per Electron version, approved in SignPath by the user); the artifact configuration to keep in the SignPath project |
 | `LICENSE`, `PRIVACY.md` | MIT; what the program sends where (required by the code signing policy; keep it true) |
+| `release/sponsors.js`, `release/test-sponsors.js`, `.github/workflows/sponsors.yml` | The README's picture of the sponsors (public sponsorships, drawn every day into the branch `sponsors`), its test, and the workflow (see "The sponsors picture" under CI) |
 | `release/test-update.js`, `release/test-app.js` | Tests of the shell: the logic in plain Node, and end to end in Electron |
 | `release/policy.json`, `release/notes/<version>.json` | The oldest version still allowed (set by a critical release); what changed, shown with an update |
 | `host/main.js` | Electron main: config and key storage, monitor enumeration, tray, IPC, isolated modes |

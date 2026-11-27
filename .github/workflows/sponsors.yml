@@ -1,0 +1,57 @@
+# The picture of Pangmote's sponsors in the README (release/sponsors.js): drawn every day and by hand, and published
+# as the one file of the branch `sponsors`, in one commit that replaces the one before (never on main: see the
+# script's header). Asked with the repository secret SPONSORS_TOKEN when it is set (a classic personal access token
+# of the sponsored account, the user's own: never read, printed or set by anyone else), else with the workflow's own
+# token. This job never fails: it runs on main's head commit, and release/build.js wants every check run of a commit
+# to have passed. What went wrong shows as a warning on the run.
+name: Sponsors
+
+on:
+  schedule:
+    - cron: '41 21 * * *' # every day, 06:41 in Korea
+  workflow_dispatch:
+
+concurrency:
+  group: sponsors
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sponsors:
+    name: sponsors picture
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # the branch `sponsors`, nothing else
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: The picture as it is
+        continue-on-error: true
+        run: |
+          if git fetch -q --depth=1 origin sponsors 2>/dev/null; then git show FETCH_HEAD:sponsors.svg > "$RUNNER_TEMP/old.svg" || true; fi
+      - name: Draw it from GitHub Sponsors (public sponsorships only)
+        continue-on-error: true
+        env:
+          SPONSORS_TOKEN: ${{ secrets.SPONSORS_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node release/sponsors.js --login="$GITHUB_REPOSITORY_OWNER" --old="$RUNNER_TEMP/old.svg" --out="$RUNNER_TEMP/sponsors.svg" --soft
+      - name: Publish it as the branch sponsors (one commit, replacing the one before)
+        continue-on-error: true
+        run: |
+          if [ ! -f "$RUNNER_TEMP/sponsors.svg" ]; then echo "nothing new to publish"; exit 0; fi
+          pub="$RUNNER_TEMP/pub"
+          git worktree add -q --detach "$pub"
+          cd "$pub"
+          git checkout -q --orphan sponsors-new
+          git rm -rq --cached .
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp "$RUNNER_TEMP/sponsors.svg" sponsors.svg
+          git add sponsors.svg
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -q -m "The sponsors picture (release/sponsors.js, drawn by the Sponsors workflow)"
+          git push -q --force origin HEAD:refs/heads/sponsors
+          echo "published"
