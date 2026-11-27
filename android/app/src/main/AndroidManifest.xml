@@ -20,6 +20,11 @@
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:usesCleartextTraffic="false">
 
+        <!-- The system WebView sends no usage figures of this app to Google and looks nothing up in Safe Browsing: the app's
+             WebViews load only its own pages (links go to the phone's browser), and PRIVACY.md names every connection. -->
+        <meta-data android:name="android.webkit.WebView.MetricsOptOut" android:value="true" />
+        <meta-data android:name="android.webkit.WebView.EnableSafeBrowsing" android:value="false" />
+
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density"

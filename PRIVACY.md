@@ -23,6 +23,16 @@ no server of its own. The program connects to other systems only for what it doe
 - **Adding a phone with a QR code:** the code the host window shows is a link to `giukim.github.io` (GitHub Pages) with a
   one-time code after `#`. The Pangmote app reads it without opening the link; opened in a browser, the phone asks
   GitHub for that page (GitHub sees its IP address), and the part after `#` is never sent there.
+- **The Android app** (Pangmote for Android, `kr.pangmote.app`: a phone that controls your PCs) connects to the same relay,
+  STUN servers and PCs as above, and nowhere else. The **camera** is used only while its QR scanner is open, to read the
+  code of a host window; pictures are neither kept nor sent. **On the phone** stay the list of PCs (the names you gave
+  them, what system they run, when you last connected) and each PC's device token, the token encrypted with a key of the
+  phone's Android Keystore; neither is backed up or moved to another phone, and an access key you type is not stored. The
+  system **WebView** the app runs its pages in is told to send no usage figures to Google and to look nothing up in Safe
+  Browsing (the app opens only its own pages; links go to your browser). The **vibration** is a short one when a long
+  press is recognized. When the app is installed, Android itself fetches
+  `giukim.github.io/.well-known/assetlinks.json` to check that the QR links belong to the app (GitHub sees the phone's IP
+  address). Google Play, which installs and updates the app, has its own privacy policy.
 - **Links** in the program (sponsoring, reporting a problem, the business inquiry) open your browser only when
   you click them.
 - **No spell checker:** the program turns off the engine's spell checker, which would otherwise fetch a
@@ -56,6 +66,15 @@ Pangmote(0.9.x까지의 이름은 My Remote)는 사용 기록, 분석 정보, �
 - **QR 코드로 휴대폰 추가:** 호스트 창의 QR은 `giukim.github.io`(GitHub Pages) 주소에 `#` 뒤로 1회용 코드를 붙인 링크입니다.
   Pangmote 앱은 링크를 열지 않고 읽기만 합니다. 브라우저로 열면 휴대폰이 GitHub에 그 페이지를 요청하고(GitHub에는 IP 주소가
   보임), `#` 뒤의 코드는 보내지 않습니다.
+- **안드로이드 앱**(Pangmote for Android, `kr.pangmote.app`: PC를 조종하는 휴대폰)은 위와 같은 중계 서버, STUN 서버, PC에만
+  접속합니다. **카메라**는 QR 읽기 화면이 열려 있는 동안 호스트 창의 코드를 읽는 데만 쓰고, 영상은 저장하거나 보내지 않습니다.
+  **휴대폰 안에만 남는 것:** PC 목록(붙인 이름, PC의 운영체제, 마지막 접속 시각)과 PC마다의 기기 토큰. 토큰은 휴대폰의
+  Android Keystore 키로 암호화하고, 둘 다 백업하거나 다른 휴대폰으로 옮기지 않습니다. 입력한 접속 키는 저장하지 않습니다. 앱이
+  페이지를 여는 시스템 **WebView**에는 Google에 사용 통계를 보내지 말고 세이프 브라우징 조회도 하지 말라고 설정합니다(앱은 자기
+  페이지만 열고, 링크는 휴대폰 브라우저로 엽니다). **진동**은 길게
+  누르기가 인식될 때 짧게 한 번입니다. 앱을 설치할 때 Android가 QR 링크가 이 앱의 것인지 확인하려고
+  `giukim.github.io/.well-known/assetlinks.json`을 받아 갑니다(GitHub에 휴대폰의 IP 주소가 보임). 앱을 설치하고 업데이트하는
+  Google Play에는 Google의 개인정보처리방침이 적용됩니다.
 - **프로그램 안의 링크**(후원, 문제 신고, 업무용 문의)는 누를 때만 브라우저로 열립니다.
 - **맞춤법 검사 없음:** 엔진의 맞춤법 검사를 꺼서, Google 서버에서 사전을 내려받지 않습니다.
 - 브라우저로 연 `pangmote-client.html`에는 그 브라우저 자체의 동작도 적용됩니다.

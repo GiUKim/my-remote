@@ -57,4 +57,13 @@ the QR code and the phone features of the page.
 
 `applicationId` `kr.pangmote.app` (permanent), target API 36 (Play's rule from 2026-08-31). The user's personal
 developer account needs a closed test with 12 testers for 14 days before production. Registering, the upload key and the
-Play Console forms (the data safety form: the camera for QR codes, nothing collected) are the user's steps.
+Play Console forms are the user's steps; `play/` has what they need (2026-11-27): `play/README.md` (the steps, in Korean,
+with the answers for Play Console's forms: data safety, content rating, app access for the reviewers), `play/listing.md`
+(the store texts, ko and en), `play/art/` (icon, feature graphics, a screenshot of the list of PCs; `play/art.js` draws
+them from the app's own page and frames screenshots taken on a phone to Play's sizes), `play/upload-key.ps1` and
+`play/sign-bundle.ps1` (run by the user: the upload key stays at `%USERPROFILE%\.pangmote-release\play-upload.jks`, and
+nobody else reads it). CI keeps the unsigned bundle 30 days (artifact `pangmote-android-release-unsigned`).
+
+The manifest opts the app out of the system WebView's usage figures and its Safe Browsing lookups
+(`MetricsOptOut`, `EnableSafeBrowsing`): the WebViews load only the app's own pages, and `PRIVACY.md` names every
+connection the app makes.

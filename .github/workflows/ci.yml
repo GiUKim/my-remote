@@ -78,7 +78,8 @@ jobs:
   android:
     # The Android app (android/, from 2026-11-26): it builds, as a test APK and as the bundle Google Play takes. The
     # runner image has the Android SDK and Java 21; Gradle comes from its own site, checked against its SHA-256. The
-    # test APK is kept as an artifact for two weeks (a phone can install it from there).
+    # test APK is kept as an artifact for two weeks (a phone can install it from there), the unsigned bundle for Google
+    # Play for 30 days (android/play/README.md).
     name: Android app (builds)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -100,6 +101,13 @@ jobs:
           name: pangmote-android-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
+      # The bundle for Google Play, unsigned: the user signs it with the upload key on their PC
+      # (android/play/sign-bundle.ps1) and uploads it in Play Console.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pangmote-android-release-unsigned
+          path: android/app/build/outputs/bundle/release/app-release.aab
+          retention-days: 30
 
   windows:
     name: Windows (assist protocol, self-test, packaged app)
