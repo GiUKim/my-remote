@@ -1,0 +1,12 @@
+{
+  "ko": [
+    "휴대폰에서 화면 둘레의 검은 여백도 터치에 반응합니다: 트랙패드 방식에서는 여백까지 한 장의 터치패드이고, 직접 터치 방식에서는 화면 밖으로 나간 드래그가 가장자리를 따라 이어집니다 (여백에서 시작한 탭과 길게 누르기는 아무것도 누르지 않습니다)",
+    "두 손가락으로 옆으로 밀면 옆 모니터로 넘어갑니다: 왼쪽으로 밀면 오른쪽 모니터, 오른쪽으로 밀면 왼쪽 모니터입니다. 화면이 손가락을 따라오고, 놓으면 넘어갈 만큼 밀면 모니터 이름이 파랗게 바뀝니다 (호스트 모니터가 둘 이상일 때)",
+    "호스트를 이 버전으로 업데이트해야 적용됩니다. 휴대폰 쪽은 따로 할 일이 없습니다"
+  ],
+  "en": [
+    "On a phone the black margins around the picture take touches too: with the trackpad they are part of one touchpad, with direct touch a drag that leaves the picture goes on along its edge (a tap or a long press that starts in a margin presses nothing)",
+    "Two fingers moved sideways go to the monitor beside: moved left, the monitor on the right; moved right, the one on the left. The picture follows the fingers, and the monitor's name turns blue once letting go brings it (hosts with more than one monitor)",
+    "Update the host to this version; nothing to do on the phone"
+  ]
+}
