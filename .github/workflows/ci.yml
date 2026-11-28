@@ -96,14 +96,14 @@ jobs:
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"
           /tmp/gradle/bin/gradle assembleDebug bundleRelease lintDebug --no-daemon --console=plain
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pangmote-android-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
       # The bundle for Google Play, unsigned: the user signs it with the upload key on their PC
       # (android/play/sign-bundle.ps1) and uploads it in Play Console.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pangmote-android-release-unsigned
           path: android/app/build/outputs/bundle/release/app-release.aab
